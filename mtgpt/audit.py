@@ -2,6 +2,13 @@
 
 Reports actual-versus-target for each category so drift is visible rather
 than arguable.
+
+Trust assumptions:
+- Curve bucketing truncates (int()) rather than rounding. No Commander-legal card
+  has a fractional mana value, so this is unobservable in practice.
+- `_sources_for` trusts Card.produced_mana at face value. If Scryfall lists a color
+  only conditionally available, the pip sources count overstates and `.ok` could
+  read True for an inadequate mana base.
 """
 
 from __future__ import annotations
@@ -108,7 +115,15 @@ def audit(deck: ResolvedDeck, tags: dict[str, frozenset[Function]] | None = None
             counts[function] = counts.get(function, 0) + qty
 
     ramp_count = counts.get(F.RAMP, 0)
-    mana_sources = land_count + ramp_count + mdfc_land_count
+    # A card could in principle be both ramp (by its front face's text) and an
+    # MDFC land back, which would be counted twice below. No current card does,
+    # but the sum must not depend on that staying true.
+    ramp_and_mdfc = sum(
+        qty
+        for qty, card in deck.cards
+        if card.is_mdfc_land and F.RAMP in tags.get(card.name, frozenset())
+    )
+    mana_sources = land_count + ramp_count + mdfc_land_count - ramp_and_mdfc
 
     categories = tuple(
         CategoryCount(

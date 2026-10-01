@@ -177,3 +177,60 @@ def test_average_mv_band_flagged_when_out_of_range():
     report = audit(deck)
     assert report.average_mana_value > targets.AVERAGE_MV_BAND[1]
     assert report.curve_status == "high"
+
+
+def test_category_delta_is_positive_when_under_target():
+    """delta > 0 means 'add this many to reach the band'."""
+    deck = build([(36, FOREST), (1, SOL_RING)])
+    ramp = next(c for c in audit(deck).categories if c.function is F.RAMP)
+    assert ramp.status == "low"
+    assert ramp.delta == targets.RAMP[0] - ramp.count
+    assert ramp.delta > 0
+
+
+def test_category_delta_is_negative_when_over_target():
+    """delta < 0 means 'cut this many to reach the band'."""
+    rocks = [(1, card(f"Rock {i}", "Artifact", "{T}: Add {C}.", mv=2.0, cost="{2}",
+                      produced="C")) for i in range(20)]
+    deck = build([(36, FOREST)] + rocks)
+    ramp = next(c for c in audit(deck).categories if c.function is F.RAMP)
+    assert ramp.status == "high"
+    assert ramp.delta == targets.RAMP[1] - ramp.count
+    assert ramp.delta < 0
+
+
+def test_category_delta_is_zero_inside_the_band():
+    rocks = [(1, card(f"Rock {i}", "Artifact", "{T}: Add {C}.", mv=2.0, cost="{2}",
+                      produced="C")) for i in range(11)]
+    deck = build([(36, FOREST)] + rocks)
+    ramp = next(c for c in audit(deck).categories if c.function is F.RAMP)
+    assert ramp.status == "ok"
+    assert ramp.delta == 0
+
+
+@pytest.mark.parametrize("cost,pips", [("{W}{W}{W}{W}", 4), ("{W}{W}{W}{W}{W}", 5)])
+def test_pip_requirement_clamps_above_the_table_maximum(cost, pips):
+    """A 4- or 5-pip cost must clamp to the 3-pip requirement, not KeyError."""
+    heavy = card("Heavy White", oracle_text="", mv=float(pips), cost=cost, identity="W")
+    plains = card("Plains", "Basic Land — Plains", "({T}: Add {W}.)", mv=0.0, cost="",
+                  produced="W", identity="W")
+    deck = build([(36, plains), (1, heavy)])
+    report = next(p for p in audit(deck).pips if p.color == "W")
+    assert report.max_pips == pips
+    assert report.required == targets.PIP_SOURCE_MINIMUMS[max(targets.PIP_SOURCE_MINIMUMS)]
+
+
+def test_a_card_that_is_both_ramp_and_an_mdfc_back_counts_once():
+    """No real card does this yet; the sum must not depend on that."""
+    hybrid = card(
+        "Ramp Front // Land Back",
+        "Sorcery // Land",
+        "Search your library for a basic land card, put it onto the battlefield, then shuffle.",
+        mv=2.0, cost="{1}{G}", produced="G", identity="G",
+    )
+    deck = build([(36, FOREST), (1, hybrid)])
+    report = audit(deck)
+    assert report.land_count == 36
+    assert report.mdfc_land_count == 1
+    # 36 lands + 1 ramp + 1 MDFC back, minus the 1 overlap = 37, not 38.
+    assert report.mana_sources == 37
