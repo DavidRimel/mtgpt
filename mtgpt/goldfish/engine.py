@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, field, replace
 from ..classify import classify
 from ..effects import SimEffect, effect_from_dict, effect_of, effect_to_dict, is_unmodeled
 from ..errors import DeckStructureError, MtgptError
-from ..goal import OPPONENTS, Condition, Goal, describe, load_goal
+from ..goal import OPPONENTS, Condition, Goal, condition_names, describe, load_goal
 from ..models import ResolvedDeck
 from .mana import Unit, parse_cost, plan_payment
 
@@ -509,6 +509,8 @@ def _bottom_one(s: GameState) -> None:
     def is_land(i):
         return s.cards[i].is_land or s.cards[i].is_mdfc_land
 
+    if not s.hand:
+        return
     lands = [i for i in s.hand if is_land(i)]
     spells = [i for i in s.hand if not is_land(i)]
     if len(lands) > 4 or not spells:
@@ -719,7 +721,9 @@ def _spend_category(s: GameState, idx: int) -> str:
     card = s.cards[idx]
     if card.effect.is_ramp:
         return "ramp"
-    if s.goal.engine_for(card.name) is not None:
+    goal = s.goal
+    if goal.engine_for(card.name) is not None or card.name in (
+            condition_names(goal.thing) + condition_names(goal.win)):
         return "engine"
     return "other"
 

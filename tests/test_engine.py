@@ -10,7 +10,8 @@ from mtgpt.goldfish.engine import (
 from mtgpt.models import ResolvedDeck
 
 from simdeck import (BEAR, COUNTERSPELL, DEMONIC_TUTOR, LLANOWAR, NEVER, RAMPANT_GROWTH,
-                     SOL_RING, SWORDS, TEFERIS_PROTECTION, card, commander, deck, rigged)
+                     SOL_RING, SWORDS, TEFERIS_PROTECTION, card, commander, deck, forest,
+                     rigged)
 
 PASS = {"pass": True}
 TRINKET = card("Trinket", "Artifact", "", mana_cost="{1}")
@@ -286,3 +287,16 @@ def test_overridden_protection_is_not_counted_as_held():
             "engine": {"Teferi's Protection": {"priority": "engine"}}}
     s = rigged(TEFERIS_PROTECTION, hand=["Teferi's Protection"], goal=goal)
     assert held_counts(s)["protection"] == 0
+
+
+def test_a_tiny_deck_mulligans_without_crashing():
+    tiny = ResolvedDeck(commanders=(commander(),), cards=((1, forest()),))
+    s = new_game(prepare(tiny, {"archetype": "go_wide"}), seed=1)
+    assert s.hand == [] and s.mulligans == 3
+
+
+def test_goal_named_card_spends_as_engine():
+    goal = {"archetype": "custom", "thing": "commander", "win": {"cast": "Trinket"}}
+    s = rigged(TRINKET, hand=["Trinket"], lands_in_play=1, goal=goal)
+    s = apply(s, {"cast": "Trinket"})
+    assert s.spent_this_turn == {"ramp": 0, "engine": 1, "other": 0}
