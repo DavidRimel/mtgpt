@@ -137,79 +137,171 @@ _EXTRA_TURNS = re.compile(r"takes?\s+\w+\s+extra\s+turns?", re.IGNORECASE)
 #: "you lose the game" is a drawback (Demonic Pact, Pact of Negation), not a
 #: win condition. "Target player loses the game" still counts.
 _WINCON = re.compile(r"\bwins? the game\b|(?<!you )\bloses? the game\b", re.IGNORECASE)
+#: Parenthetical reminder text.
+#:
+#: Stripped for two of the recursion branches and deliberately NOT for the rest,
+#: because it cuts both ways and the corpus says which way per branch.
+#:
+#: Against it: a keyword's reminder restates the keyword in sentences that read
+#: exactly like real recursion. Pteramander's adapt reminder says "put four
+#: +1/+1 counters on it", Varolz's scavenge reminder says "exile a creature card
+#: from your graveyard", Relentless Skaabs' undying reminder says "return it to
+#: the battlefield", and every flashback card's reminder says "you may cast this
+#: card from your graveyard". All of it was being read as recursion.
+#:
+#: For it: unearth and disturb state their ENTIRE effect in reminder text. Royal
+#: Warden's only recursion sentence is inside "({3}{B}: Return this card from
+#: your graveyard to the battlefield...)". Stripping reminders everywhere cost
+#: 170 true positives across the corpus.
+#:
+#: So branches 1 and 4-7 read reminder text and branches 2-3 do not. The split is
+#: measured, not aesthetic: every reminder-text false positive was in 2 or 3, and
+#: every reminder-text true positive was in the others. It is also why plain
+#: flashback (Lingering Souls, Call of the Herd, Deep Analysis) stays out —
+#: its only graveyard-cast sentence is a reminder, and branch 3 cannot see it.
+_REMINDER = re.compile(r"\([^()]*\)")
+
+#: What a recovery verb must be acting ON for branch 2 to fire.
+#:
+#: Branch 2 crosses a sentence boundary, so without this it only needed a
+#: graveyard and a later "put" inside the window. That let through every
+#: graveyard-count payoff that puts +1/+1 COUNTERS (Gixian Skullflayer, Grave
+#: Strength, Obsessive Skinner, Pyromancer Ascension's quest counter) and, worst,
+#: Cry of the Carnarium — "exile all creature cards in all graveyards that were
+#: PUT THERE from the battlefield", a graveyard-hate card reading as a
+#: reanimation spell. The verb now has to take the graveyard card as its object.
+_GRAVEYARD_OBJECT = (
+    r"(?:it|them|those\s+\w*\s?cards?|that\s+card|each\s+card|"
+    r"the\s+(?:chosen|exiled|voted|revealed)\s+cards?|"
+    r"enchanted\s+creature(?:\s+card)?)"
+)
+
 #: Recursion: getting a card out of a graveyard and using it again.
 #:
-#: Six templatings, because Magic writes this six ways and the first version of
-#: this pattern read only one of them — `return ... from ... graveyard`. It
-#: therefore missed the entire reanimation archetype: Reanimate, Animate Dead,
-#: Victimize, Necromancy and Rise of the Dark Realms all came back `synergy`, so
-#: a reanimator deck reported almost no recursion. The recursion band is a
-#: headline number in the audit, and it was wrong for exactly the decks that
-#: care about it most.
+#: Seven templatings, because Magic writes it seven ways and the first version of
+#: this pattern read only one — `return ... from ... graveyard`. That missed the
+#: entire reanimation archetype: Reanimate, Animate Dead, Victimize, Necromancy
+#: and Rise of the Dark Realms all came back `synergy`.
 #:
-#: The false positive this invites is graveyard HATE, which reads almost
-#: identically to a regex and means the opposite thing. Scavenging Ooze,
-#: Withered Wretch, Soul-Guide Lantern, Faerie Macabre, Relic of Progenitus,
-#: Rest in Peace, Leyline of the Void and Planar Void all talk about cards and
-#: graveyards in the same breath. Every branch below therefore requires a
-#: RECOVERY action — something returned, put onto the battlefield, cast, played,
-#: or granted castability — and "exile from a graveyard" on its own never
-#: matches. Both directions are tested.
+#: The failure in the other direction is graveyard HATE and graveyard COST, both
+#: of which read almost identically to a regex and mean the opposite thing.
 #:
-#: Branch 3's `this card` exclusion is what keeps flashback off the list.
-#: Lingering Souls, Call of the Herd and Deep Analysis say "you may cast THIS
-#: CARD from your graveyard", which recurs only themselves and is a value
-#: rider, not the deck's recursion package. Scryfall Tagger agrees on all three.
-#: It costs us self-escape cards (Uro), which Tagger does call recursion; that
-#: is a deliberate, named disagreement rather than an oversight.
-_RECURSION = re.compile(
+#: Every guard here was chosen by scoring against all 32,116 commander-legal
+#: cards — Scryfall publishes the whole Tagger vocabulary and its taggings as
+#: bulk data, so this is measurable rather than sampleable. The unguarded version
+#: scored recall 0.73 at precision 0.92: 135 false positives, including the whole
+#: Skaab class ("as an additional cost to cast this spell, exile a creature card
+#: from your graveyard", which CONSUMES the graveyard), the Increasing cycle, and
+#: Cry of the Carnarium.
+#:
+#: Two candidate guards were measured and REJECTED rather than shipped, which is
+#: the part worth keeping in mind before adding a third:
+#:
+#: * Excluding self-return ("Return this card from your graveyard") would have
+#:   cost 263 true positives to remove 6 false ones. Unearth, disturb and the
+#:   whole "{cost}: Return this card from your graveyard" class are recursion in
+#:   any deck that plays them, and Scryfall Tagger counts all of it. An earlier
+#:   commit message claimed this exclusion as the design; the measurement says
+#:   the claim was wrong, not the code.
+#: * Excluding an opponent's graveyard wholesale would have cost 11 true
+#:   positives (Puppeteer Clique, Geth, Gruesome Encore, Macabre Mockery, Ashen
+#:   Powder) to remove 3. Narrowed to the Advocate templating instead.
+_RECURSION_BRANCHES = (
     # 1. "Return/Put <card> FROM a graveyard TO/ONTO <zone>". Regrowth, Eternal
     #    Witness, Reanimate, Persist, Sun Titan, Karmic Guide, Reveillark,
     #    Unburial Rites, Goryo's Vengeance, Rise of the Dark Realms, Noxious
-    #    Revival, Twilight's Call, Patriarch's Bidding.
+    #    Revival, Twilight's Call, Patriarch's Bidding, and every unearth or
+    #    disturb card through its reminder text. 1286 of the corpus's true
+    #    positives come from this branch alone.
     #
-    #    "from" must PRECEDE the graveyard. That ordering is the whole guard
-    #    against the hate templating "put into a graveyard from anywhere, exile
-    #    it instead" (Rest in Peace, Leyline of the Void, Planar Void), where
-    #    the graveyard comes first and nothing is recovered.
+    #    GUARD: "from" must PRECEDE the graveyard. That ordering is the whole
+    #    defence against the hate templating "put into a graveyard from
+    #    anywhere, exile it instead" — Rest in Peace, Leyline of the Void,
+    #    Planar Void, Anafenza, Syr Konrad — where the graveyard comes first and
+    #    nothing is recovered. Pinned by `test_guard_...` below.
+    #    GUARD: not out of an opponent's graveyard back into their own hand.
+    #    That is the Advocate cycle handing a card back, not recursion. On top of
+    #    their library (Misinformation) or onto the battlefield under your
+    #    control (Puppeteer Clique) still counts.
     r"(?:returns?|puts?)\s[^.]{0,80}?\bfrom\s[^.]{0,30}?graveyards?\b"
-    r"[^.]{0,60}?\b(?:to|onto|on top of)\b"
-    r"|"
-    # 2. "<card> IN a graveyard ... return/put/cast". The choose-then-act
-    #    family, whose two halves sit in different sentences: Victimize, Meren
-    #    of Clan Nel Toth, Command the Dreadhorde, Snapcaster Mage, Emry, and
-    #    the Aura reanimators (Animate Dead, Dance of the Dead).
+    r"[^.]{0,60}?\b(?:to|onto|on top of)\b(?![^.]{0,20}?\btheir hand\b)",
+    # 5. Exile from a graveyard and then put what was exiled onto the
+    #    battlefield, in one sentence: Living Death.
     #
-    #    `in\s` rather than `in` is deliberate: it refuses to match "put INTO a
-    #    graveyard", which is how every hate card and every self-mill trigger is
-    #    worded. The window crosses sentences but not lines.
-    r"\bcards?\b[^.]{0,40}?\bin\s+(?:your\s|a\s|an\s|their\s|all\s|each\s|target\s)?"
-    r"(?:opponent's\s|player's\s)?graveyards?\b.{0,160}?\b(?:returns?|puts?|cast)\b"
-    r"|"
-    # 3. "cast/play <something other than this card> from your graveyard". The
-    #    graveyard-as-second-hand engines: Yawgmoth's Will, Crucible of Worlds,
-    #    Ramunap Excavator, Muldrotha, Chainer, Underworld Breach.
-    r"\b(?:cast|play)\b(?![^.]{0,12}?\bthis card\b)[^.]{0,60}?"
-    r"\bfrom\s(?:your|a|their|the|that player's)\s+graveyard"
-    r"|"
-    # 4. Granting castability to cards already in a graveyard, rather than
-    #    moving them: Past in Flames, Snapcaster Mage.
-    r"\b(?:cards?|spells?)\b[^.]{0,40}?\bin\s+(?:your|a|all)\s*graveyards?\b"
-    r"[^.]{0,80}?\bgains?\b[^.]{0,40}?\b(?:flashback|flash|escape|retrace)\b"
-    r"|"
-    # 5. Exile from a graveyard and then put it onto the battlefield, within one
-    #    sentence: Living Death. The same-sentence bound is what stops this
-    #    branch from swallowing hate that only exiles.
+    #    GUARD: the second `exiled` is required, so the thing entering the
+    #    battlefield is the thing that left the graveyard. Without it, "Exile
+    #    this card from your graveyard: Search your library for a Desert card,
+    #    put it onto the battlefield" (Colossal Rattlewurm, Everbark Shaman)
+    #    read as recursion while actually paying the graveyard as a cost.
     r"\bexiles?\b[^.]{0,80}?\bfrom\s[^.]{0,30}?graveyards?\b"
-    r"[^.]{0,140}?\bonto the battlefield\b"
-    r"|"
-    # 6. Searching a graveyard and putting what you find into play: Finale of
-    #    Devastation. The graveyard must precede the put, which excludes
-    #    "search your library ... and put them INTO your graveyard" (Buried
-    #    Alive, Entomb) — filling a graveyard is not emptying one.
+    r"[^.]{0,140}?\bexiled\b[^.]{0,60}?\bonto the battlefield\b",
+    # 4. Granting castability to cards already in a graveyard rather than moving
+    #    them: Past in Flames ("gains flashback"), Underworld Breach ("has
+    #    escape"), Snapcaster Mage ("gains flash"). `has` matters: Underworld
+    #    Breach states the grant that way, and its only "may cast" is a reminder.
+    r"\b(?:cards?|spells?)\b[^.]{0,40}?\bin\s+(?:your|a|all|their)\s*graveyards?\b"
+    r"[^.]{0,80}?\b(?:gains?|has|have)\b[^.]{0,40}?"
+    r"\b(?:flashback|flash|escape|retrace)\b",
+    # 6. Searching a graveyard and putting what you find into play or hand:
+    #    Finale of Devastation, Ecological Appreciation, Vraska's Scorn.
+    #
+    #    GUARD: the graveyard must precede the put, which excludes "search your
+    #    library ... and put them INTO your graveyard" (Buried Alive, Entomb).
+    #    Filling a graveyard is not emptying one.
     r"\bsearch\b[^.]{0,60}?\bgraveyards?\b[^.]{0,80}?\bput\b"
     r"[^.]{0,40}?\b(?:onto the battlefield|into your hand)\b",
-    re.IGNORECASE,
+    # 7. The same movement as branch 1 with the clauses in the other order:
+    #    "Return to the battlefield tapped all artifact cards in your graveyard"
+    #    (Gerrard's Hourglass Pendant), "return to your hand target creature card
+    #    in your graveyard" (Storrev). Destination named before the source.
+    r"\b(?:returns?|puts?)\s+(?:to|onto)\s+(?:the\s+battlefield|your\s+hand)"
+    r"[^.]{0,80}?\bin\s+(?:your|a|all|their)\s*graveyards?\b",
+)
+
+#: Branches that must not read reminder text. See `_REMINDER`.
+_RECURSION_BRANCHES_NO_REMINDERS = (
+    # 2. "<card> IN a graveyard ... return/put/cast <that card>". The
+    #    choose-then-act family, whose two halves sit in different sentences:
+    #    Victimize, Meren, Command the Dreadhorde, Breach the Multiverse,
+    #    Snapcaster Mage, Emry, and the Aura reanimators (Animate Dead, Dance of
+    #    the Dead).
+    #
+    #    GUARD: `in\s`, not `in`. "put INTO a graveyard" is how every hate card
+    #    and every self-mill trigger is worded, and `\bin\s` refuses it. Pinned
+    #    by `test_guard_...` below.
+    #    GUARD: the recovery verb must take the graveyard card as its object.
+    #    `that\s` is in the determiner list for Breach the Multiverse, which says
+    #    "that player's graveyard" — the same incomplete-alternation bug branch 1
+    #    already had with "their graveyard".
+    r"\bcards?\b[^.]{0,40}?\bin\s+"
+    r"(?:your\s|a\s|an\s|their\s|all\s|each\s|target\s|that\s)?"
+    r"(?:opponent'?s?\s|player'?s?\s)?graveyards?\b"
+    r".{0,160}?\b(?:(?:returns?|puts?)\s+" + _GRAVEYARD_OBJECT +
+    r"[^.]{0,40}?\b(?:to|onto|on top of)\b|cast\s+" + _GRAVEYARD_OBJECT + r")",
+    # 3. "you MAY cast/play <something> from your graveyard". The
+    #    graveyard-as-second-hand engines: Yawgmoth's Will, Crucible of Worlds,
+    #    Ramunap Excavator, Muldrotha, Chainer, and the permanents that recast
+    #    themselves (Marang River Prowler, Gravecrawler).
+    #
+    #    GUARD: `may` is required, and it is what separates an ENABLER from the
+    #    two things that are not one. "As an additional cost to cast this spell,
+    #    exile a creature card from your graveyard" CONSUMES the graveyard — the
+    #    entire Skaab class, Skeletal Scrying, Corpse Lunge, Harvest Pyre, Chill
+    #    Haunting. "If this spell WAS CAST from a graveyard" is a flashback rider
+    #    — the whole Increasing cycle, and Sevinne's Reclamation's second
+    #    sentence. Neither says "may cast". Pinned by `test_guard_...` below.
+    #
+    #    There is deliberately no "not this card" guard here. One was tried: it
+    #    cost 31 true positives (unearth, disturb, escape, Gravecrawler) to
+    #    remove 4, because stripping reminder text already excludes plain
+    #    flashback, which was the only class it was wanted for.
+    r"\bmay\b[^.]{0,40}?\b(?:cast|play)\b[^.]{0,60}?"
+    r"\bfrom\s(?:among\s+cards\s+in\s+)?(?:your|a|their|the|that player's)\s+graveyard",
+)
+
+_RECURSION = tuple(re.compile(b, re.IGNORECASE) for b in _RECURSION_BRANCHES)
+_RECURSION_NO_REMINDERS = tuple(
+    re.compile(b, re.IGNORECASE) for b in _RECURSION_BRANCHES_NO_REMINDERS
 )
 
 
@@ -258,7 +350,7 @@ def classify(card: Card) -> frozenset[Function]:
         tags.add(F.EXTRA_TURNS)
     if _WINCON.search(text):
         tags.add(F.WINCON)
-    if _RECURSION.search(text):
+    if _is_recursion(card, text):
         tags.add(F.RECURSION)
 
     return frozenset(tags) if tags else frozenset({F.SYNERGY})
@@ -295,6 +387,35 @@ def _without_self_clauses(card: Card, text: str) -> str:
         re.IGNORECASE,
     )
     return self_clause.sub(" ", masked)
+
+
+def _is_recursion(card: Card, text: str) -> bool:
+    """True when the card gets something out of a graveyard and uses it again.
+
+    A clause whose object is this card BY NAME is dropped first. Rekindling
+    Phoenix says "return target card named Rekindling Phoenix from your graveyard
+    to the battlefield" — a token bringing the Phoenix back, which Tagger does
+    not count and which the `this card` wording would not have caught.
+
+    Reminder text is then stripped for branches 2 and 3 only; `_REMINDER`
+    explains why the other branches must keep reading it.
+    """
+    body = text
+    front = card.name.partition("//")[0].strip()
+    if front:
+        # The whole clause goes, not just the name: blanking the name alone
+        # leaves "return target  from your graveyard to the battlefield", which
+        # still matches branch 1.
+        names_self = re.compile(
+            r"\bcards?\s+named\s+" + re.escape(front) + r"\b", re.IGNORECASE
+        )
+        body = ". ".join(
+            clause for clause in body.split(".") if not names_self.search(clause)
+        )
+    if any(branch.search(body) for branch in _RECURSION):
+        return True
+    without_reminders = _REMINDER.sub(" ", body)
+    return any(branch.search(without_reminders) for branch in _RECURSION_NO_REMINDERS)
 
 
 def _is_overload_sweeper(card: Card, text: str) -> bool:

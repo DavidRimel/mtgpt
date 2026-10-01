@@ -42,6 +42,30 @@ an earlier probe showed SEO farms dominate otherwise (three of ten hits from one
 | mtgdecks.net | 403 | Bot protection |
 | EDHREC `themes.json`, `tribes.json`, `combos/<ci>.json` | 403 | Only per-commander and `top/` pages are public |
 
+## Measuring `classify` against Tagger: use the bulk data, not a sample
+
+Scryfall publishes the **entire Tagger vocabulary** as bulk data, which makes this
+measurable rather than sampleable. Two files, both listed at
+`api.scryfall.com/bulk-data`:
+
+- `oracle_tags` — all 4,559 oracle tags, each with its `slug`, `aliases`,
+  `child_ids` and the `taggings` (oracle ids) attached to it.
+- `oracle_cards` — one card object per oracle id.
+
+`otag:<slug>` is **hierarchical**: `otag:recursion` has no taggings of its own and
+resolves through 19 children. To reproduce a search, walk the child graph from the
+root tag and union the taggings. Aliases are normalised, which is why
+`otag:graveyard-hate` works for the tag whose slug is `hate-graveyard`.
+
+**Recall and precision fail independently, and a sample of `otag:` hits can only
+measure recall.** `mtgpt find` samples cards the community tagged and asks whether
+`classify` agrees — it is blind to cards `classify` tagged that nobody else did.
+A recursion regex once scored recall 0.73 and was reported as sound; scored over
+all 32,116 commander-legal cards it had 135 false positives at precision 0.92,
+including graveyard-hate and graveyard-cost cards, which are the semantic inverse.
+`mtgpt cross-check <function>` reports both directions; this corpus method is what
+settles an argument.
+
 ## The `otag:` vocabulary, as actually probed
 
 A tag that does not exist is answered **404 "your query didn't match any cards"** —
@@ -62,6 +86,14 @@ set), `card-advantage` 6206, `tutor` 1163, `counterspell` 550, `protection` 1322
 `landfall` 286, `evasion` 5354, `anthem` 536, `graveyard-hate` 419, `hate` 4511,
 `hatebear` 66, `tax` 466, `pillowfort` 62, `group-hug` 413, `fog` 93.
 
+`mass-land-denial` resolves too — 106 commander-legal cards (Armageddon,
+Apocalypse, Acid Rain, Ajani Vengeant). It was recorded here as having no
+equivalent, which was wrong: four *other* spellings 404 and the one that works is
+our own `Function` value. The tag is **broader than our regex** — it includes land
+locks (Winter Orb, Blood Moon, Back to Basics) where `classify` matches only
+destruction, so the two score 0.21 recall at 0.69 precision against each other by
+design.
+
 Rejected — every one 404: `stax`, `token-generation`, `tokens`, `token`,
 `cost-reduction`, `land-destruction`, `mass-land-destruction`, `mld`, `land-hate`,
 `resource-denial`, `mana-denial`, `taxing`, `haste-enabler`, `card-selection`,
@@ -70,8 +102,9 @@ Rejected — every one 404: `stax`, `token-generation`, `tokens`, `token`,
 `stack-interaction`, `indestructible`, `hexproof-granter`,
 `counterspell-protection`, `fixing`, `mana-fixing`, `color-fixing`.
 
-**There is no mass-land-denial tag.** Every candidate 404s, so `find` cannot serve
-that function and `classify.py`'s regex is the only source for it.
+Note that a 404 means "no such tag OR no matching cards" — the two are
+indistinguishable, which is why `tagger.TAGS` ships only probed tags and why
+`mass-land-denial` was wrongly written off on four failed guesses.
 
 ## EDHREC slugs: apostrophes are deleted, not hyphenated
 
@@ -88,11 +121,26 @@ space (`Praetors' Voice`) are unaffected either way, which is how the bug hid.
 *already has*; for *discovering* cards that fill a gap, a human-curated tag is strictly better and
 cross-checks our own classification. Where they disagree, that disagreement is itself a signal.
 
-Measured agreement between `otag:` and `classify.py` at `--limit 60`, `ci:wubrg`:
-ramp 0.82, draw 0.83, counterspell 0.82, removal 0.80, protection 0.80, sweeper 0.73,
-**recursion 0.37**, **tutor 0.30**. Tutor is mostly by design (land fetches are ramp
-here). Recursion is a genuine gap: the regex wants "return ... from a graveyard" and
-misses "put target creature card from a graveyard onto the battlefield" — Reanimate,
-Animate Dead, Victimize, Rise of the Dark Realms. Lands are the other systematic
-source: `classify` short-circuits a land to `land` alone, so channel lands and modal
-DFC spell halves never carry the function they also perform.
+Scored against all 32,116 commander-legal cards (recall / precision):
+
+| function | recall | precision | FP | function | recall | precision | FP |
+|---|---|---|---|---|---|---|---|
+| extra_turns | 0.94 | 1.00 | 0 | spot_removal | 0.60 | 0.89 | 402 |
+| counterspell | 0.83 | 1.00 | 1 | sweeper | 0.67 | 0.84 | 115 |
+| tutor | 0.41 | 0.99 | 5 | ramp | 0.72 | 0.81 | 365 |
+| recursion | 0.72 | 0.98 | 25 | mass_land_denial | 0.21 | 0.69 | 10 |
+| draw | 0.88 | 0.96 | 133 | protection | 0.55 | 0.66 | 356 |
+| | | | | wincon | 0.86 | 0.57 | 40 |
+
+`protection` (0.66) and `wincon` (0.57) are the weakest and are the next things
+worth fixing: a third of what we call protection, and nearly half of what we call
+a win condition, the community does not. `tutor`'s low recall is by design — land
+fetches are ramp here, for the bracket rule — and its precision of 0.99 shows the
+regex is narrow rather than loose.
+
+Two structural sources of disagreement, both in `classify` and both deliberate:
+a land is tagged `land` and nothing else, so channel and utility lands never carry
+their other function; and only the FRONT face is read. Front-face-only is right
+for a modal DFC, whose back is a land, but it loses a real half of a **split** or
+**adventure** card — `Dusk // Dawn` loses Dawn's recursion and
+`Bonecrusher Giant // Stomp` loses Stomp's removal.

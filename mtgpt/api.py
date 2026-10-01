@@ -199,12 +199,21 @@ def find_cards(
     Scryfall answers an unknown `otag:` with a 404 that is indistinguishable
     from "nothing in those colours".
 
-    `cross_check` (default true) adds `agrees_with_classify` per card and an
-    `agreement_rate` overall, comparing the human tag against `classify.py`'s
+    `cross_check` (default true) adds `agrees_with_classify` per card and
+    `recall_estimate` overall, comparing the human tag against `classify.py`'s
     regex. A disagreement means one of the two is wrong; report it rather than
     silently trusting whichever you looked at first. It is omitted for tags our
     own classifier has no notion of (`wheel`, `theft`, ...), where claiming
     either agreement or disagreement would be inventing a verdict.
+
+    **`recall_estimate` measures recall ONLY, and the name says so on purpose.**
+    This operation samples cards Tagger labelled and asks whether `classify`
+    agrees, so it cannot see a card `classify` tagged that Tagger did not — it is
+    blind to false positives by construction. A `recall_estimate` of 0.67 read as
+    "67% accurate" once hid a classifier at 0.92 precision with 135 false
+    positives. For the other direction call `check_classifier`, which samples
+    what `classify` tagged; for both at once call `cross_check_function`. Never
+    report one of these numbers without its label.
     """
     from . import tagger
 
@@ -243,16 +252,186 @@ def find_cards(
     }
     if expected:
         result["classify_expects"] = sorted(f.value for f in expected)
-        result["agreement_rate"] = round(agreed / len(cards), 4) if cards else None
+        result["recall_estimate"] = round(agreed / len(cards), 4) if cards else None
+        result["measures"] = (
+            "recall only: of cards the community tagged, the share classify also "
+            "tagged. Blind to false positives — call check_classifier for those."
+        )
     else:
         result["classify_expects"] = []
-        result["agreement_rate"] = None
+        result["recall_estimate"] = None
+        result["measures"] = None
         if cross_check:
             result["cross_check_note"] = (
                 f"classify.py has no tag corresponding to otag:{otag}, so no "
                 "agreement can be claimed either way."
             )
     return result
+
+
+def check_classifier(
+    function: str,
+    *,
+    identity: str | None = None,
+    limit: int = 25,
+    client: ScryfallClient | None = None,
+) -> dict:
+    """The reverse of `find_cards`: does the community agree with OUR tag?
+
+    `find_cards` samples what Tagger labelled and asks whether `classify` agrees.
+    That is recall, and recall alone cannot see a false positive. This samples the
+    other way — cards `classify` tags with `function`, drawn from a Scryfall
+    search for cards that mention the function's own vocabulary — and asks whether
+    Tagger agrees, which is precision.
+
+    Both numbers are needed because they fail independently. A regex that tags
+    every card in the format scores recall 1.0 and precision near zero; the
+    original `_RECURSION` scored recall 0.73 at precision 0.92, and the 135 false
+    positives behind that 0.92 were invisible to the recall measurement.
+
+    The sample is a cheap estimate, not a corpus scan: Scryfall's bulk
+    `oracle-tags` export plus the oracle-card export is the way to measure these
+    properly, and `references/sources.md` says how. Use this to notice a problem,
+    then measure it against the bulk data.
+    """
+    from . import tagger
+
+    label = tagger.canonical_label(function)
+    otag = tagger.function_tag(label)
+    expected = tagger.cross_check_functions(label)
+    if not expected:
+        return {
+            "function": label,
+            "otag": otag,
+            "count": 0,
+            "cards": [],
+            "precision_estimate": None,
+            "measures": None,
+            "cross_check_note": (
+                f"classify.py has no tag corresponding to otag:{otag}, so there "
+                "is nothing to check in this direction."
+            ),
+        }
+
+    scry = _client(client)
+    # Sample cards that mention the subject matter at all, then keep the ones our
+    # own classifier tags. Searching `otag:` here would beg the question.
+    probe = " or ".join(f"o:{word}" for word in _PROBE_WORDS.get(label, (label,)))
+    query = f"({probe}) legal:commander"
+    if identity:
+        query += f" {tagger.identity_filter(identity)}"
+    payloads = scry.search(query, limit=max(limit * 6, 60), allow_empty=True)
+    game_changers = _game_changers(scry)
+
+    tagged = []
+    for payload in payloads:
+        card = card_from_json(payload, game_changers=game_changers)
+        functions = classify(card)
+        if functions & expected:
+            tagged.append((card, functions))
+        if len(tagged) >= limit:
+            break
+
+    confirmed = 0
+    cards: list[dict] = []
+    if tagged:
+        # One search per card would be slow; ask Scryfall once whether each name
+        # carries the tag, in a single `otag:<tag> (!"a" or !"b" ...)` query.
+        names = " or ".join(f'!"{card.name}"' for card, _ in tagged)
+        try:
+            confirmations = scry.search(
+                f"otag:{otag} ({names})", limit=len(tagged), allow_empty=True
+            )
+        except SourceUnavailable:
+            confirmations = ()
+        has_tag = {p.get("name", "").casefold() for p in confirmations}
+        for card, functions in tagged:
+            agrees = card.name.casefold() in has_tag
+            entry = _card_dict(card, functions)
+            entry["source"] = "classify"
+            entry["otag"] = otag
+            entry["community_agrees"] = agrees
+            confirmed += agrees
+            cards.append(entry)
+
+    return {
+        "function": label,
+        "otag": otag,
+        "query": query,
+        "identity": identity,
+        "count": len(cards),
+        "cards": cards,
+        "precision_estimate": round(confirmed / len(cards), 4) if cards else None,
+        "measures": (
+            "precision only: of cards classify tagged, the share the community "
+            "tagged too. Blind to false negatives — call find_cards for those."
+        ),
+    }
+
+
+def cross_check_function(
+    function: str,
+    *,
+    identity: str | None = None,
+    limit: int = 25,
+    client: ScryfallClient | None = None,
+) -> dict:
+    """Both directions at once: recall from `find_cards`, precision from `check_classifier`.
+
+    Reported together because reporting either alone has already misled once.
+    """
+    scry = _client(client)
+    forward = find_cards(function, identity=identity, limit=limit, client=scry)
+    reverse = check_classifier(function, identity=identity, limit=limit, client=scry)
+    return {
+        "function": forward["function"],
+        "otag": forward["otag"],
+        "identity": identity,
+        "recall_estimate": forward["recall_estimate"],
+        "precision_estimate": reverse["precision_estimate"],
+        "recall_sample": forward["count"],
+        "precision_sample": reverse["count"],
+        "recall_disagreements": [
+            c["name"] for c in forward["cards"] if c.get("agrees_with_classify") is False
+        ],
+        "precision_disagreements": [
+            c["name"] for c in reverse["cards"] if c.get("community_agrees") is False
+        ],
+        "measures": (
+            "recall_estimate: of cards the community tagged, the share classify "
+            "also tagged. precision_estimate: of cards classify tagged, the share "
+            "the community tagged too. Both are small samples — see "
+            "references/sources.md for the bulk-data method that measures them "
+            "over the whole corpus."
+        ),
+    }
+
+
+#: Oracle-text words that find candidates for each function without using
+#: `otag:`. Searching `otag:` to measure precision against `otag:` would beg the
+#: question, so `check_classifier` samples by subject matter instead.
+_PROBE_WORDS: dict[str, tuple[str, ...]] = {
+    "ramp": ("mana", "land"),
+    "mana_rock": ("mana",),
+    "mana_dork": ("mana",),
+    "land_ramp": ("land",),
+    "draw": ("draw",),
+    "card_advantage": ("draw",),
+    "wheel": ("draw", "discard"),
+    "spot_removal": ("destroy", "exile", "damage"),
+    "creature_removal": ("destroy", "exile"),
+    "removal": ("destroy", "exile", "damage"),
+    "sweeper": ("destroy", "each"),
+    "mass_removal": ("destroy", "each"),
+    "board_wipe": ("destroy", "each"),
+    "tutor": ("search",),
+    "counterspell": ("counter",),
+    "protection": ("hexproof", "indestructible", "protection"),
+    "recursion": ("graveyard",),
+    "extra_turns": ("turn",),
+    "wincon": ("win", "lose"),
+    "mass_land_denial": ("land",),
+}
 
 
 def classify_cards(

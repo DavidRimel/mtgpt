@@ -6,6 +6,7 @@ Each subcommand is one operation, independently callable:
     python3 -m mtgpt.cli card "Sol Ring"
     python3 -m mtgpt.cli search "o:'add one mana of any color' t:creature c:g" --limit 10
     python3 -m mtgpt.cli find     ramp --identity wubg --limit 10
+    python3 -m mtgpt.cli cross-check recursion --identity wubrg
     python3 -m mtgpt.cli classify "Cultivate" "Demonic Tutor"
     python3 -m mtgpt.cli import   "https://archidekt.com/decks/2000000/"
     python3 -m mtgpt.cli read     --file deck.txt
@@ -71,6 +72,22 @@ def build_parser() -> argparse.ArgumentParser:
     find.add_argument(
         "--no-cross-check", dest="cross_check", action="store_false",
         help="Omit the comparison against mtgpt's own classification",
+    )
+
+    cross_check = sub.add_parser(
+        "cross-check",
+        help="Score classify.py against Scryfall Tagger in BOTH directions",
+    )
+    cross_check.add_argument(
+        "function", metavar="FUNCTION", choices=tagger.vocabulary(),
+        help="One of: " + ", ".join(tagger.vocabulary()),
+    )
+    cross_check.add_argument("--identity")
+    cross_check.add_argument("--limit", type=int, default=25)
+    cross_check.add_argument(
+        "--direction", choices=["both", "recall", "precision"], default="both",
+        help="recall: do we tag what the community tagged. precision: does the "
+             "community tag what we tagged. Default both — one alone misleads.",
     )
 
     classify_cmd = sub.add_parser("classify", help="Tag several cards by function")
@@ -204,6 +221,19 @@ def main(argv: list[str] | None = None, client: ScryfallClient | None = None) ->
             _emit(command, api.find_cards(
                 args.function, identity=args.identity, limit=args.limit,
                 extra_query=args.query, cross_check=args.cross_check, client=client))
+        elif command == "cross-check":
+            if args.direction == "recall":
+                _emit(command, api.find_cards(
+                    args.function, identity=args.identity, limit=args.limit,
+                    client=client))
+            elif args.direction == "precision":
+                _emit(command, api.check_classifier(
+                    args.function, identity=args.identity, limit=args.limit,
+                    client=client))
+            else:
+                _emit(command, api.cross_check_function(
+                    args.function, identity=args.identity, limit=args.limit,
+                    client=client))
         elif command == "classify":
             _emit(command, api.classify_cards(args.names, client=client))
         elif command == "import":

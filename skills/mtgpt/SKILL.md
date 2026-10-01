@@ -195,28 +195,72 @@ is present in the deck.
 ## When the human tags and our regex disagree
 
 `find` returns cards a person tagged; `classify` tags by regex. Each card from
-`find` carries `agrees_with_classify`, and the result carries an overall
-`agreement_rate`. **Say so when they disagree — do not silently pick one.**
-Measured live at `--limit 60`: ramp 0.82, removal 0.80, counterspell 0.82,
-draw 0.83, protection 0.80, sweeper 0.73, recursion 0.37, tutor 0.30.
+`find` carries `agrees_with_classify`. **Say so when they disagree — do not
+silently pick one.**
 
-Three causes, worth telling apart before calling anything a bug:
+### Two numbers, and never one of them alone
+
+`find` reports `recall_estimate`: of the cards the community tagged, the share
+`classify` also tagged. **That number cannot see a false positive.** It samples
+what Tagger labelled, so a regex that tags half the format would still score
+well on it. Reading an unlabelled 0.67 as "67% accurate" once hid a classifier
+sitting at 0.92 precision with 135 false positives.
+
+For the other direction, and for both at once:
+
+```bash
+python3 -m mtgpt.cli cross-check recursion --identity wubrg
+python3 -m mtgpt.cli cross-check recursion --direction precision
+```
+
+`cross-check` reports `recall_estimate` and `precision_estimate` side by side,
+each with a `measures` string saying what it is. **If you quote one, name which
+one.** Both are small samples; `references/sources.md` gives the bulk-data method
+that measures them over all 32,116 commander-legal cards.
+
+### Where `classify` actually stands
+
+Scored over the whole corpus, not a sample:
+
+| function | recall | precision | false positives |
+|---|---|---|---|
+| extra_turns | 0.94 | 1.00 | 0 |
+| counterspell | 0.83 | 1.00 | 1 |
+| tutor | 0.41 | 0.99 | 5 |
+| recursion | 0.72 | 0.98 | 25 |
+| draw | 0.88 | 0.96 | 133 |
+| spot_removal | 0.60 | 0.89 | 402 |
+| sweeper | 0.67 | 0.84 | 115 |
+| ramp | 0.72 | 0.81 | 365 |
+| mass_land_denial | 0.21 | 0.69 | 10 |
+| **protection** | 0.55 | **0.66** | 356 |
+| **wincon** | 0.86 | **0.57** | 40 |
+
+Read that table before trusting a band. `protection` and `wincon` are the two
+weak ones: roughly a third of what `classify` calls protection, and nearly half
+of what it calls a win condition, the community does not. If the audit says a
+deck is well served on protection, check the tags in `report --text` rather than
+believing the count.
+
+### Four causes of disagreement, worth telling apart
 
 - **A deliberate difference.** `otag:tutor` includes land fetches; mtgpt counts
   Cultivate as ramp on purpose, because the bracket rules use tutor density as a
-  combo-assembly measure. Most of the tutor gap is this.
+  combo-assembly measure. That is most of the tutor recall gap, and tutor
+  precision is 0.99 — the regex is not loose, it is narrow by design.
+- **A broader tag.** `otag:mass-land-denial` covers land *locks* — Winter Orb,
+  Blood Moon, Back to Basics — while `classify` matches only destruction and mass
+  sacrifice. Use `find mass_land_denial` to discover these; keep `classify` for
+  the bracket rule, which is written about destruction. Do not expect agreement.
 - **A land.** `classify` tags a land `land` and nothing else, so channel lands
-  (Boseiju, Otawara) and modal DFC spell halves never register as the removal or
-  protection they also are. Expect them in every disagreement list.
-- **A real miss.** `recursion` is the clear one: the regex wants
-  "return ... from a graveyard" and so misses the "put target creature card from
-  a graveyard onto the battlefield" wording — Reanimate, Animate Dead, Victimize,
-  Rise of the Dark Realms. If the audit says a deck is low on recursion, check
-  by hand before believing it.
-
-`find` cannot serve `mass_land_denial`: no Tagger tag for it resolves
-(`land-destruction`, `mass-land-destruction`, `mld` all 404). That category comes
-from `classify` alone.
+  (Boseiju, Otawara, Takenuma) and utility lands (Academy Ruins, Buried Ruin)
+  never register the function they also perform. Expect them in every
+  disagreement list.
+- **A split or adventure back face.** `classify` reads the front face only. For a
+  modal DFC that is correct — the back is a land. For a **split** or **adventure**
+  card it loses a real half: `Dusk // Dawn` is tagged `sweeper` and loses Dawn's
+  recursion, `Bonecrusher Giant // Stomp` loses Stomp's removal. If a deck leans
+  on adventure creatures for interaction, the removal count is low by that much.
 
 ## Research beyond the toolkit
 
@@ -266,6 +310,9 @@ Do not improvise these by hand:
   deck id. TappedOut, Aetherhub, Deckstats and mtgdecks.net are all bot-blocked.
 - **No deck-from-URL for anything but Archidekt**, and `declared_bracket` from
   an import is the author's claim, not a verdict — run `bracket` for that.
+- **No corpus scoring from the CLI.** `cross-check` samples; measuring a
+  classifier properly means the Scryfall bulk exports, and
+  `references/sources.md` says how.
 - **No goldfish simulation.**
 - **No deck-from-scratch generation** — `synergy`/`themes` inform a build,
   but nothing assembles a full 99 automatically.

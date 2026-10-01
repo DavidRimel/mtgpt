@@ -48,6 +48,9 @@ TAGS: dict[str, str] = {
     "recursion": "recursion",                    # 2245
     "extra_turns": "extra-turn",                 # 58  (singular; "extra-turns" 404s)
     "wincon": "win-condition",                   # 69  (alias of alternate-win-condition)
+    # The spelling is the Function member's own value. Four other spellings
+    # 404 — see REJECTED — and shipping the claim that no tag existed was wrong.
+    "mass_land_denial": "mass-land-denial",      # 106 commander-legal
     # --- broader or adjacent categories worth searching --------------------
     "removal": "removal",                        # 6449  (spot + mass, both)
     "card_advantage": "card-advantage",          # 6206  (wider than our `draw`)
@@ -106,15 +109,25 @@ REJECTED: tuple[str, ...] = (
 
 #: The `otag:` value to search for each of our own Function tags.
 #:
-#: Three Function members are deliberately absent, and the absence is the
-#: finding rather than an oversight:
+#: Two Function members are deliberately absent:
 #:
-#: * `MASS_LAND_DENIAL` — every candidate name 404s (`land-destruction`,
-#:   `mass-land-destruction`, `mld`, `land-hate`). Tagger has no equivalent, so
-#:   `find` cannot serve this and `classify.py`'s regex remains the only source.
 #: * `LAND` — Scryfall answers this better with `t:land` than any oracle tag.
 #: * `SYNERGY` — our catch-all for "performs no named function", which is a
-#:   property of our own tagger, not a thing a human would tag a card with.
+#:   property of our own classifier, not a thing a human would tag a card with.
+#:
+#: `MASS_LAND_DENIAL` was listed here as having no equivalent. That was wrong:
+#: `otag:mass-land-denial` resolves to 106 commander-legal cards (Armageddon,
+#: Apocalypse, Acid Rain, Ajani Vengeant). Four other spellings do 404, which is
+#: how the mistake happened, and the one that works is the Function value itself.
+#:
+#: **The tag is broader than our regex, and the two are not interchangeable.**
+#: Tagger includes land LOCKS — Winter Orb, Blood Moon, Back to Basics — which
+#: deny land use without destroying anything, while `classify.py` matches only
+#: destruction and mass sacrifice. Scored over the corpus, our regex is recall
+#: 0.21 at precision 0.69 against this tag. So `find mass_land_denial` is the
+#: right way to DISCOVER these cards, and `classify` remains the right thing for
+#: the bracket rule, which is written about destruction. Do not treat agreement
+#: between them as expected.
 FUNCTION_TAGS: dict[Function, str] = {
     F.RAMP: "ramp",
     F.DRAW: "draw",
@@ -126,6 +139,7 @@ FUNCTION_TAGS: dict[Function, str] = {
     F.RECURSION: "recursion",
     F.EXTRA_TURNS: "extra_turns",
     F.WINCON: "wincon",
+    F.MASS_LAND_DENIAL: "mass_land_denial",
 }
 
 #: Functions with no verified `otag:` equivalent. See `FUNCTION_TAGS`.
@@ -158,7 +172,17 @@ CROSS_CHECK: dict[str, frozenset[Function]] = {
     "recursion": frozenset({F.RECURSION}),
     "extra_turns": frozenset({F.EXTRA_TURNS}),
     "wincon": frozenset({F.WINCON}),
+    # Present but expected to disagree: the tag covers land locks and our regex
+    # covers destruction. See FUNCTION_TAGS. Reported rather than hidden.
+    "mass_land_denial": frozenset({F.MASS_LAND_DENIAL}),
 }
+
+#: Label for each otag value, so the hyphenated form resolves even where it
+#: differs from our label. `function_tag("extra-turn")` and
+#: `function_tag("win-condition")` used to raise despite the docstring promising
+#: the hyphenated otag works: normalising "extra-turn" gives "extra_turn", and
+#: the label is "extra_turns".
+_BY_OTAG = {value: label for label, value in TAGS.items()}
 
 #: Colour-identity letters Scryfall's `ci:` accepts. `c` means colourless.
 _IDENTITY_LETTERS = frozenset("wubrgc")
@@ -180,7 +204,10 @@ def function_tag(label: str) -> str:
     """
     if isinstance(label, Function):
         label = label.value
-    key = str(label).strip().casefold().replace("-", "_")
+    raw = str(label).strip().casefold()
+    if raw in _BY_OTAG:
+        return raw
+    key = raw.replace("-", "_")
     if key in TAGS:
         return TAGS[key]
     raise ValueError(
@@ -195,7 +222,10 @@ def canonical_label(label: str) -> str:
     """The canonical snake_case label for `label`. Raises ValueError if unknown."""
     if isinstance(label, Function):
         label = label.value
-    key = str(label).strip().casefold().replace("-", "_")
+    raw = str(label).strip().casefold()
+    if raw in _BY_OTAG:
+        return _BY_OTAG[raw]
+    key = raw.replace("-", "_")
     if key not in TAGS:
         function_tag(label)  # raises with the full vocabulary in the message
     return key

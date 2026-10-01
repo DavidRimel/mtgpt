@@ -385,8 +385,18 @@ def test_find_cards_cross_checks_against_our_own_classification():
     # Cultivate and Kodama's Reach are ramp by both the community tag and our
     # regex, so agreement is total.
     assert all(c["agrees_with_classify"] for c in result["cards"])
-    assert result["agreement_rate"] == 1.0
+    assert result["recall_estimate"] == 1.0
     assert result["classify_expects"] == ["ramp"]
+
+
+def test_find_cards_labels_its_number_as_recall_only():
+    # The name and the label both exist because an unlabelled 0.67 was read as
+    # accuracy and hid a classifier with 135 false positives.
+    client = client_for(load("search_results.json"), NO_GAME_CHANGERS)
+    result = api.find_cards("ramp", client=client)
+    assert "agreement_rate" not in result, "the ambiguous name must not come back"
+    assert "recall" in result["measures"]
+    assert "blind to false positives" in result["measures"].casefold()
 
 
 def test_a_disagreement_is_reported_rather_than_resolved():
@@ -400,20 +410,20 @@ def test_a_disagreement_is_reported_rather_than_resolved():
     client = client_for(payload, NO_GAME_CHANGERS)
     result = api.find_cards("ramp", client=client)
     assert result["cards"][0]["agrees_with_classify"] is False
-    assert result["agreement_rate"] == 0.0
+    assert result["recall_estimate"] == 0.0
 
 
 def test_cross_check_can_be_turned_off():
     client = client_for(load("search_results.json"), NO_GAME_CHANGERS)
     result = api.find_cards("ramp", cross_check=False, client=client)
     assert "agrees_with_classify" not in result["cards"][0]
-    assert result["agreement_rate"] is None
+    assert result["recall_estimate"] is None
 
 
 def test_no_verdict_is_claimed_for_a_tag_classify_cannot_judge():
     client = client_for(load("search_results.json"), NO_GAME_CHANGERS)
     result = api.find_cards("theft", client=client)
-    assert result["agreement_rate"] is None
+    assert result["recall_estimate"] is None
     assert result["classify_expects"] == []
     assert "cross_check_note" in result
     assert "agrees_with_classify" not in result["cards"][0]
@@ -444,7 +454,7 @@ def test_find_cards_reports_no_matches_rather_than_an_outage():
     result = api.find_cards("extra_turns", identity="w", client=client)
     assert result["count"] == 0
     assert result["cards"] == []
-    assert result["agreement_rate"] is None
+    assert result["recall_estimate"] is None
 
 
 def test_find_cards_still_raises_when_scryfall_is_actually_down():
@@ -659,3 +669,110 @@ def test_compare_degrades_to_zero_overlap_on_an_empty_average_deck():
     assert result["average_size"] == 0
     assert result["overlap_pct"] == 0.0
     assert result["missing_from_yours"] == []
+
+
+# --- the reverse direction: precision, not recall -----------------------------
+
+
+def classify_probe_payload(*cards):
+    return {"data": list(cards), "has_more": False}
+
+
+def test_check_classifier_measures_precision_not_recall():
+    # Two cards our regex calls ramp; Scryfall confirms only the first carries
+    # otag:ramp. That is precision: of what WE tagged, what did they tag too.
+    probe = classify_probe_payload(
+        tagger_payload("Sol Ring", "Artifact", "{T}: Add {C}{C}."),
+        tagger_payload("Fake Ramp", "Artifact", "{T}: Add {G}."),
+    )
+    confirmations = {"data": [{"name": "Sol Ring"}], "has_more": False}
+    client = client_for(probe, NO_GAME_CHANGERS, confirmations)
+    result = api.check_classifier("ramp", client=client)
+    assert result["count"] == 2
+    assert result["precision_estimate"] == 0.5
+    by_name = {c["name"]: c for c in result["cards"]}
+    assert by_name["Sol Ring"]["community_agrees"] is True
+    assert by_name["Fake Ramp"]["community_agrees"] is False
+    assert by_name["Sol Ring"]["source"] == "classify"
+
+
+def test_check_classifier_labels_its_number_as_precision_only():
+    probe = classify_probe_payload(tagger_payload("Sol Ring", "Artifact", "{T}: Add {C}{C}."))
+    client = client_for(probe, NO_GAME_CHANGERS, {"data": [{"name": "Sol Ring"}]})
+    result = api.check_classifier("ramp", client=client)
+    assert "precision" in result["measures"]
+    assert "blind to false negatives" in result["measures"].casefold()
+
+
+def test_check_classifier_does_not_query_otag_to_build_its_sample():
+    # Sampling by `otag:` and then measuring against `otag:` would beg the
+    # question. The sample comes from oracle text instead.
+    transport = FakeTransport(
+        classify_probe_payload(tagger_payload("Sol Ring", "Artifact", "{T}: Add {C}{C}.")),
+        NO_GAME_CHANGERS,
+        {"data": [{"name": "Sol Ring"}]},
+    )
+    client = ScryfallClient(transport=transport, sleep=lambda _: None)
+    api.check_classifier("ramp", client=client)
+    assert "otag" not in transport.calls[0][0], transport.calls[0][0]
+    # The confirmation query is the only one allowed to use the tag.
+    assert "otag" in transport.calls[-1][0]
+
+
+def test_check_classifier_claims_nothing_for_an_uncheckable_tag():
+    client = client_for()
+    result = api.check_classifier("theft", client=client)
+    assert result["precision_estimate"] is None
+    assert result["measures"] is None
+    assert "nothing to check" in result["cross_check_note"]
+
+
+def test_check_classifier_degrades_when_the_confirmation_query_fails():
+    import urllib.error
+
+    calls = {"n": 0}
+
+    def transport(url, payload=None):
+        calls["n"] += 1
+        if "otag" in url:
+            raise urllib.error.HTTPError(url, 500, "boom", {}, None)
+        if calls["n"] == 1:
+            return classify_probe_payload(
+                tagger_payload("Sol Ring", "Artifact", "{T}: Add {C}{C}.")
+            )
+        return NO_GAME_CHANGERS
+
+    client = ScryfallClient(transport=transport, sleep=lambda _: None)
+    result = api.check_classifier("ramp", client=client)
+    # No confirmations means no card is confirmed, not a traceback.
+    assert result["precision_estimate"] == 0.0
+
+
+def test_cross_check_function_reports_both_directions():
+    client = client_for(
+        load("search_results.json"),            # find_cards search
+        NO_GAME_CHANGERS,
+        classify_probe_payload(                 # check_classifier probe
+            tagger_payload("Sol Ring", "Artifact", "{T}: Add {C}{C}."),
+            tagger_payload("Fake Ramp", "Artifact", "{T}: Add {G}."),
+        ),
+        NO_GAME_CHANGERS,
+        {"data": [{"name": "Sol Ring"}]},       # confirmation
+    )
+    result = api.cross_check_function("ramp", client=client)
+    assert result["recall_estimate"] == 1.0
+    assert result["precision_estimate"] == 0.5
+    # Both labelled, in one place, because reporting either alone has misled.
+    assert "recall_estimate:" in result["measures"]
+    assert "precision_estimate:" in result["measures"]
+    assert result["precision_disagreements"] == ["Fake Ramp"]
+
+
+def test_every_cross_checkable_function_has_probe_words():
+    # `check_classifier` falls back to `o:<label>` when a label is missing here,
+    # and an underscored label matches no oracle text, so the sample would come
+    # back empty and the precision estimate would be silently None.
+    from mtgpt import tagger
+
+    for label in tagger.CROSS_CHECK:
+        assert label in api._PROBE_WORDS, label

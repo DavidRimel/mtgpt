@@ -24,11 +24,53 @@ def test_rejected_tags_are_not_also_shipped():
     assert shipped.isdisjoint(tagger.REJECTED)
 
 
-def test_mass_land_denial_has_no_tag_and_that_is_recorded():
-    # Every candidate name 404s, so `find` cannot serve this function. The
-    # absence is documented rather than papered over with a wrong tag.
-    assert Function.MASS_LAND_DENIAL in tagger.UNMAPPED_FUNCTIONS
-    assert Function.MASS_LAND_DENIAL not in tagger.FUNCTION_TAGS
+def test_mass_land_denial_has_a_tag_after_all():
+    # This shipped as "no Tagger equivalent exists", which was wrong:
+    # otag:mass-land-denial resolves to 106 commander-legal cards. Four other
+    # spellings 404 (see REJECTED), and the one that works is the Function's own
+    # value — which is exactly what function_tag's normalisation is for.
+    assert tagger.function_tag(Function.MASS_LAND_DENIAL) == "mass-land-denial"
+    assert Function.MASS_LAND_DENIAL not in tagger.UNMAPPED_FUNCTIONS
+
+
+def test_only_land_and_synergy_lack_a_tag():
+    # Both for reasons about our own model rather than about Tagger: `land` is
+    # better served by `t:land`, and `synergy` is our catch-all for "no named
+    # function", which is not something a human tags a card with.
+    assert tagger.UNMAPPED_FUNCTIONS == frozenset({Function.LAND, Function.SYNERGY})
+
+
+@pytest.mark.parametrize(
+    "given,expected",
+    [
+        # The docstring promised the hyphenated otag works; these two raised,
+        # because normalising "extra-turn" gives "extra_turn" and the label is
+        # "extra_turns".
+        ("extra-turn", "extra-turn"),
+        ("win-condition", "win-condition"),
+        ("mass-land-denial", "mass-land-denial"),
+        ("sacrifice-outlet", "sacrifice-outlet"),
+    ],
+)
+def test_the_hyphenated_otag_resolves_even_when_it_differs_from_our_label(given, expected):
+    assert tagger.function_tag(given) == expected
+    # And round-trips to the label, so `find` echoes a consistent name.
+    assert tagger.function_tag(tagger.canonical_label(given)) == expected
+
+
+def test_every_otag_value_resolves_to_itself():
+    for value in tagger.TAGS.values():
+        assert tagger.function_tag(value) == value
+
+
+def test_mass_land_denial_cross_check_is_declared_despite_expecting_disagreement():
+    # The tag is BROADER than our regex: it covers land locks (Winter Orb, Blood
+    # Moon, Back to Basics) and our regex covers destruction. Measured over the
+    # corpus that is recall 0.21 at precision 0.69. It is still declared, so the
+    # disagreement is reported rather than hidden by omission.
+    assert tagger.cross_check_functions("mass_land_denial") == frozenset(
+        {Function.MASS_LAND_DENIAL}
+    )
 
 
 def test_unmapped_functions_is_exactly_the_complement():

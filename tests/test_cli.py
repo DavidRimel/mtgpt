@@ -13,9 +13,9 @@ def test_every_subcommand_is_registered():
     actions = [a for a in parser._actions if a.dest == "command"]
     assert actions, "expected a subcommand dest named 'command'"
     assert set(actions[0].choices) == {
-        "card", "search", "find", "classify", "import", "read", "validate", "audit",
-        "bracket", "report", "compare", "synergy", "themes", "combos", "card-combos",
-        "suggest",
+        "card", "search", "find", "cross-check", "classify", "import", "read",
+        "validate", "audit", "bracket", "report", "compare", "synergy", "themes",
+        "combos", "card-combos", "suggest",
     }
 
 
@@ -309,3 +309,21 @@ def test_an_edhrec_outage_during_compare_emits_the_error_envelope(
     assert cli.main(["compare", "--file", str(path)]) == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload["error"]["source"] == "EDHREC"
+
+
+def test_cross_check_defaults_to_both_directions(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(cli.api, "cross_check_function",
+                        lambda f, **kw: seen.setdefault("called", "both") and {})
+    assert cli.main(["cross-check", "recursion"]) == 0
+    assert seen["called"] == "both"
+
+
+def test_cross_check_can_ask_for_one_direction(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli.api, "find_cards", lambda f, **kw: calls.append("recall") or {})
+    monkeypatch.setattr(cli.api, "check_classifier",
+                        lambda f, **kw: calls.append("precision") or {})
+    cli.main(["cross-check", "recursion", "--direction", "recall"])
+    cli.main(["cross-check", "recursion", "--direction", "precision"])
+    assert calls == ["recall", "precision"]
