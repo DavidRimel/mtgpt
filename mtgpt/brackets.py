@@ -35,15 +35,21 @@ class BracketRule:
     allow_mass_land_denial: bool
     watch_extra_turns: bool
     tutor_guidance: str
-    allow_two_card_combos: bool
+    #: How this bracket treats two-card infinite combos:
+    #:   "banned"  — excluded outright (brackets 1-2)
+    #:   "late_only" — permitted only as a late-game finish (bracket 3). mtgpt
+    #:                 cannot judge combo speed, so this warns rather than errors
+    #:                 and leaves the call to the pilot.
+    #:   "allowed" — unrestricted (brackets 4-5)
+    two_card_combos: str
 
 
 RULES: dict[int, BracketRule] = {
-    1: BracketRule(1, "Exhibition", 0, False, True, "minimal", False),
-    2: BracketRule(2, "Core", 0, False, True, "sparse", False),
-    3: BracketRule(3, "Upgraded", 3, False, True, "unrestricted", False),
-    4: BracketRule(4, "Optimized", None, True, False, "unrestricted", True),
-    5: BracketRule(5, "cEDH", None, True, False, "unrestricted", True),
+    1: BracketRule(1, "Exhibition", 0, False, True, "minimal", "banned"),
+    2: BracketRule(2, "Core", 0, False, True, "sparse", "banned"),
+    3: BracketRule(3, "Upgraded", 3, False, True, "unrestricted", "late_only"),
+    4: BracketRule(4, "Optimized", None, True, False, "unrestricted", "allowed"),
+    5: BracketRule(5, "cEDH", None, True, False, "unrestricted", "allowed"),
 }
 
 #: Checks Layer 1 cannot perform without combo data.
@@ -172,18 +178,32 @@ def check(
         )
 
     two_card = tuple(c for c in (combos or ()) if c.get("card_count") == 2)
-    if combos is not None and two_card and not rule.allow_two_card_combos:
+    if combos is not None and two_card:
         names = "; ".join(" + ".join(c["cards"]) for c in two_card[:3])
-        findings.append(
-            Violation(
-                severity=Severity.ERROR,
-                code="two_card_combo",
-                message=(
-                    f"{len(two_card)} two-card infinite combo(s) detected, which bracket "
-                    f"{rule.number} ({rule.name}) excludes: {names}."
-                ),
+        if rule.two_card_combos == "banned":
+            findings.append(
+                Violation(
+                    severity=Severity.ERROR,
+                    code="two_card_combo",
+                    message=(
+                        f"{len(two_card)} two-card infinite combo(s) detected, which "
+                        f"bracket {rule.number} ({rule.name}) excludes: {names}."
+                    ),
+                )
             )
-        )
+        elif rule.two_card_combos == "late_only":
+            findings.append(
+                Violation(
+                    severity=Severity.WARNING,
+                    code="two_card_combo",
+                    message=(
+                        f"{len(two_card)} two-card infinite combo(s) detected: {names}. "
+                        f"Bracket {rule.number} ({rule.name}) permits these only as a "
+                        "late-game finish, not an early-game line. mtgpt cannot judge "
+                        "combo speed, so decide whether yours assembles early."
+                    ),
+                )
+            )
 
     deferred = (
         (EXTRA_TURN_APPROXIMATION,)

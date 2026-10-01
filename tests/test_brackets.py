@@ -204,17 +204,31 @@ def test_combo_note_present_when_combos_are_not_supplied():
     assert any("Spellbook" in note for note in report.deferred_checks)
 
 
-def test_two_card_combo_is_an_error_below_bracket_four():
+def test_two_card_combo_is_an_error_at_brackets_one_and_two():
     combos = [{"card_count": 2, "cards": ("Thassa's Oracle", "Demonic Consultation")}]
-    report = check(deck_of([card("Bear")]), target=2, combos=combos)
-    assert "two_card_combo" in [f.code for f in report.findings]
-    assert report.compliant is False
+    for target in (1, 2):
+        report = check(deck_of([card("Bear")]), target=target, combos=combos)
+        finding = next(f for f in report.findings if f.code == "two_card_combo")
+        assert finding.severity is Severity.ERROR
+        assert report.compliant is False
 
 
-def test_two_card_combo_is_allowed_at_bracket_four():
+def test_two_card_combo_is_only_a_warning_at_bracket_three():
+    """Bracket 3 permits a late-game combo finish, so an ERROR would wrongly
+    fail a legal deck. mtgpt cannot judge speed, so it warns."""
     combos = [{"card_count": 2, "cards": ("Thassa's Oracle", "Demonic Consultation")}]
-    report = check(deck_of([card("Bear")]), target=4, combos=combos)
-    assert "two_card_combo" not in [f.code for f in report.findings]
+    report = check(deck_of([card("Bear")]), target=3, combos=combos)
+    finding = next(f for f in report.findings if f.code == "two_card_combo")
+    assert finding.severity is Severity.WARNING
+    assert "late-game" in finding.message
+    assert report.compliant is True
+
+
+def test_two_card_combo_is_silent_at_brackets_four_and_five():
+    combos = [{"card_count": 2, "cards": ("Thassa's Oracle", "Demonic Consultation")}]
+    for target in (4, 5):
+        report = check(deck_of([card("Bear")]), target=target, combos=combos)
+        assert "two_card_combo" not in [f.code for f in report.findings]
 
 
 def test_three_card_combo_is_not_flagged_as_a_two_card_combo():
