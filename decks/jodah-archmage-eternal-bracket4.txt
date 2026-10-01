@@ -1,0 +1,103 @@
+Commander
+1 Jodah, Archmage Eternal
+
+Deck
+1 Fist of Suns
+1 Omniscience
+1 Mana Vault
+1 Grim Monolith
+1 Chrome Mox
+1 Mox Diamond
+1 Sol Ring
+1 Arcane Signet
+1 Chromatic Lantern
+1 Fellwar Stone
+1 Birds of Paradise
+1 Bloom Tender
+1 Faeburrow Elder
+1 Jegantha, the Wellspring
+1 Smothering Tithe
+1 Chromatic Orrery
+1 Farseek
+1 Nature's Lore
+1 Three Visits
+1 Cultivate
+1 Demonic Tutor
+1 Vampiric Tutor
+1 Mystical Tutor
+1 Enlightened Tutor
+1 Imperial Seal
+1 Conflux
+1 Rhystic Study
+1 Mystic Remora
+1 The One Ring
+1 Consecrated Sphinx
+1 Nezahal, Primal Tide
+1 Sylvan Library
+1 Esper Sentinel
+1 Fierce Guardianship
+1 Force of Will
+1 Swan Song
+1 Deflecting Swat
+1 Teferi's Protection
+1 Cyclonic Rift
+1 Ruinous Ultimatum
+1 In Garruk's Wake
+1 All Is Dust
+1 Decree of Pain
+1 Toxic Deluge
+1 Swords to Plowshares
+1 Anguished Unmaking
+1 Beast Within
+1 Enter the Infinite
+1 Expropriate
+1 Apex Devastator
+1 Genesis Ultimatum
+1 One with the Multiverse
+1 Maelstrom Wanderer
+1 Zacama, Primal Calamity
+1 Progenitus
+1 Approach of the Second Sun
+1 Portal to Phyrexia
+1 Jin-Gitaxias, Core Augur
+1 Sheoldred, Whispering One
+1 Archon of Cruelty
+1 Blightsteel Colossus
+1 Worldspine Wurm
+1 Command Tower
+1 City of Brass
+1 Mana Confluence
+1 Forbidden Orchard
+1 Reflecting Pool
+1 Exotic Orchard
+1 Timeless Lotus
+1 Flooded Strand
+1 Polluted Delta
+1 Spirebluff Canal
+1 Cavern of Souls
+1 Windswept Heath
+1 Marsh Flats
+1 Scalding Tarn
+1 Verdant Catacombs
+1 The World Tree
+1 Misty Rainforest
+1 Tundra
+1 Underground Sea
+1 Volcanic Island
+1 Tropical Island
+1 Savannah
+1 Scrubland
+1 Badlands
+1 Taiga
+1 Plateau
+1 Bayou
+1 Hallowed Fountain
+1 Watery Grave
+1 Steam Vents
+1 Breeding Pool
+1 Temple Garden
+1 Spara's Headquarters
+1 Raffine's Tower
+1 Xander's Lounge
+1 Ziatora's Proving Ground
+1 Jetmir's Garden
