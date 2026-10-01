@@ -149,7 +149,9 @@ it recovers from disruption (`disruption`).
    effects `drain`, `draw`, `treasure`, `tokens`/`token_power`, `anthem` (number: +N
    power to each creature you control); tags `sac_outlet`, `payoff`, `finisher`;
    `priority` `engine` or `hold`). Engine names must be in the deck: a `GoalError`
-   names the field and value at fault.
+   names the field and value at fault. An override replaces the card's parsed
+   effect, so restate anything from its text you still want (a Phyrexian Arena
+   override with only a `drain` no longer draws).
 2. **Ask which mode to run, every time; never pick for the user:**
    - **Auto** — 1000 heuristic games; the statistics that drive tuning.
 
@@ -169,7 +171,9 @@ it recovers from disruption (`disruption`).
      ```
 
      Choose only from the view's `legal_actions`; a tutor waits for
-     `{"tutor": "<name>"}`. **Never open the state file** — it holds the
+     `{"tutor": "<name>"}`. The view's `mana_available` is mana you can spend
+     right now, while the `{"mana_available": N}` condition counts the board's
+     per-turn production plus Treasures. **Never open the state file** — it holds the
      library order, which a player would not know. Read the view.
    - **Both** — auto first, then pilot games `--game 0..N-1` of the same
      `--seed`: pilot game I is dealt exactly as auto game I (same shuffle and
@@ -179,7 +183,8 @@ it recovers from disruption (`disruption`).
 3. Name the weakest block — setup, commander, thing, or win — and say what
    it means for how the deck plays. Surface `notes.unmodeled`: those cards'
    text did nothing in the sim, so offer an `engine` override for any that
-   matter.
+   matter. Check `notes.goal_warnings`: each names a `count` in the goal no
+   card in the deck can meet, so fix the goal before reading the numbers.
 4. Find candidates with `suggest`, `search`, and `classify` — never from
    memory — and swap them into a copy of the list.
 5. Re-run in the same mode. For auto, compare on matched seeds:
@@ -194,9 +199,11 @@ it recovers from disruption (`disruption`).
 
 Goldfish numbers are optimistic by construction: no opponent, no blockers,
 no interaction but the disruption dice. Say so, and use them to compare
-versions of a deck, not to predict real games. Interaction is held, never
-cast, by the auto pilot; `thing.interaction_while_online` and
-`covered_rate` are how much of it you are holding while the plan is live.
+versions of a deck, not to predict real games. Instant and sorcery
+interaction is held, never cast, by the auto pilot; `thing.interaction_while_online`
+and `covered_rate` are how much of it you are holding while the plan is live.
+Interaction permanents (Equipment, Lightning Greaves, Mother of Runes) are cast,
+and on the battlefield they protect the commander from removal.
 
 ### Investigate a combo
 

@@ -149,7 +149,8 @@ Keyed by card name; each name must be in the resolved deck. Fields:
 - `priority`: `"engine"` (cast right after the commander) or `"hold"` (never cast by
   the auto policy until the `win` condition becomes reachable this turn).
 
-An override replaces the parsed effect for that card.
+An override replaces the parsed effect for that card: only its power, `power_bonus`, and
+land face survive, so restate anything from its text the sim should still do.
 
 ### Combat
 
@@ -190,11 +191,16 @@ carries the legal list.
 2. Cast by priority, cheapest first within a tier, repeating while mana remains:
    1. Ramp.
    2. The commander.
-   3. Engine pieces (`priority: "engine"`, or anything the `thing` condition names).
+   3. Engine pieces (`priority: "engine"`, or anything the `thing` or `win` condition
+      names, interaction included). In a voltron deck, Equipment and Auras that are
+      interaction (Lightning Greaves, Swords) are cast here too.
    4. Draw and value.
-   5. Other creatures and permanents.
-   6. Removal, sweepers, protection, counterspells: **never cast**. They are held and
-      counted, and protection is spent by disruption.
+   5. Other creatures and permanents, including other interaction permanents
+      (Mother of Runes, Ravenous Chupacabra).
+   6. Instant and sorcery removal, sweepers, protection, counterspells: **never cast**.
+      They are held and counted, and protection is spent by disruption. Interaction
+      permanents still count as held while in hand. An MDFC whose spell face is
+      unmodeled is kept as a land unless the goal names it.
 3. Tutor target: the first missing piece of `thing`, then of `win`, then a land if
    under 4 lands, otherwise the highest-priority card not in hand.
 
@@ -202,12 +208,13 @@ carries the legal list.
 
 From `from_turn`, each turn rolls independently:
 
-- **Commander removal** (probability `commander_removal`): if a protection card or a
-  counterspell is in hand, it is discarded and the event is stopped. Otherwise the commander
+- **Commander removal** (probability `commander_removal`): if a protection permanent is
+  on the battlefield, the event is stopped and the permanent stays. Otherwise, if a
+  protection card or a counterspell is in hand, it is discarded and the event is stopped. Otherwise the commander
   returns to the command zone and its tax rises by 2.
 - **Board wipe** (probability `board_wipe`): stopped the same way, but only by protection
-  that survives a wipe (indestructible or phasing) or a counterspell; hexproof does not stop
-  a wipe. Otherwise every nonland permanent except noncreature mana rocks leaves; lands and
+  that survives a wipe (indestructible or phasing) or a counterspell in hand; hexproof, and
+  protection on the battlefield, do not stop a wipe. Otherwise every nonland permanent except noncreature mana rocks leaves; lands and
   rocks stay, and creatures that die fire `creature_dies`.
 
 Both dice are rolled every eligible turn whether or not the event could land, so two decks
@@ -257,7 +264,8 @@ disruption: events, landed, stopped_by_protection_rate (protection or counterspe
             win_rate_after_event
 win:        win_rate (by turn cap), win_turn {p25, median, p75, histogram},
             by_condition {condition: rate}
-notes:      unmodeled (card names, minus those with an engine override), goldfish caveat
+notes:      unmodeled (card names, minus those with an engine override), goal_warnings (counts
+            no card in the deck can meet), goldfish caveat
 ```
 
 The report's top level also carries `games`, `seed`, `turn_cap`, `disruption_enabled`, and,
