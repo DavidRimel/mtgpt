@@ -79,6 +79,47 @@ def test_flags_non_legendary_commander():
     assert "commander_not_legendary" in codes(validate(deck))
 
 
+def test_rejects_the_one_ring_as_commander():
+    """The One Ring is legendary artifact, not creature, and has no commander text."""
+    deck = ResolvedDeck(
+        commanders=(card("The One Ring", type_line="Legendary Artifact"),),
+        cards=((99, card("Forest", type_line="Basic Land — Forest")),),
+    )
+    assert "commander_not_legendary" in codes(validate(deck))
+
+
+def test_rejects_jace_without_commander_text():
+    """Jace, the Mind Sculptor is legendary planeswalker without commander text."""
+    deck = ResolvedDeck(
+        commanders=(card("Jace, the Mind Sculptor", type_line="Legendary Planeswalker — Jace"),),
+        cards=((99, card("Forest", type_line="Basic Land — Forest")),),
+    )
+    assert "commander_not_legendary" in codes(validate(deck))
+
+
+def test_accepts_daretti_with_commander_text():
+    """Daretti, Scrap Savant says it can be a commander in its oracle text."""
+    deck = ResolvedDeck(
+        commanders=(card("Daretti, Scrap Savant",
+                        type_line="Legendary Planeswalker — Daretti",
+                        oracle_text="[+1]: ...\n[-1]: ...\n[-4]: ... can be your commander."),),
+        cards=((99, card("Forest", type_line="Basic Land — Forest")),),
+    )
+    violations = [v for v in validate(deck) if v.code == "commander_not_legendary"]
+    assert not violations
+
+
+def test_accepts_atraxa_as_legendary_creature():
+    """Atraxa is a legendary creature and always valid as a commander."""
+    deck = ResolvedDeck(
+        commanders=(card("Atraxa, Praetors' Voice",
+                        type_line="Legendary Creature — Phyrexian Angel Horror"),),
+        cards=((99, card("Forest", type_line="Basic Land — Forest")),),
+    )
+    violations = [v for v in validate(deck) if v.code == "commander_not_legendary"]
+    assert not violations
+
+
 def test_flags_duplicate_nonbasic():
     deck = legal_deck(extra=((2, card("Sol Ring")),))
     violations = [v for v in validate(deck) if v.code == "singleton"]
@@ -90,6 +131,22 @@ def test_allows_duplicate_basic_lands():
     assert "singleton" not in codes(validate(deck))
 
 
+def test_allows_any_number_of_relentless_rats():
+    """Relentless Rats says 'A deck can have any number of cards named Relentless Rats.'"""
+    deck = legal_deck(extra=((10, card("Relentless Rats",
+                                        oracle_text="A deck can have any number of cards named Relentless Rats.")),))
+    violations = [v for v in validate(deck) if v.code == "singleton"]
+    assert not violations
+
+
+def test_allows_up_to_seven_dwarves():
+    """Seven Dwarves says 'A deck can have up to seven cards named Seven Dwarves.'"""
+    deck = legal_deck(extra=((7, card("Seven Dwarves",
+                                       oracle_text="A deck can have up to seven cards named Seven Dwarves.")),))
+    violations = [v for v in validate(deck) if v.code == "singleton"]
+    assert not violations
+
+
 def test_flags_color_identity_violation():
     deck = legal_deck(extra=((1, card("Lightning Bolt", color_identity=frozenset("R"))),))
     violations = [v for v in validate(deck) if v.code == "color_identity"]
@@ -98,9 +155,6 @@ def test_flags_color_identity_violation():
     assert violations[0].severity is Severity.ERROR
 
 
-def test_colorless_card_never_violates_identity():
-    deck = legal_deck()
-    assert "color_identity" not in codes(validate(deck))
 
 
 def test_flags_banned_card():
@@ -109,14 +163,28 @@ def test_flags_banned_card():
     assert violations and violations[0].severity is Severity.ERROR
 
 
-def test_flags_commander_color_identity_against_itself():
-    """A commander's own identity defines the deck, so it can never violate."""
-    deck = legal_deck()
-    assert not [v for v in validate(deck) if "Atraxa" in v.message]
+def test_colorless_commander_flags_any_colored_card():
+    """Colorless commander allows only colorless cards; {C} must render correctly."""
+    kozilek = card("Kozilek, Butcher of Truth",
+                   type_line="Legendary Creature — Eldrazi",
+                   color_identity=frozenset())
+    spells = tuple((1, card(f"Spell {i}")) for i in range(62))
+    lands = ((36, card("Wastes", type_line="Basic Land — Wastes")),)
+    deck = ResolvedDeck(
+        commanders=(kozilek,),
+        cards=spells + lands + ((1, card("Llanowar Elves", color_identity=frozenset("G"))),),
+    )
+    violations = [v for v in validate(deck) if v.code == "color_identity"]
+    assert len(violations) == 1
+    assert "Llanowar Elves" in violations[0].message
+    assert "{C}" in violations[0].message
 
 
 def test_errors_sort_before_warnings():
-    deck = ResolvedDeck(commanders=(), cards=((5, card("Forest")),))
+    """A not-legal (but not banned) card is a WARNING and must sort after ERRORs."""
+    deck = legal_deck(extra=((1, card("Un-Set Card", legal_commander="not_legal")),))
     violations = validate(deck)
     severities = [v.severity for v in violations]
+    assert Severity.ERROR in severities and Severity.WARNING in severities
     assert severities == sorted(severities)
+    assert severities[0] is Severity.ERROR

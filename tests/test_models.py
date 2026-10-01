@@ -43,6 +43,11 @@ def test_card_is_basic_land_only_for_basics():
     assert not sample_card("Command Tower", type_line="Land").is_basic_land
 
 
+def test_card_recognizes_snow_basics():
+    """Snow-Covered Forest has type 'Basic Snow Land — Forest', not just 'Basic Land'."""
+    assert sample_card("Snow-Covered Forest", type_line="Basic Snow Land — Forest").is_basic_land
+
+
 def test_card_is_land_front_face():
     assert sample_card("Command Tower", type_line="Land").is_land
     assert not sample_card("Cultivate", type_line="Sorcery").is_land

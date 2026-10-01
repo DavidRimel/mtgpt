@@ -12,6 +12,20 @@ from .models import ResolvedDeck, Severity, Violation
 DECK_SIZE = 100
 
 
+def _can_be_commander(card) -> bool:
+    """Legendary creature, Background, or a card that says it can be a commander.
+
+    The oracle-text clause is what admits planeswalkers like Daretti, Scrap
+    Savant while still rejecting Jace, the Mind Sculptor and The One Ring.
+    """
+    type_line = card.front_type_line
+    if "Legendary" in type_line and "Creature" in type_line:
+        return True
+    if "Background" in type_line:
+        return True
+    return "can be your commander" in (card.oracle_text or "").lower()
+
+
 def validate(deck: ResolvedDeck) -> tuple[Violation, ...]:
     """Return every rules violation found, errors first."""
     findings: list[Violation] = []
@@ -69,7 +83,7 @@ def _check_commanders(deck: ResolvedDeck) -> list[Violation]:
         )
 
     for commander in deck.commanders:
-        if "Legendary" not in commander.type_line and "Background" not in commander.type_line:
+        if not _can_be_commander(commander):
             findings.append(
                 Violation(
                     severity=Severity.ERROR,
@@ -86,7 +100,7 @@ def _check_commanders(deck: ResolvedDeck) -> list[Violation]:
 def _check_singleton(deck: ResolvedDeck) -> list[Violation]:
     findings: list[Violation] = []
     for qty, card in deck.cards:
-        if qty > 1 and not card.is_basic_land:
+        if qty > 1 and not card.is_basic_land and not card.allows_any_number:
             findings.append(
                 Violation(
                     severity=Severity.ERROR,

@@ -7,7 +7,15 @@ fields use tuple/frozenset to keep instances hashable.
 from __future__ import annotations
 
 import enum
+import re
 from dataclasses import dataclass
+
+
+#: Cards that exempt themselves from singleton, e.g. Relentless Rats ("any
+#: number") and Seven Dwarves ("up to seven").
+_ANY_NUMBER_RE = re.compile(
+    r"a deck can have (?:any number of|up to \w+) cards named", re.IGNORECASE
+)
 
 
 class Function(enum.Enum):
@@ -110,7 +118,19 @@ class Card:
 
     @property
     def is_basic_land(self) -> bool:
-        return self.front_type_line.startswith("Basic Land")
+        """True for basic lands, including snow basics.
+
+        Scryfall types Snow-Covered Forest as "Basic Snow Land — Forest", so a
+        startswith("Basic Land") test misses every snow basic and floods a snow
+        deck with false singleton violations.
+        """
+        line = self.front_type_line
+        return line.startswith("Basic") and "Land" in line
+
+    @property
+    def allows_any_number(self) -> bool:
+        """True when the card's own text exempts it from the singleton rule."""
+        return bool(_ANY_NUMBER_RE.search(self.oracle_text or ""))
 
     @property
     def is_mdfc_land(self) -> bool:
