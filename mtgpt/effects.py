@@ -170,6 +170,16 @@ class SimEffect:
     opp_draw_treasure: bool = False
     #: A static hoser that stops opponents' win attempts while it is out.
     stax: bool = False
+    #: Doesn't untap in your untap step (Mana Vault).
+    no_untap: bool = False
+    #: Pact: once spent, pay this at your next upkeep or lose (Pact of Negation).
+    pact_cost: str | None = None
+    #: A tutor that puts the card on top instead of in hand (Vampiric Tutor).
+    tutor_to_top: bool = False
+    #: Enters only by discarding a land from hand (Mox Diamond).
+    discard_land: bool = False
+    #: Exiles a card from hand on entering and taps for its colors (Chrome Mox).
+    imprint: bool = False
 
     @property
     def is_ramp(self) -> bool:
@@ -192,7 +202,7 @@ class SimEffect:
             or self.landfall_treasure or self.mana_per_color or self.cascade
             or self.grants_cascade_min or self.approach or self.dig_permanents or self.dig_look
             or self.free_spell_per_turn or self.emergent or self.sac_tutor_top
-            or self.opp_draw_cards or self.opp_draw_treasure or self.stax
+            or self.opp_draw_cards or self.opp_draw_treasure or self.stax or self.imprint
         )
 
 
@@ -498,6 +508,16 @@ def _mechanics(card: Card, text: str) -> dict:
     if re.search(r"\b(?:your opponents|each opponent|players|your opponents' spells) can't (?:cast|search|win)", t) \
             or "spells your opponents cast cost" in t or "your opponents can't" in t and "spells" in t:
         out["stax"] = True
+    if "doesn't untap during your untap step" in t:
+        out["no_untap"] = True
+    if m := re.search(r"at the beginning of your next upkeep, pay ((?:\{[^}]+\})+)\. if you don't, you lose the game", t):
+        out["pact_cost"] = m.group(1).upper()
+    if re.search(r"search your library for [^.]*?(?:then shuffle and )?put (?:that card|it) on top", t):
+        out["tutor_to_top"] = True
+    if "you may discard a land card instead" in t:
+        out["discard_land"] = True
+    if "imprint — when this artifact enters, you may exile a nonartifact, nonland card from your hand" in t:
+        out["imprint"] = True
     if "at the beginning of your draw step, you may draw two additional cards" in t:
         out["sylvan"] = True
     return out

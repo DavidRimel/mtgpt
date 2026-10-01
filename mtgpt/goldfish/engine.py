@@ -180,6 +180,12 @@ class GameState:
     events: list[dict] = field(default_factory=list)
     #: Opponents' win attempts: {"turn", "stopped", "by"}.
     win_attempts: list[dict] = field(default_factory=list)
+    #: Pact costs owed: [cost, turn_index of the upkeep it is due].
+    pacts_due: list[list] = field(default_factory=list)
+    #: Chrome Mox and kin: card index -> colors of the card exiled with it.
+    imprints: dict[int, list[str]] = field(default_factory=dict)
+    #: True while the pending tutor puts its card on top (Vampiric Tutor).
+    pending_tutor_top: bool = False
     late_reason: str | None = None
     log: list[str] = field(default_factory=list)
 
@@ -292,7 +298,10 @@ def legal_actions(state: GameState) -> list[dict]:
         if state.library and _lands_from_top(state) and state.cards[state.library[0]].is_land:
             actions.append({"play_land_top": state.cards[state.library[0]].name})
     units = _units(state)
+    has_land = any(state.cards[i].is_land for i in state.hand)
     for idx in _first_of_each(state, state.hand + state.command_zone):
+        if state.cards[idx].effect.discard_land and not has_land:
+            continue
         if not state.cards[idx].is_land and _payment(state, idx, units) is not None:
             actions.append({"cast": state.cards[idx].name})
     if _has_tag(state, "sac_outlet"):
@@ -446,6 +455,10 @@ def _cast(s: GameState, name: str) -> None:
     (s.hand if from_hand is not None else s.command_zone).remove(idx)
     card = s.cards[idx]
     del s.graveyard[:delved]  # delve exiles them
+    if card.effect.discard_land:
+        land = next(i for i in s.hand if s.cards[i].is_land)
+        s.hand.remove(land)
+        s.graveyard.append(land)
     s.free_spells_used += free
     s.spent_this_turn[_spend_category(s, idx)] += len(plan)
     s.cast_names.append(name)
@@ -547,6 +560,22 @@ def _resolve(s: GameState, idx: int, *, from_hand: bool = False) -> None:
     if effect.tutor and any(_tutor_matches(s.cards[i], effect.tutor) for i in s.library):
         s.pending_tutor = effect.tutor
         s.tutors_left = max(1, effect.tutor_count)
+        s.pending_tutor_top = effect.tutor_to_top
+    if effect.imprint:
+        _imprint(s, idx)
+
+
+def _imprint(s: GameState, mox: int) -> None:
+    """Chrome Mox: exile the least needed colored nonartifact, nonland card from
+    hand; the mox taps for its colors. With nothing to exile it makes no mana."""
+    options = [i for i in s.hand if not s.cards[i].is_land and s.cards[i].colors
+               and "Artifact" not in s.cards[i].type_line]
+    if not options:
+        return
+    worst = _best_cards(s, options, len(options))[-1]
+    s.hand.remove(worst)
+    s.imprints[mox] = [c for c in s.cards[worst].colors if c in _ANY]
+    s.log.append(f"T{s.turn}: imprint {s.cards[worst].name}")
 
 
 def _dig_permanents(s: GameState, n: int) -> None:
@@ -598,6 +627,16 @@ def _best_cards(s: GameState, idxs: list[int], k: int) -> list[int]:
 def _tutor(s: GameState, name: str | None) -> None:
     restriction = s.pending_tutor
     s.pending_tutor = None
+    if name is not None and s.pending_tutor_top:
+        idx = find_card(s, name, s.library)
+        s.library.remove(idx)
+        s.rng.shuffle(s.library)
+        s.library.insert(0, idx)
+        s.pending_tutor_top = False
+        s.tutors_left = 0
+        s.log.append(f"T{s.turn}: tutor {name} to the top")
+        return
+    s.pending_tutor_top = False
     if name is not None:
         idx = find_card(s, name, s.library)
         s.library.remove(idx)
@@ -784,7 +823,11 @@ def _begin_turn(s: GameState, *, extra: bool = False) -> None:
         if s.over:
             return
     for perm in s.battlefield:
-        perm.tapped = False
+        if not (perm.card is not None and s.cards[perm.card].effect.no_untap):
+            perm.tapped = False
+    _pay_pacts(s)
+    if s.over:
+        return
     _sac_tutors(s)
     for perm in list(s.battlefield):
         if perm.card is not None:
@@ -832,13 +875,36 @@ def _opponent_win_attempt(s: GameState) -> None:
         wanted.add("counterspell")
     for idx in s.hand:
         if s.cards[idx].effect.held & wanted:
-            s.hand.remove(idx)
-            s.graveyard.append(idx)
+            _spend_answer(s, idx, due_now=True)
             s.win_attempts.append({"turn": s.turn, "stopped": True, "by": s.cards[idx].name})
             s.log.append(f"T{s.turn}: opponent's win attempt stopped by {s.cards[idx].name}")
             return
     s.win_attempts.append({"turn": s.turn, "stopped": False, "by": None})
     _lose(s, "opponent_win")
+
+
+def _spend_answer(s: GameState, idx: int, *, due_now: bool) -> None:
+    """An answer leaves hand for the graveyard; a pact's cost comes due at
+    your next upkeep — this turn's if it was spent during the opponents' turns."""
+    s.hand.remove(idx)
+    s.graveyard.append(idx)
+    cost = s.cards[idx].effect.pact_cost
+    if cost:
+        s.pacts_due.append([cost, s.turn_index if due_now else s.turn_index + 1])
+
+
+def _pay_pacts(s: GameState) -> None:
+    due = [p for p in s.pacts_due if p[1] <= s.turn_index]
+    s.pacts_due = [p for p in s.pacts_due if p[1] > s.turn_index]
+    for cost, _ in due:
+        generic, pips = parse_cost(cost)
+        units = _units(s)
+        plan = plan_payment(units, generic, pips)
+        if plan is None:
+            _lose(s, "pact")
+            return
+        _spend(s, plan, units)
+        s.log.append(f"T{s.turn}: paid a pact ({cost})")
 
 
 def _sac_tutors(s: GameState) -> None:
@@ -884,8 +950,7 @@ def _event(s: GameState, kind: str) -> None:
             return
     answer = _answer_in_hand(s, kind)
     if answer is not None:
-        s.hand.remove(answer)
-        s.graveyard.append(answer)
+        _spend_answer(s, answer, due_now=False)
         s.events.append({"turn": s.turn, "kind": kind, "stopped": True,
                          "by": s.cards[answer].name})
         s.log.append(f"T{s.turn}: {kind} stopped by {s.cards[answer].name}")
@@ -1043,7 +1108,10 @@ def _produces(s: GameState, perm: Permanent, *, ignore_sickness: bool = False,
         return [colors]
     if perm.is_creature and perm.entered >= s.turn_index and not ignore_sickness:
         return []
-    if effect.mana_per_color:
+    if effect.imprint:
+        colors = s.imprints.get(perm.card)
+        units = [frozenset(colors)] if colors else []
+    elif effect.mana_per_color:
         units = [frozenset({c}) for c in sorted(permanent_colors)]
     else:
         units = [effect.mana_colors] * effect.mana
@@ -1268,6 +1336,9 @@ def to_dict(s: GameState) -> dict:
         "thing_turns": [dict(t) for t in s.thing_turns],
         "events": [dict(e) for e in s.events],
         "win_attempts": [dict(a) for a in s.win_attempts],
+        "pacts_due": [list(p) for p in s.pacts_due],
+        "imprints": {str(k): list(v) for k, v in s.imprints.items()},
+        "pending_tutor_top": s.pending_tutor_top,
         "late_reason": s.late_reason,
         "log": list(s.log),
     }
@@ -1322,6 +1393,9 @@ def _from_dict(data: dict) -> GameState:
     plain["alt_win"] = data.get("alt_win")
     plain["tutors_left"] = data.get("tutors_left", 0)
     plain["win_attempts"] = data.get("win_attempts", [])
+    plain["pacts_due"] = data.get("pacts_due", [])
+    plain["imprints"] = {int(k): v for k, v in data.get("imprints", {}).items()}
+    plain["pending_tutor_top"] = data.get("pending_tutor_top", False)
     return GameState(
         cards=cards, goal=goal, goal_raw=data["goal"], turn_cap=data["turn_cap"],
         disruption=data["disruption"], rng=_load_rng(data["rng"]),

@@ -478,3 +478,80 @@ def test_report_has_opponent_win_and_win_by_round():
     assert r["opponent_win"]["attempts"] == 10 and r["opponent_win"]["answered_rate"] == 0.0
     assert r["loss"]["by_reason"] == {"opponent_win": 1.0}
     assert r["win"]["win_by_round"] == [0.0] * 10
+
+
+# --- Fast mana and free interaction (bracket 4) -------------------------------
+
+VAULT = card("Mana Vault", "Artifact", "This artifact doesn't untap during your untap step.\nAt the "
+             "beginning of your upkeep, you may pay {4}. If you do, untap this artifact.\nAt the beginning "
+             "of your draw step, if this artifact is tapped, it deals 1 damage to you.\n{T}: Add {C}{C}{C}.",
+             mana_cost="{1}", colors="")
+PACT = card("Pact of Negation", "Instant", "Counter target spell.\nAt the beginning of your next upkeep, "
+            "pay {3}{U}{U}. If you don't, you lose the game.", mana_cost="{0}", colors="U")
+VAMPIRIC = card("Vampiric Tutor", "Instant", "Search your library for a card, then shuffle and put that "
+                "card on top. You lose 2 life.", mana_cost="{B}", colors="B")
+DIAMOND = card("Mox Diamond", "Artifact", "If this artifact would enter, you may discard a land card "
+               "instead. If you do, put this artifact onto the battlefield. If you don't, put it into its "
+               "owner's graveyard.\n{T}: Add one mana of any color.", mana_cost="{0}", colors="")
+CHROME = card("Chrome Mox", "Artifact", "Imprint — When this artifact enters, you may exile a nonartifact, "
+              "nonland card from your hand.\n{T}: Add one mana of any of the exiled card's colors.",
+              mana_cost="{0}", colors="")
+RED_SPELL = card("Red Spell", "Sorcery", "", mana_cost="{3}{R}", colors="R", identity="R")
+
+
+def test_mana_vault_does_not_untap():
+    assert effect_of(VAULT, WUBRG).no_untap
+    s = rigged(source=five_color(VAULT), land="Prism Land", on_board=["Mana Vault"])
+    s.command_zone = []
+    assert available_mana(s) == 3
+    s.battlefield[0].tapped = True
+    s = apply(s, PASS)
+    assert available_mana(s) == 0  # still tapped next turn
+
+
+def test_a_spent_pact_must_be_paid_next_upkeep_or_you_lose():
+    goal = {"archetype": "custom", "thing": "commander", "win": NEVER,
+            "opponent_win": {"from_turn": 2}}
+    s = rigged(source=five_color(PACT), land="Prism Land", hand=["Pact of Negation"], lands_in_play=2,
+               goal=goal)
+    s.command_zone = []
+    s = apply(s, PASS)  # round 2: Pact answers the attempt; the upkeep trigger is due now
+    assert s.loss_by == "pact"  # two lands cannot pay {3}{U}{U}
+    s = rigged(source=five_color(PACT), land="Prism Land", hand=["Pact of Negation"], lands_in_play=5,
+               goal=goal)
+    s.command_zone = []
+    s = apply(s, PASS)
+    assert not s.over and available_mana(s) == 0  # paid with all five lands
+
+
+def test_vampiric_tutor_puts_the_card_on_top():
+    assert effect_of(VAMPIRIC, WUBRG).tutor_to_top
+    s = rigged(source=five_color(VAMPIRIC, BIG), land="Prism Land", hand=["Vampiric Tutor"],
+               lands_in_play=1)
+    s.command_zone = []
+    s = apply(apply(s, {"cast": "Vampiric Tutor"}), {"tutor": "Big Spell"})
+    assert s.cards[s.library[0]].name == "Big Spell" and "Big Spell" not in names(s, s.hand)
+
+
+def test_mox_diamond_needs_a_land_to_discard():
+    assert effect_of(DIAMOND, WUBRG).discard_land
+    s = rigged(source=five_color(DIAMOND), land="Prism Land", hand=["Mox Diamond"])
+    s.command_zone = []
+    assert {"cast": "Mox Diamond"} not in legal_actions(s)
+    s = rigged(source=five_color(DIAMOND), land="Prism Land", hand=["Mox Diamond", "Prism Land"])
+    s.command_zone = []
+    s = apply(s, {"cast": "Mox Diamond"})
+    assert "Prism Land" in names(s, s.graveyard) and available_mana(s) == 1
+
+
+def test_chrome_mox_imprints_a_card_and_taps_for_its_colors():
+    assert effect_of(CHROME, WUBRG).imprint
+    s = rigged(source=five_color(CHROME, RED_SPELL), land="Prism Land", hand=["Chrome Mox", "Red Spell"])
+    s.command_zone = []
+    s = apply(s, {"cast": "Chrome Mox"})
+    assert "Red Spell" not in names(s, s.hand)
+    assert [sorted(u.colors) for u in __import__("mtgpt.goldfish.engine", fromlist=["_units"])._units(s)] == [["R"]]
+    s2 = rigged(source=five_color(CHROME), land="Prism Land", hand=["Chrome Mox"])
+    s2.command_zone = []
+    s2 = apply(s2, {"cast": "Chrome Mox"})
+    assert available_mana(s2) == 0  # nothing to imprint
