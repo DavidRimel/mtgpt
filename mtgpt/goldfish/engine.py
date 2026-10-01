@@ -21,6 +21,7 @@ import random
 from collections import Counter
 from dataclasses import asdict, dataclass, field, replace
 
+from .. import card_rules
 from ..classify import classify
 from ..effects import SimEffect, effect_from_dict, effect_of, effect_to_dict, is_unmodeled
 from ..errors import DeckStructureError, MtgptError
@@ -190,6 +191,10 @@ def prepare(deck: ResolvedDeck, goal_raw: dict) -> Setup:
         raise DeckStructureError("goldfish needs a commander; the decklist has none")
     identity = deck.command_zone_identity
     names = [c.name for c in deck.commanders] + [c.name for _, c in deck.cards]
+    library = card_rules.engine_rules(names)
+    if library:
+        # The goal file's own overrides come last, so they win over the library.
+        goal_raw = {**goal_raw, "engine": {**library, **goal_raw.get("engine", {})}}
     goal = load_goal(goal_raw, deck_names=names,
                      commander_mv=min(c.mana_value for c in deck.commanders))
     cards = [_info(c, identity, True) for c in deck.commanders]

@@ -19,10 +19,10 @@ Then ask Claude to audit, tune, or explore a Commander deck.
 
 ## Use directly
 
-mtgpt is seventeen independently callable operations, each emitting one JSON
+mtgpt is nineteen independently callable operations, each emitting one JSON
 object: `card`, `search`, `classify`, `read`, `validate`, `audit`, `bracket`,
 `report`, `synergy`, `themes`, `combos`, `card-combos`, `suggest`, `goldfish`,
-`goldfish-compare`, `goldfish-new`, `goldfish-step`.
+`goldfish-compare`, `goldfish-new`, `goldfish-step`, `goldfish-scan`, `card-rule`.
 
 ```bash
 # Full picture, human-readable

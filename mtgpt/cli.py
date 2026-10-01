@@ -123,6 +123,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--file", action="append", required=True, help="Pass twice: the deck before, then after")
     _add_goldfish_options(goldfish_compare, games=True)
 
+    scan = sub.add_parser("goldfish-scan", help="How the sim models every card; what needs review")
+    src = scan.add_mutually_exclusive_group()
+    src.add_argument("--file")
+    src.add_argument("--stdin", action="store_true")
+    scan.add_argument("--goal", help="The deck's goal file, so its overrides are shown")
+
+    rule = sub.add_parser("card-rule", help="Show or record a card's reviewed goldfish rule")
+    rule.add_argument("name")
+    rule.add_argument("--status", choices=["parsed", "override", "ignored"],
+                      help="Record an entry; omit to show the current one")
+    rule.add_argument("--rule", help='Engine override JSON, for --status override')
+    rule.add_argument("--note", default="", help="Why: what the card does in a goldfish")
+
     step = sub.add_parser("goldfish-step", help="Apply one action to a piloted game")
     step.add_argument("--state", required=True, help="The game file; rewritten in place")
     step.add_argument("--action", required=True, help='JSON, e.g. {"cast": "Sol Ring"}')
@@ -250,6 +263,20 @@ def _write_json(path: str, data, command: str) -> bool:
     return True
 
 
+def _card_rule(args, command: str, client) -> int:
+    if args.status is None:
+        _emit(command, api.card_rule_show(args.name))
+        return EXIT_OK
+    rule = None
+    if args.rule is not None:
+        rule = _parse_json(args.rule, command, "--rule")
+        if rule is None:
+            return EXIT_USER_ERROR
+    _emit(command, api.card_rule_set(args.name, status=args.status, rule=rule,
+                                     note=args.note, client=client))
+    return EXIT_OK
+
+
 def _goldfish(args, command: str, client) -> int:
     """The four goldfish subcommands. Returns the exit code."""
     if command == "goldfish-step":
@@ -314,6 +341,18 @@ def main(argv: list[str] | None = None, client: ScryfallClient | None = None) ->
             _emit(command, api.commander_themes(args.commander))
         elif command == "card-combos":
             _emit(command, api.card_combos(args.name))
+        elif command == "card-rule":
+            return _card_rule(args, command, client)
+        elif command == "goldfish-scan":
+            goal = None
+            if args.goal:
+                goal = _read_json(args.goal, command)
+                if goal is None:
+                    return EXIT_USER_ERROR
+            text = _read_deck_text(args, command)
+            if text is None:
+                return EXIT_USER_ERROR
+            _emit(command, api.goldfish_scan(text, goal, client=client))
         elif command.startswith("goldfish"):
             return _goldfish(args, command, client)
         elif command == "combos":

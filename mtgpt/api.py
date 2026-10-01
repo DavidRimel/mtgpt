@@ -628,6 +628,35 @@ def goldfish_new(
     return {"state": to_dict(state), "view": game_view(state)}
 
 
+def goldfish_scan(text: str, goal: dict | None = None, *,
+                  client: ScryfallClient | None = None) -> dict:
+    """What the sim does with every card in the deck, and which still need a
+    person's review before a goldfish can be trusted."""
+    from . import card_rules
+
+    return card_rules.scan(_resolved(text, client), goal)
+
+
+def card_rule_show(name: str) -> dict:
+    from . import card_rules
+
+    return {"name": name, "entry": card_rules.load()["cards"].get(name)}
+
+
+def card_rule_set(name: str, *, status: str, rule: dict | None, note: str,
+                  client: ScryfallClient | None = None) -> dict:
+    """Record a reviewed rule. The name is checked against Scryfall first, so a
+    misspelled or invented card can never enter the library."""
+    from . import card_rules
+
+    real = lookup_card(name, client=client)["name"]
+    try:
+        entry = card_rules.record(real, status=status, rule=rule, note=note)
+    except ValueError as exc:
+        raise GoalError("card-rule", str(exc), [status]) from exc
+    return {"name": real, "entry": entry}
+
+
 def goldfish_step(state: dict, action: dict) -> dict:
     """Apply one action to a piloted game. Raises IllegalAction for a bad one."""
     after = apply(from_dict(state), action, in_place=True)
