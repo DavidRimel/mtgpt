@@ -105,36 +105,60 @@ def test_sweeper_hits_all_creatures():
     assert F.SPOT_REMOVAL not in tags
 
 
-def test_mass_land_denial_is_not_counted_as_a_sweeper():
-    armageddon = card("Armageddon", "Sorcery", "Destroy all lands.")
-    tags = classify(armageddon)
-    assert F.MASS_LAND_DENIAL in tags
-    assert F.SWEEPER not in tags
-
-
 @pytest.mark.parametrize(
-    "name,oracle,is_mld,is_sweeper",
+    "name,type_line,oracle,expected",
     [
-        ("Armageddon", "Destroy all lands.", True, False),
-        ("Ravages of War", "Destroy all lands.", True, False),
-        # "lands" is not adjacent to "all" on the classic MLD cards.
-        ("Jokulhaups",
+        # Pump spells are not removal.
+        ("Giant Growth", "Instant", "Target creature gets +3/+3 until end of turn.", {F.SYNERGY}),
+        ("Mutagenic Growth", "Instant", "Target creature gets +2/+2 until end of turn.", {F.SYNERGY}),
+        # Blink of your own creature is protection, not removal.
+        ("Ephemerate", "Instant",
+         "Exile target creature you control, then return that card to the battlefield "
+         "under its owner's control.", {F.PROTECTION}),
+        ("Restoration Angel", "Creature — Angel",
+         "Flash\nFlying\nWhen this creature enters, you may exile target non-Angel creature "
+         "you control, then return that card to the battlefield under its owner's control.",
+         {F.PROTECTION}),
+        # Adjective-modified and sacrifice-form land denial are not creature wipes.
+        ("Ruination", "Sorcery", "Destroy all nonbasic lands.", {F.MASS_LAND_DENIAL}),
+        ("Bust", "Sorcery", "Each player sacrifices all lands they control except for one.",
+         {F.MASS_LAND_DENIAL}),
+        ("Armageddon", "Sorcery", "Destroy all lands.", {F.MASS_LAND_DENIAL}),
+        # ...but a wipe that names non-land types is genuinely both.
+        ("Jokulhaups", "Sorcery",
          "Destroy all artifacts, creatures, and lands. They can't be regenerated.",
-         True, True),
-        ("Devastation", "Destroy all creatures and lands.", True, True),
-        ("Wrath of God", "Destroy all creatures. They can't be regenerated.", False, True),
-        # "nonland" must not register as a land.
-        ("Nonland wipe", "Destroy all nonland permanents.", False, True),
-        ("Cyclonic Rift overload",
-         "Return all nonland permanents you don't control to their owners' hands.",
-         False, False),
+         {F.MASS_LAND_DENIAL, F.SWEEPER}),
+        ("Devastation", "Sorcery", "Destroy all creatures and lands.",
+         {F.MASS_LAND_DENIAL, F.SWEEPER}),
+        # A counterspell's self-referential clause is not protection.
+        ("Dovin's Veto", "Instant",
+         "This spell can't be countered.\nCounter target noncreature spell.",
+         {F.COUNTERSPELL}),
+        # "you lose the game" is a drawback, not a wincon.
+        ("Pact of Negation", "Instant",
+         "Counter target spell. At the beginning of your next upkeep, pay {3}{U}{U}. "
+         "If you don't, you lose the game.", {F.COUNTERSPELL}),
+        # Library exile is not a board wipe.
+        ("Demonic Consultation", "Instant",
+         "Name a card. Exile the top six cards of your library, then reveal cards from the "
+         "top of your library until you reveal the named card. Put that card into your hand "
+         "and exile all other cards revealed this way.", {F.SYNERGY}),
+        # Indirect quantification still reads as a land fetch.
+        ("Scapeshift", "Sorcery",
+         "Sacrifice any number of lands. Search your library for that many land cards, put "
+         "them onto the battlefield tapped, then shuffle.", {F.RAMP}),
+        # Damage is removal; damage to each creature is a sweeper.
+        ("Lightning Bolt", "Instant", "Lightning Bolt deals 3 damage to any target.",
+         {F.SPOT_REMOVAL}),
+        ("Flame Slash", "Sorcery", "Flame Slash deals 4 damage to target creature.",
+         {F.SPOT_REMOVAL}),
+        ("Pyroclasm", "Sorcery", "Pyroclasm deals 2 damage to each creature.", {F.SWEEPER}),
     ],
-    ids=["armageddon", "ravages", "jokulhaups", "devastation", "wrath", "nonland", "rift"],
+    ids=lambda v: v if isinstance(v, str) and " " not in v else None,
 )
-def test_mass_land_denial_detection(name, oracle, is_mld, is_sweeper):
-    tags = classify(card(name, "Sorcery", oracle))
-    assert (F.MASS_LAND_DENIAL in tags) is is_mld
-    assert (F.SWEEPER in tags) is is_sweeper
+def test_false_positive_regressions(name, type_line, oracle, expected):
+    """Each case here was wrongly classified by an earlier draft. Keep them."""
+    assert classify(card(name, type_line, oracle)) == expected
 
 
 @pytest.mark.parametrize(

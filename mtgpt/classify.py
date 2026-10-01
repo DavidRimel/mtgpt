@@ -29,13 +29,12 @@ _ADDS_MANA = re.compile(
     re.IGNORECASE,
 )
 _SEARCH_LIBRARY = re.compile(r"search your library", re.IGNORECASE)
-#: A land fetch names either the word "land" or a basic land TYPE. Nature's Lore,
-#: Three Visits, and Farseek say "Forest card" / "Plains ... card" and never the
-#: word "land", so omitting the type names misfiles the format's most-played ramp
-#: spells as tutors — understating ramp and inflating tutor density at once.
+#: A land fetch may name a basic land TYPE and may quantify indirectly
+#: ("that many land cards", Scapeshift). Sentence-bounded so a tutor for a
+#: nonland card cannot match a later mention of lands.
 _LAND_SEARCH = re.compile(
-    r"search your library for (?:up to )?(?:a|an|one|two|three|four|X|\d+)?\s*"
-    r"(?:basic )?(?:lands?|Plains|Island|Swamp|Mountain|Forest|Wastes)\b",
+    r"search your library for [^.]{0,40}?"
+    r"\b(?:lands?|Plains|Island|Swamp|Mountain|Forest|Wastes)\b",
     re.IGNORECASE,
 )
 _DRAW = re.compile(
@@ -47,36 +46,41 @@ _DRAW = re.compile(
 _OPPONENT_DRAW = re.compile(
     r"\bopponents?\s+draws?\s+(?:a\s+card|\w+\s+cards?)", re.IGNORECASE
 )
-#: Bounce is removal. "owner's hand" is what separates it from graveyard
-#: recursion, which returns to "your hand".
-_SPOT_REMOVAL = re.compile(
-    r"(destroy|exile)\s+target\b|"
-    r"target\s+(creature|permanent|player)\s+(?:gets|sacrifices)|"
-    r"return target .{0,60}?to (?:its|their) owner'?s hand",
+#: Blink of your OWN creature is protection, not removal: Ephemerate and
+#: Restoration Angel both exile a creature you control and return it.
+_SELF_BLINK = re.compile(
+    r"exile\s+(?:\w+\s+){0,3}?target\s+[^.]{0,45}?you control,?\s+(?:then\s+)?return",
     re.IGNORECASE,
 )
-#: Not every wipe says "destroy". Blasphemous Act deals damage to each creature;
-#: Toxic Deluge gives all creatures -X/-X.
+#: Spot removal. Three things this must get right:
+#:  - "you control" excludes blink effects (Ephemerate, Restoration Angel).
+#:  - "gets" needs a MINUS sign, or Giant Growth's +3/+3 reads as removal.
+#:  - damage is removal too (Lightning Bolt, Flame Slash), but "to each
+#:    creature" is a sweeper and is excluded by requiring a single target.
+_SPOT_REMOVAL = re.compile(
+    r"(?:destroy|exile)\s+(?:up to \w+ )?target\b(?![^.]{0,45}?you control)|"
+    r"target\s+(?:creature|permanent|player)\s+(?:gets\s+-|sacrifices)|"
+    r"deals\s+\S+\s+damage to (?:any target|target \w+)|"
+    r"return target [^.]{0,60}?to (?:its|their) owner'?s hand",
+    re.IGNORECASE,
+)
+#: A sweeper must name a NON-LAND permanent type. This is why there is no
+#: lands-only suppression rule: Armageddon and Ruination simply never match,
+#: while Jokulhaups and Devastation do because they name creatures/artifacts.
 _SWEEPER = re.compile(
-    r"(destroy|exile)\s+(all|each|every)\b|"
-    r"each player sacrifices|"
+    r"(?:destroy|exile)\s+(?:all|each|every)\s+[^.]{0,30}?"
+    r"\b(?:creature|permanent|artifact|enchantment|planeswalker|token|battle)s?\b|"
+    r"each player sacrifices(?![^.]*\blands?\b)|"
     r"deals \S+ damage to each (?:creature|other creature)|"
     r"all creatures get -",
     re.IGNORECASE,
 )
-#: Mass land denial. "lands" need not sit immediately after "all": Jokulhaups
-#: destroys "all artifacts, creatures, and lands" and Devastation "all creatures
-#: and lands". Requiring adjacency misses the format's defining MLD cards, and
-#: MLD is the rule brackets 1-3 care most about. [^.] keeps the match inside one
-#: sentence; \blands?\b will not fire on "nonland".
+#: Mass land denial, including the sacrifice form (Bust).
 _MASS_LAND_DENIAL = re.compile(
     r"(?:destroy|exile)\s+(?:all|each)\b[^.]{0,60}?\blands?\b|"
-    r"each player sacrifices\s+(?:a|an|all|X|\d+)?\s*lands?\b",
+    r"each player sacrifices[^.]{0,40}?\blands?\b",
     re.IGNORECASE,
 )
-#: Denial that hits ONLY lands. Armageddon is not a creature sweeper, but
-#: Jokulhaups genuinely is both, so only the lands-only form suppresses SWEEPER.
-_LANDS_ONLY_DENIAL = re.compile(r"(?:destroy|exile)\s+(?:all|each)\s+lands?\b", re.IGNORECASE)
 #: Real counterspells rarely read "counter target spell": Swan Song says
 #: "Counter target enchantment, instant, or sorcery spell", Dovin's Veto says
 #: "noncreature spell". A window between "target" and "spell" catches them.
@@ -86,9 +90,14 @@ _PROTECTION = re.compile(
     r"\bshroud\b|can't be countered|sacrifice .{0,30}\binstead\b",
     re.IGNORECASE,
 )
+#: A counterspell saying it can't be countered tells us nothing about the
+#: deck's resilience package. Masked before _PROTECTION runs.
+_SELF_UNCOUNTERABLE = re.compile(r"this spell can't be countered", re.IGNORECASE)
 #: "takes an extra turn", but also Time Stretch's "takes two extra turns".
 _EXTRA_TURNS = re.compile(r"takes?\s+\w+\s+extra\s+turns?", re.IGNORECASE)
-_WINCON = re.compile(r"\bwins? the game\b|\bloses? the game\b", re.IGNORECASE)
+#: "you lose the game" is a drawback (Demonic Pact, Pact of Negation), not a
+#: win condition. "Target player loses the game" still counts.
+_WINCON = re.compile(r"\bwins? the game\b|(?<!you )\bloses? the game\b", re.IGNORECASE)
 _RECURSION = re.compile(
     r"return .{0,60}from (?:your|a|target player's) graveyard", re.IGNORECASE
 )
@@ -116,18 +125,19 @@ def classify(card: Card) -> frozenset[Function]:
         tags.add(F.COUNTERSPELL)
     if _MASS_LAND_DENIAL.search(text):
         tags.add(F.MASS_LAND_DENIAL)
-    # Lands-only denial is not a creature sweeper; a list-form wipe like
-    # Jokulhaups is both, so only suppress on the lands-only form.
-    if _SWEEPER.search(text) and not _LANDS_ONLY_DENIAL.search(text):
+    if _SWEEPER.search(text):
         tags.add(F.SWEEPER)
-    # A counterspell is its own category, never spot removal.
     if (
         _SPOT_REMOVAL.search(text)
         and F.SWEEPER not in tags
         and F.COUNTERSPELL not in tags
     ):
         tags.add(F.SPOT_REMOVAL)
-    if _PROTECTION.search(text) or _has_protection_keyword(card):
+    # Blink of your own creature is protection; make sure it is not removal.
+    if _SELF_BLINK.search(text):
+        tags.add(F.PROTECTION)
+        tags.discard(F.SPOT_REMOVAL)
+    if _PROTECTION.search(_SELF_UNCOUNTERABLE.sub(" ", text)) or _has_protection_keyword(card):
         tags.add(F.PROTECTION)
     if _EXTRA_TURNS.search(text):
         tags.add(F.EXTRA_TURNS)
