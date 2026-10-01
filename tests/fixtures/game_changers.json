@@ -1,0 +1,10 @@
+{
+  "object": "list",
+  "has_more": false,
+  "total_cards": 3,
+  "data": [
+    {"object": "card", "name": "Rhystic Study"},
+    {"object": "card", "name": "Cyclonic Rift"},
+    {"object": "card", "name": "Smothering Tithe"}
+  ]
+}

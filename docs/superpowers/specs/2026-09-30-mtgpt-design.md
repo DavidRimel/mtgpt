@@ -53,6 +53,36 @@ sources that carry discussion-grade content, with SEO-farm domains blocklisted. 
 tradeoff is explicit: Reddit's specific voice is lost; the "what do strong builders do
 with this commander" signal is retained.
 
+## Interface: an agent-callable toolkit, not a pipeline
+
+**Requirement added 2026-09-30, mid-implementation, at the user's direction.** mtgpt is a set
+of utility operations an agent composes, not a single command that runs a fixed script.
+
+The distinction is not cosmetic. A monolithic `audit` command forces one order of operations
+and one granularity, so Claude cannot look up a single card, classify three candidate
+replacements, or re-check only the bracket after a swap without re-running everything. Tuning
+a deck is inherently iterative — measure, hypothesize, check a candidate, re-measure — and an
+interface that only does the whole thing at once cannot support that loop.
+
+Every stage is therefore exposed as its own operation, each:
+
+- **independently callable** with the smallest input it needs,
+- **JSON by default**, in a predictable envelope, so output feeds the next decision,
+- **structurally honest about failure** — errors name the offending values in machine-readable
+  form rather than printing prose,
+- **stateless**, so no call depends on a previous one having run.
+
+The pure per-stage functions of Tasks 1-7 already satisfy this internally; what the interface
+layer adds is a stable facade, consistent serialization, and a documented surface.
+
+Composition is the skill's job, not the code's. `SKILL.md` teaches the loops — audit, read the
+gaps, search for candidates, classify them to confirm they fill the gap, re-audit — rather
+than hiding them behind one entry point.
+
+A future MCP server could wrap the same facade. It is not part of Layer 1: the CLI-plus-JSON
+surface is what a Claude Code agent reaches for natively, and the facade is deliberately
+shaped so an MCP layer would be a thin adapter rather than a rewrite.
+
 ## Repository layout
 
 ```

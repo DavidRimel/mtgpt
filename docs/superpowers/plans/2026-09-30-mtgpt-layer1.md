@@ -10,6 +10,13 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-30-mtgpt-design.md`
 
+## Execution order
+
+Tasks 1-8 then 11, 12, 13, then 10, and **Task 9 LAST**. Task 9 writes `SKILL.md`, which is the
+agent's playbook over the whole toolkit — it cannot be written before the operations it
+documents exist. Task 10 (Moxfield browser fetch) is verify-first and may end in a documented
+deferral, so it is placed after the operations that do not depend on it.
+
 ## Global Constraints
 
 - Python 3.12+ (`requires-python = ">=3.12"`).
@@ -1631,6 +1638,8 @@ Likewise `MASS_LAND_DENIAL` suppresses `SWEEPER`: Armageddon reads "Destroy all 
 
 ```python
 # tests/test_classify.py
+import pytest
+
 from mtgpt.classify import classify, classify_deck
 from mtgpt.models import Card, Function, ResolvedDeck
 
@@ -1743,6 +1752,45 @@ def test_mass_land_denial_is_not_counted_as_a_sweeper():
     assert F.SWEEPER not in tags
 
 
+@pytest.mark.parametrize(
+    "name,oracle,is_mld,is_sweeper",
+    [
+        ("Armageddon", "Destroy all lands.", True, False),
+        ("Ravages of War", "Destroy all lands.", True, False),
+        # "lands" is not adjacent to "all" on the classic MLD cards.
+        ("Jokulhaups",
+         "Destroy all artifacts, creatures, and lands. They can't be regenerated.",
+         True, True),
+        ("Devastation", "Destroy all creatures and lands.", True, True),
+        ("Wrath of God", "Destroy all creatures. They can't be regenerated.", False, True),
+        # "nonland" must not register as a land.
+        ("Nonland wipe", "Destroy all nonland permanents.", False, True),
+        ("Cyclonic Rift overload",
+         "Return all nonland permanents you don't control to their owners' hands.",
+         False, False),
+    ],
+    ids=["armageddon", "ravages", "jokulhaups", "devastation", "wrath", "nonland", "rift"],
+)
+def test_mass_land_denial_detection(name, oracle, is_mld, is_sweeper):
+    tags = classify(card(name, "Sorcery", oracle))
+    assert (F.MASS_LAND_DENIAL in tags) is is_mld
+    assert (F.SWEEPER in tags) is is_sweeper
+
+
+@pytest.mark.parametrize(
+    "name,oracle",
+    [
+        ("Time Warp", "Target player takes an extra turn after this one."),
+        ("Nexus of Fate", "Take an extra turn after this one."),
+        # Plural: "takes two extra turns".
+        ("Time Stretch", "Target player takes two extra turns after this one."),
+    ],
+    ids=["time-warp", "nexus", "time-stretch"],
+)
+def test_extra_turn_spells_detected(name, oracle):
+    assert F.EXTRA_TURNS in classify(card(name, "Sorcery", oracle))
+
+
 def test_counterspell():
     cs = card("Counterspell", "Instant", "Counter target spell.")
     assert F.COUNTERSPELL in classify(cs)
@@ -1824,6 +1872,68 @@ def test_mdfc_land_is_not_tagged_land():
     assert F.RECURSION in tags
 
 
+# Real oracle text from Scryfall, 2026-09-30. Each of these was misclassified by
+# an earlier draft of the regexes above; they are the reason those regexes look
+# the way they do. Keep them.
+REAL_STAPLES = [
+    # (name, type_line, oracle_text, must_include, must_exclude)
+    ("Nature's Lore", "Sorcery",
+     "Search your library for a Forest card, put that card onto the battlefield, then shuffle.",
+     {F.RAMP}, {F.TUTOR}),
+    ("Three Visits", "Sorcery",
+     "Search your library for a Forest card, put it onto the battlefield, then shuffle.",
+     {F.RAMP}, {F.TUTOR}),
+    ("Farseek", "Sorcery",
+     "Search your library for a Plains, Island, Swamp, or Mountain card, put it onto "
+     "the battlefield tapped, then shuffle.",
+     {F.RAMP}, {F.TUTOR}),
+    ("Swan Song", "Instant",
+     "Counter target enchantment, instant, or sorcery spell. Its controller creates a "
+     "2/2 blue Bird creature token with flying.",
+     {F.COUNTERSPELL}, {F.SPOT_REMOVAL}),
+    ("Dovin's Veto", "Instant",
+     "This spell can't be countered.\nCounter target noncreature spell.",
+     {F.COUNTERSPELL}, {F.SPOT_REMOVAL}),
+    ("Flusterstorm", "Instant",
+     "Counter target instant or sorcery spell unless its controller pays {1}.",
+     {F.COUNTERSPELL}, {F.SPOT_REMOVAL}),
+    ("Blasphemous Act", "Sorcery",
+     "This spell costs {1} less to cast for each creature on the battlefield.\n"
+     "Blasphemous Act deals 13 damage to each creature.",
+     {F.SWEEPER}, {F.SPOT_REMOVAL}),
+    ("Toxic Deluge", "Sorcery",
+     "As an additional cost to cast this spell, pay X life.\n"
+     "All creatures get -X/-X until end of turn.",
+     {F.SWEEPER}, set()),
+    ("Cyclonic Rift", "Instant",
+     "Return target nonland permanent you don't control to its owner's hand.\n"
+     "Overload {6}{U}",
+     {F.SPOT_REMOVAL}, set()),
+    ("Timetwister", "Sorcery",
+     "Each player shuffles their hand and graveyard into their library, then draws "
+     "seven cards.",
+     {F.DRAW}, set()),
+    ("Smothering Tithe", "Enchantment",
+     "Whenever an opponent draws a card, that player may pay {2}. If the player "
+     "doesn't, you create a Treasure token.",
+     {F.RAMP}, {F.DRAW}),
+    ("Eternal Witness", "Creature — Human Shaman",
+     "When this creature enters, return target card from your graveyard to your hand.",
+     {F.RECURSION}, {F.SPOT_REMOVAL}),
+]
+
+
+@pytest.mark.parametrize(
+    "name,type_line,oracle,must_include,must_exclude",
+    REAL_STAPLES,
+    ids=[s[0] for s in REAL_STAPLES],
+)
+def test_real_staples_classify_correctly(name, type_line, oracle, must_include, must_exclude):
+    tags = classify(card(name, type_line, oracle))
+    assert must_include <= tags, f"{name}: expected {must_include}, got {tags}"
+    assert not (must_exclude & tags), f"{name}: must not be {must_exclude & tags}, got {tags}"
+
+
 def test_classify_deck_keys_by_name():
     sol = card("Sol Ring", "Artifact", "{T}: Add {C}{C}.", produced_mana=frozenset("C"))
     forest = card("Forest", "Basic Land — Forest", "({T}: Add {G}.)",
@@ -1873,34 +1983,65 @@ _ADDS_MANA = re.compile(
     re.IGNORECASE,
 )
 _SEARCH_LIBRARY = re.compile(r"search your library", re.IGNORECASE)
+#: A land fetch names either the word "land" or a basic land TYPE. Nature's Lore,
+#: Three Visits, and Farseek say "Forest card" / "Plains ... card" and never the
+#: word "land", so omitting the type names misfiles the format's most-played ramp
+#: spells as tutors — understating ramp and inflating tutor density at once.
 _LAND_SEARCH = re.compile(
-    r"search your library for (?:up to )?(?:a|an|one|two|three|X|\d+)?\s*"
-    r"(?:basic )?(?:land|lands|[A-Za-z]+ card[s]? .{0,20}land)",
+    r"search your library for (?:up to )?(?:a|an|one|two|three|four|X|\d+)?\s*"
+    r"(?:basic )?(?:lands?|Plains|Island|Swamp|Mountain|Forest|Wastes)\b",
     re.IGNORECASE,
 )
-_DRAW = re.compile(r"\bdraws?\s+(?:a\s+card|one|two|three|four|X|\d+)\b", re.IGNORECASE)
+_DRAW = re.compile(
+    r"\bdraws?\s+(?:a\s+card|one|two|three|four|five|six|seven|eight|nine|ten|X|\d+)\b",
+    re.IGNORECASE,
+)
+#: "Whenever an opponent draws a card" is not card draw for us. Masked out before
+#: _DRAW runs, so Smothering Tithe counts as ramp only.
+_OPPONENT_DRAW = re.compile(
+    r"\bopponents?\s+draws?\s+(?:a\s+card|\w+\s+cards?)", re.IGNORECASE
+)
+#: Bounce is removal. "owner's hand" is what separates it from graveyard
+#: recursion, which returns to "your hand".
 _SPOT_REMOVAL = re.compile(
-    r"(destroy|exile|counter)\s+target\s+(?!spell\b)|"
-    r"target\s+(creature|permanent|player)\s+(?:gets|sacrifices)",
+    r"(destroy|exile)\s+target\b|"
+    r"target\s+(creature|permanent|player)\s+(?:gets|sacrifices)|"
+    r"return target .{0,60}?to (?:its|their) owner'?s hand",
     re.IGNORECASE,
 )
+#: Not every wipe says "destroy". Blasphemous Act deals damage to each creature;
+#: Toxic Deluge gives all creatures -X/-X.
 _SWEEPER = re.compile(
     r"(destroy|exile)\s+(all|each|every)\b|"
-    r"each player sacrifices",
+    r"each player sacrifices|"
+    r"deals \S+ damage to each (?:creature|other creature)|"
+    r"all creatures get -",
     re.IGNORECASE,
 )
+#: Mass land denial. "lands" need not sit immediately after "all": Jokulhaups
+#: destroys "all artifacts, creatures, and lands" and Devastation "all creatures
+#: and lands". Requiring adjacency misses the format's defining MLD cards, and
+#: MLD is the rule brackets 1-3 care most about. [^.] keeps the match inside one
+#: sentence; \blands?\b will not fire on "nonland".
 _MASS_LAND_DENIAL = re.compile(
-    r"(destroy|exile)\s+(all|each)\s+lands?\b|"
+    r"(?:destroy|exile)\s+(?:all|each)\b[^.]{0,60}?\blands?\b|"
     r"each player sacrifices\s+(?:a|an|all|X|\d+)?\s*lands?\b",
     re.IGNORECASE,
 )
-_COUNTERSPELL = re.compile(r"counter target (spell|ability)", re.IGNORECASE)
+#: Denial that hits ONLY lands. Armageddon is not a creature sweeper, but
+#: Jokulhaups genuinely is both, so only the lands-only form suppresses SWEEPER.
+_LANDS_ONLY_DENIAL = re.compile(r"(?:destroy|exile)\s+(?:all|each)\s+lands?\b", re.IGNORECASE)
+#: Real counterspells rarely read "counter target spell": Swan Song says
+#: "Counter target enchantment, instant, or sorcery spell", Dovin's Veto says
+#: "noncreature spell". A window between "target" and "spell" catches them.
+_COUNTERSPELL = re.compile(r"counter target\b.{0,60}?\b(?:spell|ability)\b", re.IGNORECASE)
 _PROTECTION = re.compile(
     r"\bhexproof\b|\bindestructible\b|protection from|\bphases? out\b|"
     r"\bshroud\b|can't be countered|sacrifice .{0,30}\binstead\b",
     re.IGNORECASE,
 )
-_EXTRA_TURNS = re.compile(r"takes? an extra turn", re.IGNORECASE)
+#: "takes an extra turn", but also Time Stretch's "takes two extra turns".
+_EXTRA_TURNS = re.compile(r"takes?\s+\w+\s+extra\s+turns?", re.IGNORECASE)
 _WINCON = re.compile(r"\bwins? the game\b|\bloses? the game\b", re.IGNORECASE)
 _RECURSION = re.compile(
     r"return .{0,60}from (?:your|a|target player's) graveyard", re.IGNORECASE
@@ -1923,15 +2064,22 @@ def classify(card: Card) -> frozenset[Function]:
         tags.add(F.RAMP)
     if _SEARCH_LIBRARY.search(text) and not _LAND_SEARCH.search(text):
         tags.add(F.TUTOR)
-    if _DRAW.search(text):
+    if _DRAW.search(_OPPONENT_DRAW.sub(" ", text)):
         tags.add(F.DRAW)
     if _COUNTERSPELL.search(text):
         tags.add(F.COUNTERSPELL)
     if _MASS_LAND_DENIAL.search(text):
         tags.add(F.MASS_LAND_DENIAL)
-    if _SWEEPER.search(text) and F.MASS_LAND_DENIAL not in tags:
+    # Lands-only denial is not a creature sweeper; a list-form wipe like
+    # Jokulhaups is both, so only suppress on the lands-only form.
+    if _SWEEPER.search(text) and not _LANDS_ONLY_DENIAL.search(text):
         tags.add(F.SWEEPER)
-    if _SPOT_REMOVAL.search(text) and F.SWEEPER not in tags:
+    # A counterspell is its own category, never spot removal.
+    if (
+        _SPOT_REMOVAL.search(text)
+        and F.SWEEPER not in tags
+        and F.COUNTERSPELL not in tags
+    ):
         tags.add(F.SPOT_REMOVAL)
     if _PROTECTION.search(text) or _has_protection_keyword(card):
         tags.add(F.PROTECTION)
@@ -1974,7 +2122,7 @@ def classify_deck(deck: ResolvedDeck) -> dict[str, frozenset[Function]]:
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `python3 -m pytest tests/test_classify.py -v`
-Expected: PASS, 23 tests.
+Expected: PASS, 45 tests (23 named + 12 real staples + 7 MLD + 3 extra-turn).
 
 If `test_treasure_maker_is_ramp` and `test_produced_mana_alone_does_not_make_ramp` cannot both pass, the Treasure clause in `_ADDS_MANA` is matching too broadly or too narrowly — adjust that clause only, and do not fall back to keying on `produced_mana`, which is the bug both tests exist to prevent.
 
@@ -2153,6 +2301,33 @@ def test_generic_and_x_costs_are_not_pips():
     assert audit(deck).pips == ()
 
 
+def test_colorless_and_snow_symbols_are_not_pips():
+    deck = build([(36, FOREST),
+                  (1, card("Rock", "Artifact", mv=2.0, cost="{C}{C}", identity="")),
+                  (1, card("Snowy", "Artifact", mv=2.0, cost="{2}{S}", identity=""))])
+    assert audit(deck).pips == ()
+
+
+@pytest.mark.parametrize(
+    "cost,color,expected_max_pips",
+    [
+        ("{2}{G/W}", "G", 1),
+        ("{2}{G/W}", "W", 1),
+        ("{G/P}", "G", 1),
+        # Monocolored hybrid: the left side is generic. Reporting zero pips here
+        # would understate the deck's need for white sources.
+        ("{2/W}{2/W}{2/W}", "W", 3),
+        ("{2/B}{2/B}{2/B}", "B", 3),
+    ],
+    ids=["hybrid-G", "hybrid-W", "phyrexian", "spectral-procession", "beseech"],
+)
+def test_hybrid_and_monocolored_hybrid_pips_are_counted(cost, color, expected_max_pips):
+    identity = "".join(sorted({c for c in cost if c in "WUBRG"}))
+    deck = build([(36, FOREST), (1, card("Hybrid Card", cost=cost, mv=3.0, identity=identity))])
+    report = next(p for p in audit(deck).pips if p.color == color)
+    assert report.max_pips == expected_max_pips
+
+
 def test_audit_accepts_precomputed_tags():
     deck = build([(36, FOREST), (1, SOL_RING)])
     tags = {"Forest": frozenset({F.LAND}), "Sol Ring": frozenset({F.DRAW})}
@@ -2256,10 +2431,12 @@ F = Function
 #: because they place no demand on the mana base's colors.
 _PIP_RE = re.compile(r"\{([WUBRG])\}")
 
-#: Hybrid and phyrexian symbols, e.g. {G/W} or {G/P}. Each half counts as a
-#: source demand, but only one of them is needed, so they are counted as a
-#: half-strength requirement by attributing the pip to every listed color.
-_HYBRID_RE = re.compile(r"\{([WUBRG])/([WUBRGP])\}")
+#: Hybrid, phyrexian, and monocolored-hybrid symbols: {G/W}, {G/P}, {2/W}.
+#: The left side may be generic, as on Spectral Procession's {2/W} — requiring a
+#: color there reports zero pips for such a card and silently understates the
+#: deck's color needs. Every listed color gets the pip, which overstates demand
+#: slightly for hybrids; that is the safe direction to be wrong in.
+_HYBRID_RE = re.compile(r"\{(?:([WUBRG])|\d+)/([WUBRGP])\}")
 
 #: Mana values above this are grouped into one bucket.
 CURVE_TOP_BUCKET = 7
@@ -2397,7 +2574,8 @@ def _count_pips(mana_cost: str) -> dict[str, int]:
         pips[color] = pips.get(color, 0) + 1
     for left, right in _HYBRID_RE.findall(mana_cost):
         for color in (left, right):
-            if color in "WUBRG":
+            # `left` is empty when the symbol is a monocolored hybrid like {2/W}.
+            if color and color in "WUBRG":
                 pips[color] = pips.get(color, 0) + 1
     return pips
 
@@ -2442,7 +2620,7 @@ def _sources_for(deck: ResolvedDeck, tags: dict[str, frozenset[Function]], color
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `python3 -m pytest tests/test_audit.py -v`
-Expected: PASS, 15 tests.
+Expected: PASS, 21 tests (16 named + 5 parametrized hybrid cases).
 
 - [ ] **Step 6: Commit**
 
@@ -2811,22 +2989,58 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 8: CLI
+## Task 8: Agent-callable operation surface
 
-Composes the stages and renders a report. `render` is a pure function so it can be tested without any I/O, and `main` accepts an injected client so the end-to-end test stays offline.
+**This task was rewritten at the user's direction.** The original specified one `audit` command
+that ran the whole pipeline and printed a report. That is a monolith: it forces a single order
+and granularity, so an agent cannot look up one card, vet three candidate replacements, or
+re-check only the bracket after a swap without re-running everything. Deck tuning is a loop —
+measure, hypothesize, check a candidate, re-measure — and the interface has to support it.
+
+Two layers:
+
+- `mtgpt/api.py` — the stable facade. One function per operation, each taking the smallest input
+  it needs and returning a plain JSON-able `dict`. **All serialization lives here**, so the CLI
+  and any future MCP adapter stay thin.
+- `mtgpt/cli.py` — argparse dispatch to the facade. JSON by default in a fixed envelope;
+  `--text` renders the human report.
+
+Every operation is stateless and independently callable. Errors are data, not prose: an
+unresolved card name returns `{"ok": false, "error": {"type": "UnresolvedCards", "names": [...]}}`
+so an agent can act on it programmatically.
+
+This task also adds a general `search()` to `mtgpt/scryfall.py`, which until now only searched
+internally for Game Changers. Finding candidate cards is what makes the toolkit useful for
+tuning rather than only grading.
 
 **Files:**
+- Create: `mtgpt/api.py`
 - Create: `mtgpt/cli.py`
+- Modify: `mtgpt/scryfall.py` — add `ScryfallClient.search(query, *, limit=25)` only
 - Create: `tests/fixtures/sample_deck.txt`
+- Create: `tests/fixtures/search_results.json`
+- Create: `tests/fixtures/collection_sample_deck.json`
+- Test: `tests/test_api.py`
 - Test: `tests/test_cli.py`
 
 **Interfaces:**
 - Consumes: everything from Tasks 1-7.
-- Produces: `render(deck, violations, audit_report, bracket_report, tags) -> str`, `main(argv=None, client=None) -> int`.
+- Produces, in `api.py`, each returning a JSON-able `dict`:
+  - `lookup_card(name, *, client=None)`
+  - `search_cards(query, *, limit=25, client=None)`
+  - `classify_cards(names, *, client=None)`
+  - `read_deck(text)`
+  - `validate_deck(text, *, client=None)`
+  - `audit_deck(text, *, client=None)`
+  - `bracket_check(text, *, target=3, client=None)`
+  - `full_report(text, *, target=3, client=None)`
+  - `render_report(report) -> str`
+- Produces, in `cli.py`: `build_parser()`, `main(argv=None, client=None) -> int`, subcommands
+  `card`, `search`, `classify`, `read`, `validate`, `audit`, `bracket`, `report`.
 
-- [ ] **Step 1: Write the fixture**
+- [ ] **Step 1: Write the fixtures**
 
-Write `tests/fixtures/sample_deck.txt`:
+`tests/fixtures/sample_deck.txt`:
 
 ```text
 Commander
@@ -2843,402 +3057,815 @@ Maybeboard
 1 Mana Crypt (EMA) 225
 ```
 
-- [ ] **Step 2: Write the failing test**
+`tests/fixtures/search_results.json`:
+
+```json
+{
+  "object": "list",
+  "total_cards": 2,
+  "has_more": false,
+  "data": [
+    {
+      "object": "card",
+      "name": "Cultivate",
+      "cmc": 3.0,
+      "type_line": "Sorcery",
+      "oracle_text": "Search your library for up to two basic land cards, reveal those cards, put one onto the battlefield tapped and the other into your hand, then shuffle.",
+      "mana_cost": "{2}{G}",
+      "color_identity": ["G"],
+      "colors": ["G"],
+      "layout": "normal",
+      "keywords": [],
+      "legalities": {"commander": "legal"},
+      "prices": {"usd": "0.25"}
+    },
+    {
+      "object": "card",
+      "name": "Kodama's Reach",
+      "cmc": 3.0,
+      "type_line": "Sorcery — Arcane",
+      "oracle_text": "Search your library for up to two basic land cards, reveal those cards, put one onto the battlefield tapped and the other into your hand, then shuffle.",
+      "mana_cost": "{2}{G}",
+      "color_identity": ["G"],
+      "colors": ["G"],
+      "layout": "normal",
+      "keywords": [],
+      "legalities": {"commander": "legal"},
+      "prices": {"usd": "0.40"}
+    }
+  ]
+}
+```
+
+`tests/fixtures/collection_sample_deck.json` must resolve exactly the six distinct cards in
+`sample_deck.txt`. Capture it from the live API once, then commit the file:
+
+```bash
+curl -sS -A 'mtgpt/0.1' -H 'Content-Type: application/json' \
+  -d '{"identifiers":[{"name":"Atraxa, Praetors Voice"},{"name":"Sol Ring"},{"name":"Cultivate"},{"name":"Swords to Plowshares"},{"name":"Wrath of God"},{"name":"Forest"}]}' \
+  https://api.scryfall.com/cards/collection -o tests/fixtures/collection_sample_deck.json
+python3 -c "
+import json; d=json.load(open('tests/fixtures/collection_sample_deck.json'))
+assert not d.get('not_found'), d.get('not_found')
+for c in d['data']:
+    print(c['name'], '|', c['type_line'], '|', c.get('produced_mana'))
+"
+```
+
+Confirm `Forest` reads `Basic Land — Forest` with `produced_mana` `["G"]`, and that `Cultivate`
+carries its real land-search oracle text — the tests depend on it classifying as ramp, not tutor.
+
+- [ ] **Step 2: Add `search()` to `mtgpt/scryfall.py`**
+
+Add `import urllib.parse` to the imports, then append this method to `ScryfallClient` beside
+`game_changers()`. Route it through the existing `self._request(...)` seam so the throttle still
+applies. Change nothing else in the file.
 
 ```python
-# tests/test_cli.py
+    def search(self, query: str, *, limit: int = 25) -> tuple[dict, ...]:
+        """Run a Scryfall search and return up to `limit` card payloads.
+
+        This is how an agent finds candidate cards. Results are capped because
+        the caller is choosing among options, not enumerating a set.
+        """
+        url = (
+            f"{API}/cards/search?q={urllib.parse.quote(query)}"
+            "&unique=cards&order=edhrec"
+        )
+        found: list[dict] = []
+        while url and len(found) < limit:
+            try:
+                body = self._request(url)
+            except (urllib.error.URLError, OSError, ValueError) as exc:
+                raise SourceUnavailable("Scryfall search", str(exc)) from exc
+            found.extend(body.get("data") or ())
+            url = body.get("next_page") if body.get("has_more") else None
+        return tuple(found[:limit])
+```
+
+Scryfall answers a zero-match search with HTTP 404, which `_http_transport` raises as
+`URLError`, so an empty search surfaces as `SourceUnavailable`. That is acceptable here — note
+it in your report rather than special-casing it.
+
+- [ ] **Step 3: Write `tests/test_api.py`**
+
+```python
+# tests/test_api.py
 import json
 import pathlib
 
-from mtgpt import cli
-from mtgpt.audit import audit
-from mtgpt.brackets import check
-from mtgpt.classify import classify_deck
-from mtgpt.models import Card, ResolvedDeck, Severity, Violation
-from mtgpt.validate import validate
+import pytest
+
+from mtgpt import api
+from mtgpt.errors import DeckStructureError, UnresolvedCards
+from mtgpt.scryfall import ScryfallClient
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
 
-def card(name, type_line="Artifact", oracle_text="", mv=1.0, cost="{1}",
-         produced=(), identity="", game_changer=False, legal="legal"):
-    return Card(
-        name=name, mana_value=mv, type_line=type_line, oracle_text=oracle_text,
-        mana_cost=cost, color_identity=frozenset(identity), colors=frozenset(identity),
-        legal_commander=legal, produced_mana=frozenset(produced), layout="normal",
-        is_game_changer=game_changer, usd=None, keywords=(),
-    )
+def load(name):
+    return json.loads((FIXTURES / name).read_text())
 
 
-def small_deck():
-    atraxa = card("Atraxa, Praetors' Voice",
-                  "Legendary Creature — Phyrexian Angel Horror",
-                  "Flying", mv=4.0, cost="{3}{G}{W}{U}{B}", identity="WUBG")
-    forest = card("Forest", "Basic Land — Forest", "({T}: Add {G}.)", mv=0.0,
-                  cost="", produced="G", identity="G")
-    sol = card("Sol Ring", "Artifact", "{T}: Add {C}{C}.", produced="C")
-    return ResolvedDeck(commanders=(atraxa,), cards=((36, forest), (1, sol)))
+def deck_text():
+    return (FIXTURES / "sample_deck.txt").read_text()
 
 
-def rendered(deck, bracket=3):
-    tags = classify_deck(deck)
-    return cli.render(
-        deck=deck,
-        violations=validate(deck),
-        audit_report=audit(deck, tags=tags),
-        bracket_report=check(deck, tags=tags, target=bracket),
-        tags=tags,
-    )
+class FakeTransport:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def __call__(self, url, payload=None):
+        self.calls.append((url, payload))
+        if not self.responses:
+            raise AssertionError(f"unexpected extra request to {url}")
+        return self.responses.pop(0)
 
 
-def test_render_includes_commander_and_counts():
-    out = rendered(small_deck())
-    assert "Atraxa, Praetors' Voice" in out
-    assert "Lands" in out
-    assert "36" in out
+NO_GAME_CHANGERS = {"data": [], "has_more": False}
 
 
-def test_render_reports_deck_size_violation():
-    out = rendered(small_deck())
-    assert "38 cards" in out or "deck_size" in out.lower() or "requires 100" in out
+def client_for(*responses):
+    return ScryfallClient(transport=FakeTransport(*responses), sleep=lambda _: None)
 
 
-def test_render_shows_bracket_name():
-    out = rendered(small_deck(), bracket=3)
-    assert "Upgraded" in out
+def deck_client():
+    return client_for(load("collection_sample_deck.json"), NO_GAME_CHANGERS)
 
 
-def test_render_lists_deferred_checks():
-    out = rendered(small_deck())
-    assert "Commander Spellbook" in out
+def test_lookup_card_returns_card_data_and_tags():
+    result = api.lookup_card("Sol Ring", client=deck_client())
+    assert result["name"] == "Sol Ring"
+    assert result["mana_value"] == 1.0
+    assert result["legal_commander"] == "legal"
+    assert "ramp" in result["functions"]
+    assert result["is_land"] is False
 
 
-def test_render_marks_out_of_band_categories():
-    out = rendered(small_deck())
-    # Ramp is 1 against a target of 10-12, so it must be called out as low.
-    assert "low" in out.lower()
+def test_lookup_card_raises_for_an_invented_name():
+    client = client_for({"data": [], "not_found": [{"name": "Fake Card"}]})
+    with pytest.raises(UnresolvedCards):
+        api.lookup_card("Fake Card", client=client)
 
 
-def test_main_reads_a_file_and_returns_zero(tmp_path, monkeypatch, capsys):
-    deck = small_deck()
-    monkeypatch.setattr(cli, "resolve", lambda parsed, client=None: deck)
-    path = tmp_path / "deck.txt"
-    path.write_text("Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n1 Sol Ring\n36 Forest\n")
-    code = cli.main(["audit", "--file", str(path), "--bracket", "3"])
-    out = capsys.readouterr().out
-    assert code == 0
-    assert "Atraxa" in out
+def test_search_cards_returns_candidates_with_tags():
+    client = client_for(load("search_results.json"), NO_GAME_CHANGERS)
+    result = api.search_cards("o:'search your library for' t:sorcery c:g", client=client)
+    assert result["count"] == 2
+    assert [c["name"] for c in result["cards"]] == ["Cultivate", "Kodama's Reach"]
+    # Candidates arrive pre-tagged so the agent can confirm they fill the gap.
+    assert "ramp" in result["cards"][0]["functions"]
+    assert "tutor" not in result["cards"][0]["functions"]
 
 
-def test_main_json_output_is_parseable(tmp_path, monkeypatch, capsys):
-    deck = small_deck()
-    monkeypatch.setattr(cli, "resolve", lambda parsed, client=None: deck)
-    path = tmp_path / "deck.txt"
-    path.write_text("Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n1 Sol Ring\n36 Forest\n")
-    cli.main(["audit", "--file", str(path), "--json"])
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["commanders"] == ["Atraxa, Praetors' Voice"]
-    assert payload["audit"]["land_count"] == 36
-    assert payload["bracket"]["target_name"] == "Upgraded"
+def test_search_cards_respects_limit():
+    client = client_for(load("search_results.json"), NO_GAME_CHANGERS)
+    assert api.search_cards("c:g", limit=1, client=client)["count"] == 1
 
 
-def test_main_reports_unresolved_cards_and_returns_two(tmp_path, monkeypatch, capsys):
-    from mtgpt.errors import UnresolvedCards
-
-    def boom(parsed, client=None):
-        raise UnresolvedCards(["Blatantly Fake Card"])
-
-    monkeypatch.setattr(cli, "resolve", boom)
-    path = tmp_path / "deck.txt"
-    path.write_text("1 Blatantly Fake Card\n")
-    code = cli.main(["audit", "--file", str(path)])
-    err = capsys.readouterr().err
-    assert code == 2
-    assert "Blatantly Fake Card" in err
-    assert "will not guess" in err
+def test_classify_cards_maps_names_to_tags():
+    result = api.classify_cards(["Sol Ring", "Cultivate"], client=deck_client())
+    assert "ramp" in result["Sol Ring"]
+    # The land fetch must be ramp, not a tutor — this drives the bracket verdict.
+    assert "ramp" in result["Cultivate"]
+    assert "tutor" not in result["Cultivate"]
 
 
-def test_main_reports_unparseable_deck(tmp_path, capsys):
-    path = tmp_path / "deck.txt"
-    path.write_text("not a decklist\n")
-    code = cli.main(["audit", "--file", str(path)])
-    assert code == 2
-    assert "No decklist entries" in capsys.readouterr().err
+def test_read_deck_needs_no_network():
+    result = api.read_deck(deck_text())
+    assert result["commanders"] == [{"qty": 1, "name": "Atraxa, Praetors' Voice"}]
+    assert result["total_cards"] == 41
+    assert {"qty": 36, "name": "Forest"} in result["entries"]
+    # Maybeboard is excluded.
+    assert all(e["name"] != "Mana Crypt" for e in result["entries"])
 
 
-def test_main_reads_stdin(monkeypatch, capsys):
-    deck = small_deck()
-    monkeypatch.setattr(cli, "resolve", lambda parsed, client=None: deck)
-    monkeypatch.setattr("sys.stdin", __import__("io").StringIO(
-        "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n1 Sol Ring\n36 Forest\n"
-    ))
-    assert cli.main(["audit", "--stdin"]) == 0
-    assert "Atraxa" in capsys.readouterr().out
+def test_read_deck_raises_on_garbage():
+    with pytest.raises(DeckStructureError):
+        api.read_deck("this is not a decklist")
 
 
-def test_main_rejects_missing_input():
-    assert cli.main(["audit"]) == 2
+def test_validate_deck_returns_only_legality():
+    result = api.validate_deck(deck_text(), client=deck_client())
+    assert result["legal"] is False  # the fixture deck is 41 cards, not 100
+    assert "deck_size" in [v["code"] for v in result["violations"]]
+    assert "audit" not in result
+
+
+def test_audit_deck_returns_only_measurements():
+    result = api.audit_deck(deck_text(), client=deck_client())
+    assert result["land_count"] == 36
+    assert "categories" in result and "pips" in result
+    assert "violations" not in result
+
+
+def test_bracket_check_returns_only_the_verdict():
+    result = api.bracket_check(deck_text(), target=3, client=deck_client())
+    assert result["target"] == 3
+    assert result["target_name"] == "Upgraded"
+    assert "deferred_checks" in result
+    assert "categories" not in result
+
+
+def test_full_report_composes_every_section():
+    result = api.full_report(deck_text(), target=3, client=deck_client())
+    for key in ("commanders", "violations", "audit", "bracket", "tags"):
+        assert key in result
+
+
+def test_render_report_surfaces_per_card_tags():
+    """Classification is heuristic; the design's mitigation is visible tags."""
+    rendered = api.render_report(api.full_report(deck_text(), target=3, client=deck_client()))
+    assert "CARD TAGS" in rendered
+    assert "Cultivate" in rendered
+    assert "ramp" in rendered.lower()
+
+
+def test_operations_are_independent():
+    """bracket_check must work without audit_deck ever being called."""
+    assert api.bracket_check(deck_text(), client=deck_client())["target"] == 3
 ```
 
-- [ ] **Step 3: Run the test to verify it fails**
+- [ ] **Step 4: Run it to verify it fails**
 
-Run: `python3 -m pytest tests/test_cli.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'mtgpt.cli'`
+Run: `python3 -m pytest tests/test_api.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'mtgpt.api'`
 
-- [ ] **Step 4: Write `mtgpt/cli.py`**
+- [ ] **Step 5: Write `mtgpt/api.py`**
 
 ```python
-# mtgpt/cli.py
-"""Command line entry point.
+# mtgpt/api.py
+"""The agent-facing facade.
 
-    python3 -m mtgpt.cli audit --file deck.txt --bracket 3
-    python3 -m mtgpt.cli audit --stdin --json
+One function per operation, each returning a plain JSON-able dict. An agent
+composes these: look up a card, audit a deck, search for candidates, classify
+them, re-audit. Nothing here holds state, and no function depends on another
+having been called first.
 
-`render` is pure so it can be tested without I/O, and `main` takes an
-injectable client so the end-to-end tests stay offline.
+Serialization lives in this module alone, so `cli.py` — and any future MCP
+adapter — stays a thin dispatch layer.
 """
 
 from __future__ import annotations
 
-import argparse
-import dataclasses
-import json
-import sys
-
 from .audit import AuditReport, audit
 from .brackets import BracketReport, check
-from .classify import classify_deck
+from .classify import classify, classify_deck
 from .deckparse import parse
-from .errors import DeckStructureError, SourceUnavailable, UnresolvedCards
-from .models import Function, ResolvedDeck, Violation
-from .scryfall import ScryfallClient, resolve
+from .models import Card, Function, ResolvedDeck, Violation
+from .scryfall import ScryfallClient, card_from_json, resolve
 from .validate import validate
 
-EXIT_OK = 0
-EXIT_USER_ERROR = 2
+
+def _client(client: ScryfallClient | None) -> ScryfallClient:
+    return client or ScryfallClient()
+
+
+def _card_dict(card: Card, functions: frozenset[Function]) -> dict:
+    return {
+        "name": card.name,
+        "mana_value": card.mana_value,
+        "mana_cost": card.mana_cost,
+        "type_line": card.type_line,
+        "oracle_text": card.oracle_text,
+        "color_identity": sorted(card.color_identity),
+        "legal_commander": card.legal_commander,
+        "is_land": card.is_land,
+        "is_mdfc_land": card.is_mdfc_land,
+        "is_game_changer": card.is_game_changer,
+        "usd": card.usd,
+        "functions": sorted(f.value for f in functions),
+    }
+
+
+def _violations(violations: tuple[Violation, ...]) -> list[dict]:
+    return [
+        {"severity": v.severity.name, "code": v.code, "message": v.message}
+        for v in violations
+    ]
+
+
+def _audit_dict(report: AuditReport) -> dict:
+    return {
+        "total_cards": report.total_cards,
+        "land_count": report.land_count,
+        "mdfc_land_count": report.mdfc_land_count,
+        "mana_sources": report.mana_sources,
+        "average_mana_value": report.average_mana_value,
+        "curve_status": report.curve_status,
+        "curve": [list(pair) for pair in report.curve],
+        "categories": [
+            {
+                "function": c.function.value,
+                "count": c.count,
+                "target": [c.target_min, c.target_max],
+                "status": c.status,
+                "delta": c.delta,
+            }
+            for c in report.categories
+        ],
+        "pips": [
+            {
+                "color": p.color,
+                "total_pips": p.total_pips,
+                "max_pips": p.max_pips,
+                "sources": p.sources,
+                "required": p.required,
+                "ok": p.ok,
+            }
+            for p in report.pips
+        ],
+    }
+
+
+def _bracket_dict(report: BracketReport) -> dict:
+    return {
+        "target": report.target,
+        "target_name": report.target_name,
+        "compliant": report.compliant,
+        "game_changers": list(report.game_changers),
+        "tutor_count": report.tutor_count,
+        "mass_land_denial": list(report.mass_land_denial),
+        "extra_turns": list(report.extra_turns),
+        "findings": _violations(report.findings),
+        "deferred_checks": list(report.deferred_checks),
+    }
+
+
+def _tags_dict(tags: dict[str, frozenset[Function]]) -> dict[str, list[str]]:
+    return {name: sorted(f.value for f in fns) for name, fns in tags.items()}
+
+
+# --- Card operations -------------------------------------------------------
+
+
+def lookup_card(name: str, *, client: ScryfallClient | None = None) -> dict:
+    """Resolve one card against Scryfall and tag it.
+
+    Use this before naming any card in a recommendation. Raises
+    UnresolvedCards if the name is not real.
+    """
+    cards, _ = _client(client).collection([name])
+    card = card_from_json(cards[0])
+    return _card_dict(card, classify(card))
+
+
+def search_cards(
+    query: str, *, limit: int = 25, client: ScryfallClient | None = None
+) -> dict:
+    """Find candidate cards with a Scryfall query, pre-tagged by function."""
+    payloads = _client(client).search(query, limit=limit)
+    cards = [card_from_json(p) for p in payloads]
+    return {
+        "query": query,
+        "count": len(cards),
+        "cards": [_card_dict(c, classify(c)) for c in cards],
+    }
+
+
+def classify_cards(
+    names: list[str], *, client: ScryfallClient | None = None
+) -> dict[str, list[str]]:
+    """Tag several cards by function, keyed by name."""
+    cards, _ = _client(client).collection(names)
+    out: dict[str, list[str]] = {}
+    for payload in cards:
+        card = card_from_json(payload)
+        out[card.name] = sorted(f.value for f in classify(card))
+    return out
+
+
+# --- Deck operations -------------------------------------------------------
+
+
+def read_deck(text: str) -> dict:
+    """Parse decklist text. No network, no verification — structure only."""
+    deck = parse(text)
+    return {
+        "commanders": [{"qty": e.qty, "name": e.name} for e in deck.commanders],
+        "entries": [{"qty": e.qty, "name": e.name} for e in deck.entries],
+        "total_cards": deck.total_with_commanders,
+    }
+
+
+def _resolved(text: str, client: ScryfallClient | None) -> ResolvedDeck:
+    return resolve(parse(text), client=_client(client))
+
+
+def validate_deck(text: str, *, client: ScryfallClient | None = None) -> dict:
+    """Legality only: size, singleton, commander, color identity, ban list."""
+    deck = _resolved(text, client)
+    violations = validate(deck)
+    return {
+        "commanders": [c.name for c in deck.commanders],
+        "legal": not violations,
+        "violations": _violations(violations),
+    }
+
+
+def audit_deck(text: str, *, client: ScryfallClient | None = None) -> dict:
+    """Measurements only: ratios, curve, colored sources."""
+    deck = _resolved(text, client)
+    return _audit_dict(audit(deck, tags=classify_deck(deck)))
+
+
+def bracket_check(
+    text: str, *, target: int = 3, client: ScryfallClient | None = None
+) -> dict:
+    """Bracket verdict only."""
+    deck = _resolved(text, client)
+    return _bracket_dict(check(deck, tags=classify_deck(deck), target=target))
+
+
+def full_report(
+    text: str, *, target: int = 3, client: ScryfallClient | None = None
+) -> dict:
+    """Everything composed, for when the agent wants one complete picture."""
+    deck = _resolved(text, client)
+    tags = classify_deck(deck)
+    return {
+        "commanders": [c.name for c in deck.commanders],
+        "color_identity": sorted(deck.command_zone_identity),
+        "total_cards": deck.total_with_commanders,
+        "violations": _violations(validate(deck)),
+        "audit": _audit_dict(audit(deck, tags=tags)),
+        "bracket": _bracket_dict(check(deck, tags=tags, target=target)),
+        "tags": _tags_dict(tags),
+    }
+
 
 _STATUS_MARK = {"ok": "ok", "low": "LOW", "high": "HIGH"}
 
 
-def render(
-    *,
-    deck: ResolvedDeck,
-    violations: tuple[Violation, ...],
-    audit_report: AuditReport,
-    bracket_report: BracketReport,
-    tags: dict[str, frozenset[Function]],
-) -> str:
-    """Render the full text report."""
+def render_report(report: dict) -> str:
+    """Render a `full_report` dict as human-readable text."""
+    from . import targets
+
     lines: list[str] = []
-    commanders = ", ".join(c.name for c in deck.commanders) or "(none declared)"
-    identity = "".join(sorted(deck.command_zone_identity)) or "C"
+    commanders = ", ".join(report["commanders"]) or "(none declared)"
+    identity = "".join(report["color_identity"]) or "C"
+    audit_data = report["audit"]
+    bracket = report["bracket"]
+
+    def band(name):
+        low, high = getattr(targets, name)
+        return f"{low}-{high}"
 
     lines.append("=" * 68)
-    lines.append(f"mtgpt audit — {commanders}")
-    lines.append(f"Color identity: {{{identity}}}   Cards: {deck.total_with_commanders}/100")
+    lines.append(f"mtgpt — {commanders}")
+    lines.append(f"Color identity: {{{identity}}}   Cards: {report['total_cards']}/100")
     lines.append("=" * 68)
 
     lines.append("")
     lines.append("LEGALITY")
-    if violations:
-        for violation in violations:
-            lines.append(f"  [{violation.severity.name}] {violation.message}")
+    if report["violations"]:
+        for v in report["violations"]:
+            lines.append(f"  [{v['severity']}] {v['message']}")
     else:
         lines.append("  No violations found.")
 
     lines.append("")
     lines.append("COMPOSITION")
-    lines.append(f"  {'Lands':<16}{audit_report.land_count:>4}   target {_band('LAND')}")
-    if audit_report.mdfc_land_count:
+    lines.append(f"  {'Lands':<16}{audit_data['land_count']:>4}   target {band('LAND')}")
+    if audit_data["mdfc_land_count"]:
         lines.append(
-            f"  {'MDFC land backs':<16}{audit_report.mdfc_land_count:>4}   "
-            "counted as flex sources, not lands"
+            f"  {'MDFC backs':<16}{audit_data['mdfc_land_count']:>4}   "
+            "flex sources, not lands"
         )
-    for category in audit_report.categories:
-        if category.function.name == "LAND":
+    for c in audit_data["categories"]:
+        if c["function"] == "land":
             continue
-        label = category.function.name.replace("_", " ").title()
-        band = f"{category.target_min}-{category.target_max}"
-        mark = _STATUS_MARK[category.status]
+        label = c["function"].replace("_", " ").title()
+        band_text = f"{c['target'][0]}-{c['target'][1]}"
+        mark = _STATUS_MARK[c["status"]]
         note = ""
-        if category.delta:
-            verb = "add" if category.delta > 0 else "cut"
-            note = f"  ({verb} {abs(category.delta)})"
-        lines.append(f"  {label:<16}{category.count:>4}   target {band:<7} {mark}{note}")
+        if c["delta"]:
+            note = f"  ({'add' if c['delta'] > 0 else 'cut'} {abs(c['delta'])})"
+        lines.append(f"  {label:<16}{c['count']:>4}   target {band_text:<7} {mark}{note}")
     lines.append(
-        f"  {'Mana sources':<16}{audit_report.mana_sources:>4}   "
-        f"target {_band('MANA_SOURCES')}"
+        f"  {'Mana sources':<16}{audit_data['mana_sources']:>4}   "
+        f"target {band('MANA_SOURCES')}"
     )
 
     lines.append("")
     lines.append("CURVE")
     lines.append(
-        f"  Average mana value: {audit_report.average_mana_value} "
-        f"({_STATUS_MARK[audit_report.curve_status]}, target "
-        f"{_band('AVERAGE_MV_BAND')})"
+        f"  Average mana value: {audit_data['average_mana_value']} "
+        f"({_STATUS_MARK[audit_data['curve_status']]}, target {band('AVERAGE_MV_BAND')})"
     )
-    for bucket, count in audit_report.curve:
+    for bucket, count in audit_data["curve"]:
         label = "7+" if bucket >= 7 else str(bucket)
         lines.append(f"  {label:>3} | {'#' * min(count, 40)} {count}")
 
     lines.append("")
     lines.append("COLORED SOURCES")
-    if audit_report.pips:
-        for pip in audit_report.pips:
-            mark = "ok" if pip.ok else "SHORT"
+    if audit_data["pips"]:
+        for p in audit_data["pips"]:
+            verdict = "ok" if p["ok"] else "SHORT"
             lines.append(
-                f"  {{{pip.color}}}  sources {pip.sources:>3}   "
-                f"need {pip.required:>3} for a {pip.max_pips}-pip card   {mark}"
+                f"  {{{p['color']}}}  sources {p['sources']:>3}   "
+                f"need {p['required']:>3} for a {p['max_pips']}-pip card   {verdict}"
             )
     else:
         lines.append("  No colored pips in the deck.")
 
     lines.append("")
-    lines.append(f"BRACKET {bracket_report.target} — {bracket_report.target_name}")
-    verdict = "compliant" if bracket_report.compliant else "NOT compliant"
-    lines.append(f"  Verdict: {verdict}")
-    lines.append(
-        f"  Game Changers: {len(bracket_report.game_changers)}"
-        + (f" ({', '.join(bracket_report.game_changers)})" if bracket_report.game_changers else "")
-    )
-    lines.append(f"  Tutors: {bracket_report.tutor_count} (land fetches excluded)")
-    for finding in bracket_report.findings:
-        lines.append(f"  [{finding.severity.name}] {finding.message}")
+    lines.append(f"BRACKET {bracket['target']} — {bracket['target_name']}")
+    lines.append(f"  Verdict: {'compliant' if bracket['compliant'] else 'NOT compliant'}")
+    gc = bracket["game_changers"]
+    lines.append(f"  Game Changers: {len(gc)}" + (f" ({', '.join(gc)})" if gc else ""))
+    lines.append(f"  Tutors: {bracket['tutor_count']} (land fetches excluded)")
+    for f in bracket["findings"]:
+        lines.append(f"  [{f['severity']}] {f['message']}")
     lines.append("  Not checked at this layer:")
-    for note in bracket_report.deferred_checks:
+    for note in bracket["deferred_checks"]:
         lines.append(f"    - {note}")
+
+    # Classification is heuristic, so the tags are shown for correction.
+    lines.append("")
+    lines.append("CARD TAGS")
+    for name in sorted(report["tags"]):
+        lines.append(f"  {name:<34} {', '.join(report['tags'][name])}")
 
     lines.append("")
     return "\n".join(lines)
+```
+
+- [ ] **Step 6: Run the facade tests**
+
+Run: `python3 -m pytest tests/test_api.py -v`
+Expected: PASS, 13 tests.
+
+- [ ] **Step 7: Write `tests/test_cli.py`**
+
+```python
+# tests/test_cli.py
+import io
+import json
+import pathlib
+
+from mtgpt import cli
+
+FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
 
-def _band(name: str) -> str:
-    from . import targets
-
-    low, high = getattr(targets, name)
-    return f"{low}-{high}"
-
-
-def _to_json(
-    deck: ResolvedDeck,
-    violations: tuple[Violation, ...],
-    audit_report: AuditReport,
-    bracket_report: BracketReport,
-    tags: dict[str, frozenset[Function]],
-) -> str:
-    payload = {
-        "commanders": [c.name for c in deck.commanders],
-        "color_identity": sorted(deck.command_zone_identity),
-        "total_cards": deck.total_with_commanders,
-        "violations": [
-            {"severity": v.severity.name, "code": v.code, "message": v.message}
-            for v in violations
-        ],
-        "audit": {
-            "land_count": audit_report.land_count,
-            "mdfc_land_count": audit_report.mdfc_land_count,
-            "mana_sources": audit_report.mana_sources,
-            "average_mana_value": audit_report.average_mana_value,
-            "curve_status": audit_report.curve_status,
-            "curve": [list(pair) for pair in audit_report.curve],
-            "categories": [
-                {
-                    "function": c.function.value,
-                    "count": c.count,
-                    "target": [c.target_min, c.target_max],
-                    "status": c.status,
-                    "delta": c.delta,
-                }
-                for c in audit_report.categories
-            ],
-            "pips": [dataclasses.asdict(p) | {"ok": p.ok} for p in audit_report.pips],
-        },
-        "bracket": {
-            "target": bracket_report.target,
-            "target_name": bracket_report.target_name,
-            "compliant": bracket_report.compliant,
-            "game_changers": list(bracket_report.game_changers),
-            "tutor_count": bracket_report.tutor_count,
-            "mass_land_denial": list(bracket_report.mass_land_denial),
-            "extra_turns": list(bracket_report.extra_turns),
-            "findings": [
-                {"severity": f.severity.name, "code": f.code, "message": f.message}
-                for f in bracket_report.findings
-            ],
-            "deferred_checks": list(bracket_report.deferred_checks),
-        },
-        "tags": {name: sorted(f.value for f in fns) for name, fns in tags.items()},
+def test_every_subcommand_is_registered():
+    parser = cli.build_parser()
+    actions = [a for a in parser._actions if a.dest == "command"]
+    assert actions, "expected a subcommand dest named 'command'"
+    assert set(actions[0].choices) == {
+        "card", "search", "classify", "read", "validate", "audit", "bracket", "report",
     }
-    return json.dumps(payload, indent=2)
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def test_card_emits_a_success_envelope(monkeypatch, capsys):
+    monkeypatch.setattr(cli.api, "lookup_card",
+                        lambda name, client=None: {"name": name, "functions": ["ramp"]})
+    assert cli.main(["card", "Sol Ring"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["command"] == "card"
+    assert payload["data"]["name"] == "Sol Ring"
+
+
+def test_unresolved_card_emits_a_machine_readable_error(monkeypatch, capsys):
+    from mtgpt.errors import UnresolvedCards
+
+    def boom(name, client=None):
+        raise UnresolvedCards(["Blatantly Fake Card"])
+
+    monkeypatch.setattr(cli.api, "lookup_card", boom)
+    code = cli.main(["card", "Blatantly Fake Card"])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 2
+    assert payload["ok"] is False
+    assert payload["error"]["type"] == "UnresolvedCards"
+    # The offending names are data, so the agent can act on them.
+    assert payload["error"]["names"] == ["Blatantly Fake Card"]
+
+
+def test_search_passes_limit_through(monkeypatch):
+    seen = {}
+
+    def fake(query, limit=25, client=None):
+        seen["query"], seen["limit"] = query, limit
+        return {"query": query, "count": 0, "cards": []}
+
+    monkeypatch.setattr(cli.api, "search_cards", fake)
+    assert cli.main(["search", "c:g t:sorcery", "--limit", "5"]) == 0
+    assert seen == {"query": "c:g t:sorcery", "limit": 5}
+
+
+def test_classify_accepts_several_names(monkeypatch, capsys):
+    monkeypatch.setattr(cli.api, "classify_cards",
+                        lambda names, client=None: {n: ["ramp"] for n in names})
+    assert cli.main(["classify", "Sol Ring", "Arcane Signet"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert set(payload["data"]) == {"Sol Ring", "Arcane Signet"}
+
+
+def test_read_needs_no_network(capsys):
+    assert cli.main(["read", "--file", str(FIXTURES / "sample_deck.txt")]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["data"]["total_cards"] == 41
+
+
+def test_deck_subcommands_accept_stdin(monkeypatch, capsys):
+    monkeypatch.setattr(cli.api, "audit_deck", lambda text, client=None: {"land_count": 36})
+    monkeypatch.setattr("sys.stdin", io.StringIO("1 Sol Ring\n36 Forest\n"))
+    assert cli.main(["audit", "--stdin"]) == 0
+    assert json.loads(capsys.readouterr().out)["data"]["land_count"] == 36
+
+
+def test_bracket_passes_target_through(monkeypatch):
+    seen = {}
+
+    def fake(text, target=3, client=None):
+        seen["target"] = target
+        return {"target": target, "target_name": "Core"}
+
+    monkeypatch.setattr(cli.api, "bracket_check", fake)
+    cli.main(["bracket", "--file", str(FIXTURES / "sample_deck.txt"), "--target", "2"])
+    assert seen["target"] == 2
+
+
+def test_report_text_mode_renders_instead_of_json(monkeypatch, capsys):
+    monkeypatch.setattr(cli.api, "full_report",
+                        lambda text, target=3, client=None: {"stub": True})
+    monkeypatch.setattr(cli.api, "render_report", lambda report: "RENDERED REPORT")
+    assert cli.main(["report", "--file", str(FIXTURES / "sample_deck.txt"), "--text"]) == 0
+    out = capsys.readouterr().out
+    assert "RENDERED REPORT" in out
+    assert "{" not in out
+
+
+def test_missing_deck_input_is_a_user_error(capsys):
+    assert cli.main(["audit"]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert "Export" in payload["error"]["message"]
+
+
+def test_unparseable_deck_is_reported_as_data(capsys, tmp_path):
+    path = tmp_path / "deck.txt"
+    path.write_text("not a decklist\n")
+    assert cli.main(["read", "--file", str(path)]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["type"] == "DeckStructureError"
+```
+
+- [ ] **Step 8: Write `mtgpt/cli.py`**
+
+```python
+# mtgpt/cli.py
+"""Command-line surface over the agent-facing facade.
+
+Each subcommand is one operation, independently callable:
+
+    python3 -m mtgpt.cli card "Sol Ring"
+    python3 -m mtgpt.cli search "o:'add one mana of any color' t:creature c:g" --limit 10
+    python3 -m mtgpt.cli classify "Cultivate" "Demonic Tutor"
+    python3 -m mtgpt.cli read     --file deck.txt
+    python3 -m mtgpt.cli validate --file deck.txt
+    python3 -m mtgpt.cli audit    --file deck.txt
+    python3 -m mtgpt.cli bracket  --file deck.txt --target 3
+    python3 -m mtgpt.cli report   --file deck.txt --bracket 3 [--text]
+
+Output is JSON in a fixed envelope so results feed the next decision:
+
+    {"ok": true,  "command": "audit", "data": {...}}
+    {"ok": false, "command": "audit", "error": {"type": "...", "message": "...", ...}}
+
+Errors are data, never prose only: UnresolvedCards carries the offending names.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+
+from . import api
+from .errors import DeckStructureError, MtgptError, SourceUnavailable, UnresolvedCards
+from .scryfall import ScryfallClient
+
+EXIT_OK = 0
+EXIT_USER_ERROR = 2
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="mtgpt", description="Audit a Magic: The Gathering Commander deck."
+        prog="mtgpt",
+        description="Agent-callable operations for Magic: The Gathering Commander decks.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    audit_cmd = sub.add_parser("audit", help="Audit a decklist")
-    source = audit_cmd.add_mutually_exclusive_group()
-    source.add_argument("--file", help="Path to a decklist text file")
-    source.add_argument("--stdin", action="store_true", help="Read the decklist from stdin")
-    audit_cmd.add_argument(
-        "--bracket", type=int, default=3, choices=[1, 2, 3, 4, 5],
-        help="Target Commander bracket (default: 3)",
-    )
-    audit_cmd.add_argument("--json", action="store_true", help="Emit JSON instead of text")
+
+    card = sub.add_parser("card", help="Resolve and tag one card")
+    card.add_argument("name")
+
+    search = sub.add_parser("search", help="Find candidate cards by Scryfall query")
+    search.add_argument("query")
+    search.add_argument("--limit", type=int, default=25)
+
+    classify_cmd = sub.add_parser("classify", help="Tag several cards by function")
+    classify_cmd.add_argument("names", nargs="+")
+
+    for name, help_text in (
+        ("read", "Parse a decklist without verifying it"),
+        ("validate", "Check legality only"),
+        ("audit", "Measure ratios, curve, and colored sources"),
+        ("bracket", "Check bracket compliance only"),
+        ("report", "Everything composed"),
+    ):
+        cmd = sub.add_parser(name, help=help_text)
+        source = cmd.add_mutually_exclusive_group()
+        source.add_argument("--file", help="Path to a decklist text file")
+        source.add_argument("--stdin", action="store_true", help="Read the decklist from stdin")
+        if name == "bracket":
+            cmd.add_argument("--target", type=int, default=3, choices=[1, 2, 3, 4, 5])
+        if name == "report":
+            cmd.add_argument("--bracket", type=int, default=3, choices=[1, 2, 3, 4, 5])
+            cmd.add_argument("--text", action="store_true", help="Human-readable output")
+
     return parser
 
 
-def main(argv: list[str] | None = None, client: ScryfallClient | None = None) -> int:
-    args = _build_parser().parse_args(argv)
+def _emit(command: str, data, *, ok: bool = True) -> None:
+    key = "data" if ok else "error"
+    print(json.dumps({"ok": ok, "command": command, key: data}, indent=2))
 
+
+def _error_payload(exc: Exception) -> dict:
+    payload = {"type": type(exc).__name__, "message": str(exc)}
+    if isinstance(exc, UnresolvedCards):
+        payload["names"] = list(exc.names)
+    if isinstance(exc, SourceUnavailable):
+        payload["source"] = exc.source
+    return payload
+
+
+def _read_deck_text(args, command: str) -> str | None:
+    """Return the decklist text, or None after emitting a user error."""
     if args.file:
         try:
-            text = open(args.file, encoding="utf-8").read()
+            return open(args.file, encoding="utf-8").read()
         except OSError as exc:
-            print(f"Could not read {args.file}: {exc}", file=sys.stderr)
-            return EXIT_USER_ERROR
-    elif args.stdin:
-        text = sys.stdin.read()
-    else:
-        print(
-            "No decklist given. Pass --file <path> or --stdin.\n"
-            "In Moxfield use Export, then paste the text.",
-            file=sys.stderr,
-        )
-        return EXIT_USER_ERROR
+            _emit(command, {"type": "OSError", "message": str(exc)}, ok=False)
+            return None
+    if args.stdin:
+        return sys.stdin.read()
+    _emit(
+        command,
+        {
+            "type": "MissingInput",
+            "message": (
+                "No decklist given. Pass --file <path> or --stdin. "
+                "In Moxfield use Export, then paste or save the text."
+            ),
+        },
+        ok=False,
+    )
+    return None
+
+
+def main(argv: list[str] | None = None, client: ScryfallClient | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    command = args.command
 
     try:
-        parsed = parse(text)
-    except DeckStructureError as exc:
-        print(str(exc), file=sys.stderr)
+        if command == "card":
+            _emit(command, api.lookup_card(args.name, client=client))
+        elif command == "search":
+            _emit(command, api.search_cards(args.query, limit=args.limit, client=client))
+        elif command == "classify":
+            _emit(command, api.classify_cards(args.names, client=client))
+        else:
+            text = _read_deck_text(args, command)
+            if text is None:
+                return EXIT_USER_ERROR
+            if command == "read":
+                _emit(command, api.read_deck(text))
+            elif command == "validate":
+                _emit(command, api.validate_deck(text, client=client))
+            elif command == "audit":
+                _emit(command, api.audit_deck(text, client=client))
+            elif command == "bracket":
+                _emit(command, api.bracket_check(text, target=args.target, client=client))
+            elif command == "report":
+                report = api.full_report(text, target=args.bracket, client=client)
+                if args.text:
+                    print(api.render_report(report))
+                else:
+                    _emit(command, report)
+    except MtgydError if False else (UnresolvedCards, DeckStructureError, SourceUnavailable) as exc:
+        _emit(command, _error_payload(exc), ok=False)
+        return EXIT_USER_ERROR
+    except MtgptError as exc:
+        _emit(command, _error_payload(exc), ok=False)
         return EXIT_USER_ERROR
 
-    try:
-        deck = resolve(parsed, client=client)
-    except UnresolvedCards as exc:
-        print(str(exc), file=sys.stderr)
-        return EXIT_USER_ERROR
-    except SourceUnavailable as exc:
-        print(f"{exc}\nScryfall is required to verify cards; nothing was audited.",
-              file=sys.stderr)
-        return EXIT_USER_ERROR
-
-    tags = classify_deck(deck)
-    violations = validate(deck)
-    audit_report = audit(deck, tags=tags)
-    bracket_report = check(deck, tags=tags, target=args.bracket)
-
-    if args.json:
-        print(_to_json(deck, violations, audit_report, bracket_report, tags))
-    else:
-        print(render(
-            deck=deck,
-            violations=violations,
-            audit_report=audit_report,
-            bracket_report=bracket_report,
-            tags=tags,
-        ))
     return EXIT_OK
 
 
@@ -3246,40 +3873,55 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+**Note on the except clause above:** the first `except` line as written is deliberately
+nonsense to catch a copy-paste. Write it as:
+
+```python
+    except (UnresolvedCards, DeckStructureError, SourceUnavailable) as exc:
+```
+
+- [ ] **Step 9: Run the CLI tests and the whole suite**
 
 Run: `python3 -m pytest tests/test_cli.py -v`
 Expected: PASS, 11 tests.
 
-- [ ] **Step 6: Run the whole suite**
+Run: `python3 -m pytest -q`
+Expected: PASS, everything.
 
-Run: `python3 -m pytest -v`
-Expected: PASS, 115 tests across 8 files.
+- [ ] **Step 10: Verify against the live API**
 
-- [ ] **Step 7: Verify against the live API**
-
-This is the one step that touches the network. Run it manually:
+Run each and record the actual output in your report:
 
 ```bash
-python3 -m mtgpt.cli audit --file tests/fixtures/sample_deck.txt --bracket 3
+python3 -m mtgpt.cli card "Sol Ring"
+python3 -m mtgpt.cli search "o:'search your library for' t:sorcery c:g" --limit 5
+python3 -m mtgpt.cli classify "Nature's Lore" "Three Visits" "Demonic Tutor" "Scapeshift"
+python3 -m mtgpt.cli validate --file tests/fixtures/sample_deck.txt
+python3 -m mtgpt.cli audit    --file tests/fixtures/sample_deck.txt
+python3 -m mtgpt.cli bracket  --file tests/fixtures/sample_deck.txt --target 2
+python3 -m mtgpt.cli report   --file tests/fixtures/sample_deck.txt --bracket 3 --text
 ```
 
-Expected: a rendered report naming Atraxa, reporting 36 lands, flagging deck size (the fixture is 41 cards, not 100), and showing the bracket 3 verdict. Confirm `Cultivate` is counted as RAMP and not as a tutor:
+**The `classify` call is the important one.** `Nature's Lore`, `Three Visits`, and `Scapeshift`
+must all report `["ramp"]` with no `tutor`; `Demonic Tutor` must report `["tutor"]`. That
+distinction drives the bracket verdict and has been broken twice before. Confirm the `report
+--text` output contains a `CARD TAGS` section.
+
+- [ ] **Step 11: Commit**
 
 ```bash
-python3 -m mtgpt.cli audit --file tests/fixtures/sample_deck.txt --json | python3 -c "import json,sys; t=json.load(sys.stdin)['tags']; print('Cultivate:', t['Cultivate'])"
-```
+git add mtgpt/api.py mtgpt/cli.py mtgpt/scryfall.py tests/test_api.py tests/test_cli.py tests/fixtures/
+git commit -m "feat: expose mtgpt as agent-callable operations
 
-Expected: `Cultivate: ['ramp']`
+Each pipeline stage becomes an independently callable operation returning
+JSON in a fixed envelope, plus card lookup and Scryfall candidate search.
+Errors are data: an unresolved name carries the offending names so an agent
+can act on them rather than parse prose.
 
-- [ ] **Step 8: Commit**
-
-```bash
-git add mtgpt/cli.py tests/test_cli.py tests/fixtures/sample_deck.txt
-git commit -m "feat: add audit CLI with text and JSON output
-
-Pure render function plus an injectable client keeps the end-to-end tests
-offline. Unresolved card names exit 2 with the offending names echoed.
+api.py owns serialization so cli.py stays thin and a future MCP adapter
+would be an adapter rather than a rewrite. The text report surfaces per-card
+function tags, which is the design's stated mitigation for classification
+being heuristic.
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
@@ -3507,6 +4149,21 @@ worse than no claim.
 
 - [ ] **Step 4: Write `README.md`**
 
+The README must include this subsection under `## Status`, recording Task 10's verified outcome:
+
+```markdown
+### Moxfield URL fetching
+
+Not available. Moxfield serves scripted requests a Cloudflare challenge, so automated
+fetching needs a real browser — and Chromium cannot launch in this environment without
+system libraries that require root to install (`libnspr4`, `libnss3`, `libnssutil3`,
+`libasound2`). Verified 2026-09-30.
+
+Use Moxfield's **Export** button and pass the text to `--file` or `--stdin`. Every deck
+operation accepts both.
+```
+
+
 ```markdown
 # mtgpt
 
@@ -3602,7 +4259,7 @@ Expected: `SKILL.md frontmatter ok`
 - [ ] **Step 6: Run the full suite one more time**
 
 Run: `python3 -m pytest`
-Expected: PASS, 115 tests.
+Expected: PASS, 143 tests.
 
 - [ ] **Step 7: Commit**
 
@@ -3619,7 +4276,31 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 10: Moxfield browser fetch (verify first, defer if blocked)
+## Task 10: Moxfield browser fetch — RESOLVED AS DEFERRED (verified 2026-09-30)
+
+> **Outcome: deferred, not built.** Step 1's verification was run and failed. Evidence:
+>
+> ```
+> $ python3 -m pip install --user playwright          # OK, no sudo needed
+> $ python3 -m playwright install chromium            # OK, 114 MB downloaded
+> $ chrome-headless-shell --headless --dump-dom ...
+> error while loading shared libraries: libnspr4.so: cannot open shared object file
+>   libnspr4.so, libnss3.so, libnssutil3.so, libasound.so.2 => not found
+> $ python3 -m playwright install-deps --dry-run chromium
+> Missing system dependencies (37)
+> ```
+>
+> Those libraries install via `apt-get` as root, and `sudo` requires a password in this
+> environment. Per Step 2, no fetcher was written: an intermittently-failing browser fetch is
+> worse than an absent one that is documented. The export/paste path from Task 2 is the
+> supported route and works. Task 9's README must carry the note below.
+>
+> The Playwright package and Chromium binary remain installed under `~/.local` and
+> `~/.cache/ms-playwright`. They are harmless; if the system libraries are ever installed
+> (`sudo apt-get install libnss3 libnspr4 libasound2t64`), re-run Step 1 and the remaining
+> steps become viable unchanged.
+
+### Original task (retained for reference)
 
 The user asked for the browser to perform the Moxfield export on their behalf, so the pipeline accepts a URL and not just pasted text. Moxfield serves scripted requests a Cloudflare challenge (403, confirmed against `api2.moxfield.com` on 2026-09-30 including with a browser User-Agent), so a real browser is the only automated route.
 
@@ -3953,6 +4634,1331 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 ---
 
+
+## Task 11: EDHREC operations — synergy and community staples
+
+The first external-resource operation. Scryfall says what a card *is*; EDHREC says what players
+actually do with a commander. That is where candidate ideas come from, and without it the
+toolkit can only grade a deck, never improve it.
+
+`json.edhrec.com` was probed live on 2026-09-30 and returns, per commander: `tag_counts`
+(themes with deck counts), `bracket_counts` (decks per bracket), and `container.json_dict.cardlists`
+— named lists including "High Synergy Cards", "Top Cards", "Game Changers", and per-type lists.
+Each card carries `synergy` (float), `num_decks`, and `potential_decks`, so a recommendation can
+cite real inclusion evidence instead of asserting. Bracket-variant pages exist at
+`/commanders/<slug>/upgraded.json`, `/budget.json`, and `/cedh.json`.
+
+It is an unofficial endpoint with no compatibility contract, so every failure must surface as
+`SourceUnavailable` and the toolkit must stay useful without it.
+
+**Files:**
+- Create: `mtgpt/edhrec.py`
+- Modify: `mtgpt/api.py` — add `commander_synergy`, `commander_themes`
+- Modify: `mtgpt/cli.py` — add `synergy`, `themes` subcommands
+- Create: `tests/fixtures/edhrec_commander.json`
+- Test: `tests/test_edhrec.py`
+
+**Interfaces:**
+- Consumes: `SourceUnavailable` from Task 1; the `Transport` seam pattern from Task 3.
+- Produces:
+  - `edhrec.commander_slug(name) -> str`
+  - `edhrec.EdhrecClient(transport=None, sleep=time.sleep)` with `commander(name, variant=None) -> dict`
+  - `edhrec.synergy_cards(payload, *, limit=40) -> tuple[dict, ...]` — name, synergy, inclusion rate, list header
+  - `edhrec.themes(payload) -> tuple[dict, ...]` — theme slug, label, deck count
+  - `edhrec.bracket_distribution(payload) -> dict[str, int]`
+  - `api.commander_synergy(name, *, variant=None, limit=40, client=None, edhrec_client=None) -> dict`
+  - `api.commander_themes(name, *, client=None) -> dict`
+
+- [ ] **Step 1: Capture the fixture**
+
+Run this once to record a real response, then commit the file. Tests read it offline.
+
+```bash
+curl -sS -A 'mtgpt/0.1' \
+  'https://json.edhrec.com/pages/commanders/atraxa-praetors-voice.json' \
+  -o tests/fixtures/edhrec_commander.json
+python3 -c "
+import json; d=json.load(open('tests/fixtures/edhrec_commander.json'))
+print('cardlists:', [c['header'] for c in d['container']['json_dict']['cardlists']])
+print('tag_counts sample:', d['tag_counts'][:3])
+print('bracket_counts:', d['bracket_counts'])
+"
+```
+
+Expected: cardlists including "High Synergy Cards" and "Game Changers"; `tag_counts` entries with
+`count`/`slug`/`value`; `bracket_counts` keyed "1" through "5".
+
+If the fixture exceeds 2 MB, trim it to the keys the code reads (`tag_counts`, `bracket_counts`,
+`container.json_dict.cardlists`) and say so in your report.
+
+- [ ] **Step 2: Write the failing test**
+
+```python
+# tests/test_edhrec.py
+import json
+import pathlib
+
+import pytest
+
+from mtgpt import edhrec
+from mtgpt.errors import SourceUnavailable
+
+FIXTURES = pathlib.Path(__file__).parent / "fixtures"
+
+
+def payload():
+    return json.loads((FIXTURES / "edhrec_commander.json").read_text())
+
+
+class FakeTransport:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def __call__(self, url):
+        self.calls.append(url)
+        if not self.responses:
+            raise AssertionError(f"unexpected request to {url}")
+        result = self.responses.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+@pytest.mark.parametrize(
+    "name,slug",
+    [
+        ("Atraxa, Praetors' Voice", "atraxa-praetors-voice"),
+        ("Kozilek, Butcher of Truth", "kozilek-butcher-of-truth"),
+        ("Ur-Dragon", "ur-dragon"),
+        ("Jhoira, Weatherlight Captain", "jhoira-weatherlight-captain"),
+        # Accented characters are stripped, not escaped.
+        ("Nazgûl", "nazgul"),
+        ("Minsc & Data, Timeless Heroes", "minsc-and-data-timeless-heroes"),
+    ],
+)
+def test_commander_slug(name, slug):
+    assert edhrec.commander_slug(name) == slug
+
+
+def test_commander_fetches_the_base_page():
+    transport = FakeTransport(payload())
+    client = edhrec.EdhrecClient(transport=transport, sleep=lambda _: None)
+    client.commander("Atraxa, Praetors' Voice")
+    assert transport.calls == [
+        "https://json.edhrec.com/pages/commanders/atraxa-praetors-voice.json"
+    ]
+
+
+def test_commander_fetches_a_bracket_variant():
+    transport = FakeTransport(payload())
+    client = edhrec.EdhrecClient(transport=transport, sleep=lambda _: None)
+    client.commander("Atraxa, Praetors' Voice", variant="upgraded")
+    assert transport.calls[0].endswith("/atraxa-praetors-voice/upgraded.json")
+
+
+def test_commander_rejects_an_unknown_variant():
+    client = edhrec.EdhrecClient(transport=FakeTransport(), sleep=lambda _: None)
+    with pytest.raises(ValueError):
+        client.commander("Atraxa, Praetors' Voice", variant="nonsense")
+
+
+def test_commander_wraps_transport_failure():
+    client = edhrec.EdhrecClient(
+        transport=FakeTransport(OSError("connection reset")), sleep=lambda _: None
+    )
+    with pytest.raises(SourceUnavailable) as excinfo:
+        client.commander("Atraxa, Praetors' Voice")
+    assert "EDHREC" in str(excinfo.value)
+
+
+def test_synergy_cards_carry_evidence():
+    cards = edhrec.synergy_cards(payload(), limit=10)
+    assert cards, "expected synergy cards from the fixture"
+    first = cards[0]
+    assert set(first) >= {"name", "synergy", "num_decks", "potential_decks", "list", "inclusion_rate"}
+    assert isinstance(first["name"], str)
+    # inclusion_rate is derived so a recommendation can cite it directly.
+    assert 0.0 <= first["inclusion_rate"] <= 1.0
+
+
+def test_synergy_cards_are_sorted_by_synergy_descending():
+    cards = edhrec.synergy_cards(payload(), limit=20)
+    synergies = [c["synergy"] for c in cards]
+    assert synergies == sorted(synergies, reverse=True)
+
+
+def test_synergy_cards_respects_limit():
+    assert len(edhrec.synergy_cards(payload(), limit=5)) == 5
+
+
+def test_synergy_cards_deduplicates_across_lists():
+    """A card appearing in several cardlists must be returned once."""
+    cards = edhrec.synergy_cards(payload(), limit=200)
+    names = [c["name"] for c in cards]
+    assert len(names) == len(set(names))
+
+
+def test_themes_are_sorted_by_deck_count():
+    themes = edhrec.themes(payload())
+    counts = [t["count"] for t in themes]
+    assert counts == sorted(counts, reverse=True)
+    assert set(themes[0]) >= {"slug", "label", "count"}
+
+
+def test_bracket_distribution_keys_are_ints_one_to_five():
+    dist = edhrec.bracket_distribution(payload())
+    assert set(dist) <= {1, 2, 3, 4, 5}
+    assert all(isinstance(v, int) for v in dist.values())
+
+
+def test_missing_sections_degrade_to_empty_rather_than_raising():
+    """EDHREC is unofficial; a shape change must not crash the toolkit."""
+    assert edhrec.synergy_cards({}, limit=5) == ()
+    assert edhrec.themes({}) == ()
+    assert edhrec.bracket_distribution({}) == {}
+```
+
+- [ ] **Step 3: Run it to verify it fails**
+
+Run: `python3 -m pytest tests/test_edhrec.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'mtgpt.edhrec'`
+
+- [ ] **Step 4: Write `mtgpt/edhrec.py`**
+
+```python
+# mtgpt/edhrec.py
+"""EDHREC: what players actually build around a commander.
+
+Scryfall establishes what a card is; EDHREC establishes what the community does
+with it. Synergy scores and inclusion rates are what let a recommendation cite
+evidence rather than assert taste.
+
+`json.edhrec.com` is an unofficial endpoint with no compatibility contract, so
+every failure raises SourceUnavailable and every missing section degrades to
+empty. The toolkit must stay useful when EDHREC is down.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import time
+import unicodedata
+import urllib.error
+import urllib.request
+from collections.abc import Callable
+
+from .errors import SourceUnavailable
+
+BASE = "https://json.edhrec.com/pages/commanders"
+
+#: Bracket/budget variant pages EDHREC publishes per commander.
+VARIANTS = frozenset({"budget", "expensive", "upgraded", "cedh"})
+
+REQUEST_DELAY = 0.1
+USER_AGENT = "mtgpt/0.1"
+
+#: Cardlists worth mining for candidates, in priority order. Type-specific
+#: lists are skipped: they repeat these and dilute the synergy signal.
+CANDIDATE_LISTS = (
+    "High Synergy Cards",
+    "Top Cards",
+    "New Cards",
+    "Game Changers",
+)
+
+_NON_SLUG = re.compile(r"[^a-z0-9]+")
+
+Transport = Callable[[str], dict]
+
+
+def commander_slug(name: str) -> str:
+    """Convert a commander name to its EDHREC URL slug.
+
+    Accents are stripped rather than escaped, and "&" becomes "and", matching
+    EDHREC's own slugs.
+    """
+    folded = unicodedata.normalize("NFKD", name)
+    ascii_name = folded.encode("ascii", "ignore").decode("ascii")
+    ascii_name = ascii_name.replace("&", " and ")
+    return _NON_SLUG.sub("-", ascii_name.lower()).strip("-")
+
+
+def _http_transport(url: str) -> dict:
+    request = urllib.request.Request(
+        url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"}
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+class EdhrecClient:
+    """Fetch EDHREC commander pages."""
+
+    def __init__(self, transport: Transport | None = None, sleep=time.sleep):
+        self._transport = transport or _http_transport
+        self._sleep = sleep
+        self._made_request = False
+
+    def commander(self, name: str, *, variant: str | None = None) -> dict:
+        """Fetch a commander page, optionally a bracket/budget variant."""
+        if variant is not None and variant not in VARIANTS:
+            raise ValueError(
+                f"Unknown EDHREC variant {variant!r}. Expected one of "
+                f"{', '.join(sorted(VARIANTS))}."
+            )
+        slug = commander_slug(name)
+        suffix = f"/{variant}" if variant else ""
+        url = f"{BASE}/{slug}{suffix}.json"
+
+        if self._made_request:
+            self._sleep(REQUEST_DELAY)
+        self._made_request = True
+
+        try:
+            return self._transport(url)
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            raise SourceUnavailable("EDHREC", f"{url}: {exc}") from exc
+
+
+def _cardlists(payload: dict) -> list[dict]:
+    container = payload.get("container") or {}
+    json_dict = container.get("json_dict") or {}
+    return json_dict.get("cardlists") or []
+
+
+def synergy_cards(payload: dict, *, limit: int = 40) -> tuple[dict, ...]:
+    """Candidate cards with their synergy score and inclusion evidence.
+
+    Deduplicated by name across lists, sorted by synergy descending. A missing
+    or reshaped payload yields an empty tuple rather than raising.
+    """
+    seen: dict[str, dict] = {}
+    for cardlist in _cardlists(payload):
+        header = cardlist.get("header") or ""
+        if header not in CANDIDATE_LISTS:
+            continue
+        for view in cardlist.get("cardviews") or ():
+            name = view.get("name")
+            if not name or name in seen:
+                continue
+            num = view.get("num_decks") or 0
+            potential = view.get("potential_decks") or 0
+            seen[name] = {
+                "name": name,
+                "synergy": float(view.get("synergy") or 0.0),
+                "num_decks": num,
+                "potential_decks": potential,
+                "inclusion_rate": round(num / potential, 4) if potential else 0.0,
+                "list": header,
+            }
+
+    ranked = sorted(seen.values(), key=lambda c: c["synergy"], reverse=True)
+    return tuple(ranked[:limit])
+
+
+def themes(payload: dict) -> tuple[dict, ...]:
+    """Archetypes this commander is built as, most common first."""
+    out = [
+        {
+            "slug": tag.get("slug", ""),
+            "label": tag.get("value", ""),
+            "count": int(tag.get("count") or 0),
+        }
+        for tag in payload.get("tag_counts") or ()
+    ]
+    return tuple(sorted(out, key=lambda t: t["count"], reverse=True))
+
+
+def bracket_distribution(payload: dict) -> dict[int, int]:
+    """How many recorded decks sit in each bracket, keyed 1-5."""
+    raw = payload.get("bracket_counts") or {}
+    out: dict[int, int] = {}
+    for key, value in raw.items():
+        try:
+            bracket = int(key)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= bracket <= 5:
+            out[bracket] = int(value)
+    return out
+```
+
+- [ ] **Step 5: Add the facade operations to `mtgpt/api.py`**
+
+```python
+def commander_synergy(
+    name: str,
+    *,
+    variant: str | None = None,
+    limit: int = 40,
+    client: ScryfallClient | None = None,
+    edhrec_client=None,
+) -> dict:
+    """Candidate cards for a commander, with synergy and inclusion evidence.
+
+    Each candidate is resolved against Scryfall and tagged by function, so the
+    agent can see what role it would fill before proposing it — and so a card
+    EDHREC lists but Scryfall cannot resolve never reaches the user.
+    """
+    from .edhrec import EdhrecClient, synergy_cards
+
+    source = edhrec_client or EdhrecClient()
+    payload = source.commander(name, variant=variant)
+    candidates = synergy_cards(payload, limit=limit)
+    if not candidates:
+        return {"commander": name, "variant": variant, "count": 0, "cards": []}
+
+    verified, _ = _client(client).collection([c["name"] for c in candidates])
+    by_name = {}
+    for p in verified:
+        card = card_from_json(p)
+        by_name[card.name.casefold()] = card
+        front, _, _ = card.name.partition("//")
+        by_name.setdefault(front.strip().casefold(), card)
+
+    out = []
+    for candidate in candidates:
+        card = by_name.get(candidate["name"].casefold())
+        if card is None:
+            continue
+        entry = _card_dict(card, classify(card))
+        entry["synergy"] = candidate["synergy"]
+        entry["inclusion_rate"] = candidate["inclusion_rate"]
+        entry["edhrec_list"] = candidate["list"]
+        out.append(entry)
+
+    return {"commander": name, "variant": variant, "count": len(out), "cards": out}
+
+
+def commander_themes(name: str, *, edhrec_client=None) -> dict:
+    """Archetypes this commander is usually built as, plus bracket spread."""
+    from .edhrec import EdhrecClient, bracket_distribution, themes
+
+    source = edhrec_client or EdhrecClient()
+    payload = source.commander(name)
+    return {
+        "commander": name,
+        "themes": [dict(t) for t in themes(payload)],
+        "bracket_distribution": {str(k): v for k, v in bracket_distribution(payload).items()},
+    }
+```
+
+- [ ] **Step 6: Add the subcommands to `mtgpt/cli.py`**
+
+In `build_parser`:
+
+```python
+    synergy = sub.add_parser("synergy", help="EDHREC candidate cards for a commander")
+    synergy.add_argument("commander")
+    synergy.add_argument("--variant", choices=["budget", "expensive", "upgraded", "cedh"])
+    synergy.add_argument("--limit", type=int, default=40)
+
+    themes_cmd = sub.add_parser("themes", help="How a commander is usually built")
+    themes_cmd.add_argument("commander")
+```
+
+In `main`, beside the other card-name commands:
+
+```python
+        elif command == "synergy":
+            _emit(command, api.commander_synergy(
+                args.commander, variant=args.variant, limit=args.limit, client=client))
+        elif command == "themes":
+            _emit(command, api.commander_themes(args.commander))
+```
+
+Add `"synergy"` and `"themes"` to the expected subcommand set in `test_every_subcommand_is_registered`.
+
+- [ ] **Step 7: Add facade tests to `tests/test_api.py`**
+
+```python
+class FakeEdhrec:
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = []
+
+    def commander(self, name, *, variant=None):
+        self.calls.append((name, variant))
+        return self.payload
+
+
+def test_commander_synergy_verifies_candidates_and_tags_them():
+    edh = FakeEdhrec(json.loads((FIXTURES / "edhrec_commander.json").read_text()))
+    client = client_for(load("collection_basic.json"), NO_GAME_CHANGERS)
+    result = api.commander_synergy(
+        "Atraxa, Praetors' Voice", limit=3, client=client, edhrec_client=edh
+    )
+    assert result["commander"] == "Atraxa, Praetors' Voice"
+    for card in result["cards"]:
+        # Evidence travels with the candidate.
+        assert "synergy" in card and "inclusion_rate" in card
+        # And it is a verified card with function tags.
+        assert "functions" in card and card["legal_commander"]
+
+
+def test_commander_synergy_drops_candidates_scryfall_cannot_verify():
+    """A card EDHREC lists but Scryfall cannot resolve must not reach the user."""
+    edh = FakeEdhrec(json.loads((FIXTURES / "edhrec_commander.json").read_text()))
+    # Scryfall returns only Sol Ring, whatever EDHREC suggested.
+    client = client_for(load("collection_basic.json"), NO_GAME_CHANGERS)
+    result = api.commander_synergy(
+        "Atraxa, Praetors' Voice", limit=40, client=client, edhrec_client=edh
+    )
+    names = {c["name"] for c in result["cards"]}
+    assert names <= {"Sol Ring", "Atraxa, Praetors' Voice", "Dockside Extortionist"}
+
+
+def test_commander_synergy_passes_the_variant_through():
+    edh = FakeEdhrec(json.loads((FIXTURES / "edhrec_commander.json").read_text()))
+    client = client_for(load("collection_basic.json"), NO_GAME_CHANGERS)
+    api.commander_synergy(
+        "Atraxa, Praetors' Voice", variant="upgraded", limit=1,
+        client=client, edhrec_client=edh,
+    )
+    assert edh.calls == [("Atraxa, Praetors' Voice", "upgraded")]
+
+
+def test_commander_themes_returns_themes_and_bracket_spread():
+    edh = FakeEdhrec(json.loads((FIXTURES / "edhrec_commander.json").read_text()))
+    result = api.commander_themes("Atraxa, Praetors' Voice", edhrec_client=edh)
+    assert result["themes"] and "label" in result["themes"][0]
+    assert result["bracket_distribution"]
+```
+
+- [ ] **Step 8: Run the tests**
+
+Run: `python3 -m pytest tests/test_edhrec.py tests/test_api.py tests/test_cli.py -v`
+Expected: PASS — 13 edhrec tests, 17 api tests, 12 cli tests.
+
+Run: `python3 -m pytest -q`
+Expected: PASS, all tests.
+
+- [ ] **Step 9: Verify against the live endpoint**
+
+```bash
+python3 -m mtgpt.cli themes "Atraxa, Praetors' Voice"
+python3 -m mtgpt.cli synergy "Atraxa, Praetors' Voice" --limit 5
+python3 -m mtgpt.cli synergy "Atraxa, Praetors' Voice" --variant upgraded --limit 5
+```
+
+Expected: `themes` lists infect / +1+1 counters / planeswalkers with deck counts. `synergy`
+returns five verified cards each carrying `synergy`, `inclusion_rate`, and `functions`. Record
+the actual output in your report, and confirm the `upgraded` variant returns a different set
+than the base page.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add mtgpt/edhrec.py mtgpt/api.py mtgpt/cli.py tests/test_edhrec.py tests/test_api.py tests/test_cli.py tests/fixtures/edhrec_commander.json
+git commit -m "feat: add EDHREC synergy and theme operations
+
+Scryfall says what a card is; EDHREC says what players build around a
+commander. Candidates carry synergy scores and inclusion rates so a
+recommendation cites evidence instead of asserting taste, and every
+candidate is Scryfall-verified and function-tagged before it reaches the
+user — a card EDHREC lists but Scryfall cannot resolve is dropped.
+
+EDHREC is unofficial, so failures raise SourceUnavailable and missing
+sections degrade to empty rather than crashing the toolkit.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+## Task 12: Commander Spellbook operations — combo detection
+
+Closes the gap every bracket report currently names in `deferred_checks`. Brackets 1-3 exclude
+two-card infinite combos, and until now mtgpt could only say it had not checked.
+
+`backend.commanderspellbook.com/variants/` was probed live on 2026-09-30. A variant carries
+`uses` (the cards), `produces` (the features, e.g. "Win the game"), `bracketTag`, `salt`,
+`identity`, and `legalities` — so a detected combo can be judged against the deck's target
+bracket directly.
+
+**Files:**
+- Create: `mtgpt/spellbook.py`
+- Modify: `mtgpt/api.py` — add `deck_combos`, `card_combos`
+- Modify: `mtgpt/cli.py` — add `combos`, `card-combos` subcommands
+- Modify: `mtgpt/brackets.py` — accept detected combos and drop that deferred-check line
+- Create: `tests/fixtures/spellbook_variants.json`
+- Test: `tests/test_spellbook.py`
+
+**Interfaces:**
+- Consumes: `SourceUnavailable`, `ResolvedDeck`.
+- Produces:
+  - `spellbook.SpellbookClient(transport=None, sleep=time.sleep)` with `variants_for_card(name, limit=50)`
+  - `spellbook.combos_in_deck(variants, deck_card_names) -> tuple[dict, ...]`
+  - `api.deck_combos(text, *, client=None, spellbook_client=None) -> dict`
+  - `api.card_combos(name, *, spellbook_client=None) -> dict`
+  - `brackets.check(deck, tags=None, target=3, combos=None)` — `combos` is a tuple of combo dicts; when provided, two-card infinite combos are enforced per bracket and the corresponding `deferred_checks` entry is omitted.
+
+- [ ] **Step 1: Capture the fixture**
+
+```bash
+curl -sS -A 'mtgpt/0.1' \
+  "https://backend.commanderspellbook.com/variants/?q=card%3A%22Thassa's%20Oracle%22&limit=5" \
+  -o tests/fixtures/spellbook_variants.json
+python3 -c "
+import json; d=json.load(open('tests/fixtures/spellbook_variants.json'))
+r=d['results'][0]
+print('uses:', [u['card']['name'] for u in r['uses']])
+print('produces:', [p['feature']['name'] for p in r['produces']])
+print('bracketTag:', r.get('bracketTag'), 'salt:', r.get('salt'))
+"
+```
+
+Expected: a variant using Thassa's Oracle plus a partner card, producing "Win the game", with a
+`bracketTag` string.
+
+- [ ] **Step 2: Write the failing test**
+
+```python
+# tests/test_spellbook.py
+import json
+import pathlib
+
+import pytest
+
+from mtgpt import spellbook
+from mtgpt.errors import SourceUnavailable
+
+FIXTURES = pathlib.Path(__file__).parent / "fixtures"
+
+
+def variants_payload():
+    return json.loads((FIXTURES / "spellbook_variants.json").read_text())
+
+
+class FakeTransport:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def __call__(self, url):
+        self.calls.append(url)
+        result = self.responses.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+def test_variants_for_card_quotes_the_name():
+    transport = FakeTransport(variants_payload())
+    client = spellbook.SpellbookClient(transport=transport, sleep=lambda _: None)
+    client.variants_for_card("Thassa's Oracle")
+    assert "Thassa" in transport.calls[0]
+    assert "variants" in transport.calls[0]
+
+
+def test_variants_for_card_wraps_transport_failure():
+    client = spellbook.SpellbookClient(
+        transport=FakeTransport(OSError("boom")), sleep=lambda _: None
+    )
+    with pytest.raises(SourceUnavailable) as excinfo:
+        client.variants_for_card("Thassa's Oracle")
+    assert "Commander Spellbook" in str(excinfo.value)
+
+
+def test_parse_variant_extracts_cards_and_outcome():
+    raw = variants_payload()["results"][0]
+    combo = spellbook.parse_variant(raw)
+    assert set(combo) >= {"id", "cards", "produces", "bracket_tag", "salt", "card_count"}
+    assert combo["card_count"] == len(combo["cards"])
+    assert all(isinstance(c, str) for c in combo["cards"])
+
+
+def test_combos_in_deck_requires_every_card_present():
+    raw = variants_payload()["results"][0]
+    combo = spellbook.parse_variant(raw)
+    cards = combo["cards"]
+    # All pieces present -> detected.
+    assert spellbook.combos_in_deck((raw,), set(cards))
+    # One piece missing -> not detected.
+    assert spellbook.combos_in_deck((raw,), set(cards[:-1])) == ()
+
+
+def test_combos_in_deck_is_case_insensitive():
+    raw = variants_payload()["results"][0]
+    cards = {c.lower() for c in spellbook.parse_variant(raw)["cards"]}
+    assert spellbook.combos_in_deck((raw,), cards)
+
+
+def test_combos_in_deck_deduplicates_by_id():
+    raw = variants_payload()["results"][0]
+    cards = set(spellbook.parse_variant(raw)["cards"])
+    assert len(spellbook.combos_in_deck((raw, raw), cards)) == 1
+
+
+def test_two_card_combos_are_identified():
+    raw = variants_payload()["results"][0]
+    combo = spellbook.parse_variant(raw)
+    assert spellbook.is_two_card_combo(combo) == (combo["card_count"] == 2)
+
+
+def test_malformed_variant_degrades_rather_than_raising():
+    assert spellbook.parse_variant({})["cards"] == ()
+    assert spellbook.combos_in_deck(({},), {"anything"}) == ()
+```
+
+- [ ] **Step 3: Run it to verify it fails**
+
+Run: `python3 -m pytest tests/test_spellbook.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'mtgpt.spellbook'`
+
+- [ ] **Step 4: Write `mtgpt/spellbook.py`**
+
+```python
+# mtgpt/spellbook.py
+"""Commander Spellbook: which combos a decklist actually assembles.
+
+This closes the gap every bracket report has had to declare: brackets 1-3
+exclude two-card infinite combos, and without combo data mtgpt could only say
+it had not looked.
+
+The backend is unofficial. Failures raise SourceUnavailable, and a malformed
+variant degrades to empty rather than crashing a deck audit.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from collections.abc import Callable, Iterable
+
+from .errors import SourceUnavailable
+
+BASE = "https://backend.commanderspellbook.com/variants/"
+REQUEST_DELAY = 0.1
+USER_AGENT = "mtgpt/0.1"
+
+Transport = Callable[[str], dict]
+
+
+def _http_transport(url: str) -> dict:
+    request = urllib.request.Request(
+        url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"}
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+class SpellbookClient:
+    """Query Commander Spellbook for combos involving a card."""
+
+    def __init__(self, transport: Transport | None = None, sleep=time.sleep):
+        self._transport = transport or _http_transport
+        self._sleep = sleep
+        self._made_request = False
+
+    def variants_for_card(self, name: str, *, limit: int = 50) -> tuple[dict, ...]:
+        """Raw combo variants that use `name`."""
+        query = urllib.parse.quote(f'card:"{name}"')
+        url = f"{BASE}?q={query}&limit={limit}"
+
+        if self._made_request:
+            self._sleep(REQUEST_DELAY)
+        self._made_request = True
+
+        try:
+            body = self._transport(url)
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            raise SourceUnavailable("Commander Spellbook", f"{url}: {exc}") from exc
+        return tuple(body.get("results") or ())
+
+
+def parse_variant(raw: dict) -> dict:
+    """Normalize one Spellbook variant into a flat dict."""
+    cards: list[str] = []
+    for use in raw.get("uses") or ():
+        card = (use or {}).get("card") or {}
+        name = card.get("name")
+        if name:
+            cards.append(name)
+
+    produces: list[str] = []
+    for product in raw.get("produces") or ():
+        feature = (product or {}).get("feature") or {}
+        label = feature.get("name")
+        if label:
+            produces.append(label)
+
+    return {
+        "id": raw.get("id"),
+        "cards": tuple(cards),
+        "card_count": len(cards),
+        "produces": tuple(produces),
+        "bracket_tag": raw.get("bracketTag"),
+        "salt": raw.get("salt"),
+        "description": raw.get("description"),
+    }
+
+
+def is_two_card_combo(combo: dict) -> bool:
+    """Brackets 1-3 care specifically about two-card combos."""
+    return combo.get("card_count") == 2
+
+
+def combos_in_deck(
+    variants: Iterable[dict], deck_card_names: Iterable[str]
+) -> tuple[dict, ...]:
+    """Combos whose every piece is present in the deck.
+
+    Matching is case-insensitive. A variant with no usable card list is skipped
+    rather than treated as a combo that trivially assembles.
+    """
+    present = {name.casefold() for name in deck_card_names}
+    found: dict[object, dict] = {}
+
+    for raw in variants:
+        combo = parse_variant(raw)
+        if not combo["cards"]:
+            continue
+        if all(card.casefold() in present for card in combo["cards"]):
+            key = combo["id"] if combo["id"] is not None else combo["cards"]
+            found.setdefault(key, combo)
+
+    return tuple(found.values())
+```
+
+- [ ] **Step 5: Teach `brackets.check` about combos**
+
+Change the signature to `check(deck, tags=None, target=3, combos=None)`. Add to `BracketRule` a
+field `allow_two_card_combos: bool` — `False` for brackets 1, 2, and 3; `True` for 4 and 5.
+When `combos` is not None:
+
+```python
+    two_card = tuple(c for c in (combos or ()) if c.get("card_count") == 2)
+    if combos is not None and two_card and not rule.allow_two_card_combos:
+        names = "; ".join(" + ".join(c["cards"]) for c in two_card[:3])
+        findings.append(
+            Violation(
+                severity=Severity.ERROR,
+                code="two_card_combo",
+                message=(
+                    f"{len(two_card)} two-card infinite combo(s) detected, which bracket "
+                    f"{rule.number} ({rule.name}) excludes: {names}."
+                ),
+            )
+        )
+```
+
+and build `deferred_checks` dynamically, omitting the combo line when `combos is not None`:
+
+```python
+#: Checks Layer 1 cannot perform without combo data.
+COMBO_DEFERRED = (
+    "Two-card infinite combo detection requires Commander Spellbook (not supplied)."
+)
+EXTRA_TURN_APPROXIMATION = (
+    "Chained extra turns are approximated by counting extra-turn spells, not by "
+    "detecting repeatability."
+)
+```
+
+In `check`, assemble `deferred = (EXTRA_TURN_APPROXIMATION,)` when `combos is not None`, else
+`(COMBO_DEFERRED, EXTRA_TURN_APPROXIMATION)`. Keep `BracketReport.deferred_checks` as a field
+with no default so a caller cannot forget it.
+
+Add to `tests/test_brackets.py`:
+
+```python
+def test_combo_deferred_note_disappears_when_combos_are_supplied():
+    report = check(deck_of([card("Bear")]), target=2, combos=())
+    assert not any("Spellbook" in note for note in report.deferred_checks)
+
+
+def test_combo_note_present_when_combos_are_not_supplied():
+    report = check(deck_of([card("Bear")]), target=2)
+    assert any("Spellbook" in note for note in report.deferred_checks)
+
+
+def test_two_card_combo_is_an_error_below_bracket_four():
+    combos = [{"card_count": 2, "cards": ("Thassa's Oracle", "Demonic Consultation")}]
+    report = check(deck_of([card("Bear")]), target=2, combos=combos)
+    assert "two_card_combo" in [f.code for f in report.findings]
+    assert report.compliant is False
+
+
+def test_two_card_combo_is_allowed_at_bracket_four():
+    combos = [{"card_count": 2, "cards": ("Thassa's Oracle", "Demonic Consultation")}]
+    report = check(deck_of([card("Bear")]), target=4, combos=combos)
+    assert "two_card_combo" not in [f.code for f in report.findings]
+
+
+def test_three_card_combo_is_not_flagged_as_a_two_card_combo():
+    combos = [{"card_count": 3, "cards": ("A", "B", "C")}]
+    report = check(deck_of([card("Bear")]), target=2, combos=combos)
+    assert "two_card_combo" not in [f.code for f in report.findings]
+```
+
+- [ ] **Step 6: Add the facade operations**
+
+```python
+def card_combos(name: str, *, spellbook_client=None) -> dict:
+    """Combos that use a given card."""
+    from .spellbook import SpellbookClient, parse_variant
+
+    source = spellbook_client or SpellbookClient()
+    variants = source.variants_for_card(name)
+    return {
+        "card": name,
+        "count": len(variants),
+        "combos": [parse_variant(v) | {"cards": list(parse_variant(v)["cards"]),
+                                       "produces": list(parse_variant(v)["produces"])}
+                   for v in variants],
+    }
+
+
+def deck_combos(text: str, *, client: ScryfallClient | None = None, spellbook_client=None) -> dict:
+    """Combos the deck actually assembles.
+
+    Queries Spellbook once per card that participates in any known combo would
+    be prohibitive, so this queries per distinct deck card and keeps only the
+    variants whose every piece is in the deck.
+    """
+    from .spellbook import SpellbookClient, combos_in_deck
+
+    deck = _resolved(text, client)
+    names = [card.name for _, card in deck.cards] + [c.name for c in deck.commanders]
+    source = spellbook_client or SpellbookClient()
+
+    variants: list[dict] = []
+    for name in names:
+        try:
+            variants.extend(source.variants_for_card(name))
+        except SourceUnavailable:
+            raise
+
+    found = combos_in_deck(variants, names)
+    return {
+        "commanders": [c.name for c in deck.commanders],
+        "count": len(found),
+        "two_card_count": sum(1 for c in found if c["card_count"] == 2),
+        "combos": [
+            c | {"cards": list(c["cards"]), "produces": list(c["produces"])} for c in found
+        ],
+    }
+```
+
+`deck_combos` makes one request per distinct card, which for a 100-card deck is ~70 requests at
+100ms — roughly 7 seconds. Note that cost in your report; do not add caching or concurrency in
+this task.
+
+Also extend `full_report` to accept `combos: bool = False`; when true, fetch combos and pass them
+into `check(...)`, and include a `"combos"` section. Default stays false so `report` remains one
+cheap call.
+
+- [ ] **Step 7: Add the subcommands**
+
+```python
+    combos_cmd = sub.add_parser("combos", help="Combos a decklist assembles")
+    src = combos_cmd.add_mutually_exclusive_group()
+    src.add_argument("--file")
+    src.add_argument("--stdin", action="store_true")
+
+    card_combos_cmd = sub.add_parser("card-combos", help="Combos that use one card")
+    card_combos_cmd.add_argument("name")
+```
+
+Wire both in `main`, add them to the registered-subcommand test, and add `--combos` to the
+`report` subcommand passing through to `full_report`.
+
+- [ ] **Step 8: Run the tests**
+
+Run: `python3 -m pytest tests/test_spellbook.py tests/test_brackets.py -v`
+Expected: PASS — 8 spellbook tests, 22 bracket tests.
+
+Run: `python3 -m pytest -q`
+Expected: PASS, all tests.
+
+- [ ] **Step 9: Verify against the live endpoint**
+
+```bash
+python3 -m mtgpt.cli card-combos "Thassa's Oracle"
+printf "Commander
+1 Thassa's Oracle
+
+Deck
+1 Demonic Consultation
+" > /tmp/combo-deck.txt
+python3 -m mtgpt.cli combos --file /tmp/combo-deck.txt
+```
+
+Expected: `card-combos` returns variants including the Demonic Consultation pairing with a
+"Win the game" product. `combos` on the two-card file detects that combo with `card_count` 2.
+Record actual output.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add mtgpt/spellbook.py mtgpt/brackets.py mtgpt/api.py mtgpt/cli.py tests/
+git commit -m "feat: detect combos via Commander Spellbook
+
+Closes the gap every bracket report had to declare. Brackets 1-3 exclude
+two-card infinite combos; with combo data supplied, brackets.check now
+enforces that and drops the corresponding deferred-check line, so a bracket
+verdict no longer has to hedge on its central rule.
+
+Combos carry bracketTag and salt, and a malformed variant degrades to empty
+rather than crashing a deck audit.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+## Task 13: Candidate suggestions — the operation that ties it together
+
+The payoff operation. Given a decklist and a target bracket, propose specific cards to add,
+ranked, each justified by the gap it fills and the evidence behind it.
+
+This composes what already exists: audit finds the under-served categories, EDHREC supplies
+candidates with synergy and inclusion rates, Scryfall verifies them and enforces color identity
+and legality, classify confirms a candidate actually fills the gap it was selected for, and the
+bracket rules reject anything that would break the target.
+
+**No card reaches the user unverified, in the wrong color identity, banned, or over its bracket's
+Game Changer allowance.** That is the whole point of the pipeline feeding this operation.
+
+**Files:**
+- Modify: `mtgpt/api.py` — add `suggest_additions`
+- Modify: `mtgpt/cli.py` — add `suggest` subcommand
+- Test: `tests/test_suggest.py`
+
+**Interfaces:**
+- Consumes: `audit_deck`, `commander_synergy`, `classify`, `validate`, `brackets.RULES`.
+- Produces: `api.suggest_additions(text, *, target=3, variant=None, limit=10, client=None, edhrec_client=None) -> dict`
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_suggest.py
+import json
+import pathlib
+
+import pytest
+
+from mtgpt import api
+from mtgpt.scryfall import ScryfallClient
+
+FIXTURES = pathlib.Path(__file__).parent / "fixtures"
+
+
+def load(name):
+    return json.loads((FIXTURES / name).read_text())
+
+
+class FakeTransport:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+
+    def __call__(self, url, payload=None):
+        return self.responses.pop(0)
+
+
+class FakeEdhrec:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def commander(self, name, *, variant=None):
+        return self.payload
+
+
+def test_suggest_reports_the_gaps_it_is_filling():
+    """A deck short on ramp must be told so, with the target band."""
+    text = (FIXTURES / "sample_deck.txt").read_text()
+    client = ScryfallClient(
+        transport=FakeTransport(
+            load("collection_sample_deck.json"), {"data": [], "has_more": False},
+            load("collection_basic.json"), {"data": [], "has_more": False},
+        ),
+        sleep=lambda _: None,
+    )
+    result = api.suggest_additions(
+        text, target=3, limit=5, client=client,
+        edhrec_client=FakeEdhrec(load("edhrec_commander.json")),
+    )
+    assert result["gaps"], "expected under-served categories"
+    gap = result["gaps"][0]
+    assert set(gap) >= {"function", "count", "target", "needed"}
+    assert gap["needed"] > 0
+
+
+def test_every_suggestion_is_legal_in_the_commanders_identity():
+    text = (FIXTURES / "sample_deck.txt").read_text()
+    client = ScryfallClient(
+        transport=FakeTransport(
+            load("collection_sample_deck.json"), {"data": [], "has_more": False},
+            load("collection_basic.json"), {"data": [], "has_more": False},
+        ),
+        sleep=lambda _: None,
+    )
+    result = api.suggest_additions(
+        text, target=3, limit=10, client=client,
+        edhrec_client=FakeEdhrec(load("edhrec_commander.json")),
+    )
+    allowed = set(result["color_identity"])
+    for s in result["suggestions"]:
+        assert set(s["color_identity"]) <= allowed, s["name"]
+        assert s["legal_commander"] == "legal", s["name"]
+
+
+def test_suggestions_never_include_a_card_already_in_the_deck():
+    text = (FIXTURES / "sample_deck.txt").read_text()
+    client = ScryfallClient(
+        transport=FakeTransport(
+            load("collection_sample_deck.json"), {"data": [], "has_more": False},
+            load("collection_basic.json"), {"data": [], "has_more": False},
+        ),
+        sleep=lambda _: None,
+    )
+    result = api.suggest_additions(
+        text, target=3, limit=10, client=client,
+        edhrec_client=FakeEdhrec(load("edhrec_commander.json")),
+    )
+    present = {"Sol Ring", "Cultivate", "Swords to Plowshares", "Wrath of God", "Forest"}
+    assert not ({s["name"] for s in result["suggestions"]} & present)
+
+
+def test_each_suggestion_states_the_gap_it_fills_and_its_evidence():
+    text = (FIXTURES / "sample_deck.txt").read_text()
+    client = ScryfallClient(
+        transport=FakeTransport(
+            load("collection_sample_deck.json"), {"data": [], "has_more": False},
+            load("collection_basic.json"), {"data": [], "has_more": False},
+        ),
+        sleep=lambda _: None,
+    )
+    result = api.suggest_additions(
+        text, target=3, limit=5, client=client,
+        edhrec_client=FakeEdhrec(load("edhrec_commander.json")),
+    )
+    for s in result["suggestions"]:
+        assert s["fills"], "every suggestion must name the gap it fills"
+        assert "reason" in s and s["reason"]
+        assert "synergy" in s or "inclusion_rate" in s
+
+
+def test_game_changers_are_excluded_below_their_bracket_allowance():
+    """A bracket-2 deck must never be offered a Game Changer."""
+    text = (FIXTURES / "sample_deck.txt").read_text()
+    # Mark Sol Ring as a Game Changer via the search response.
+    client = ScryfallClient(
+        transport=FakeTransport(
+            load("collection_sample_deck.json"),
+            {"data": [{"object": "card", "name": "Rhystic Study"}], "has_more": False},
+            load("collection_basic.json"),
+            {"data": [{"object": "card", "name": "Rhystic Study"}], "has_more": False},
+        ),
+        sleep=lambda _: None,
+    )
+    result = api.suggest_additions(
+        text, target=2, limit=20, client=client,
+        edhrec_client=FakeEdhrec(load("edhrec_commander.json")),
+    )
+    assert all(not s["is_game_changer"] for s in result["suggestions"])
+
+
+def test_suggest_degrades_when_edhrec_is_unavailable():
+    """Losing the idea source must not lose the gap analysis."""
+    from mtgpt.errors import SourceUnavailable
+
+    class DeadEdhrec:
+        def commander(self, name, *, variant=None):
+            raise SourceUnavailable("EDHREC", "down")
+
+    text = (FIXTURES / "sample_deck.txt").read_text()
+    client = ScryfallClient(
+        transport=FakeTransport(
+            load("collection_sample_deck.json"), {"data": [], "has_more": False}
+        ),
+        sleep=lambda _: None,
+    )
+    result = api.suggest_additions(
+        text, target=3, limit=5, client=client, edhrec_client=DeadEdhrec()
+    )
+    assert result["gaps"], "gap analysis must survive an EDHREC outage"
+    assert result["suggestions"] == []
+    assert "EDHREC" in result["degraded"]
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `python3 -m pytest tests/test_suggest.py -v`
+Expected: FAIL — `AttributeError: module 'mtgpt.api' has no attribute 'suggest_additions'`
+
+- [ ] **Step 3: Implement `suggest_additions` in `mtgpt/api.py`**
+
+```python
+def suggest_additions(
+    text: str,
+    *,
+    target: int = 3,
+    variant: str | None = None,
+    limit: int = 10,
+    client: ScryfallClient | None = None,
+    edhrec_client=None,
+) -> dict:
+    """Propose specific cards to add, ranked, each justified.
+
+    Composition, not new logic: audit finds the gaps, EDHREC supplies
+    candidates, Scryfall verifies them, classify confirms each one fills the
+    gap it was chosen for, and the bracket rules reject anything that would
+    break the target.
+
+    Degrades rather than failing: if EDHREC is unreachable the gap analysis is
+    still returned, with the outage named in `degraded`.
+    """
+    from .brackets import RULES
+    from .errors import SourceUnavailable as _SourceUnavailable
+
+    scry = _client(client)
+    deck = _resolved(text, scry)
+    tags = classify_deck(deck)
+    report = audit(deck, tags=tags)
+    allowed = deck.command_zone_identity
+    present = {c.name.casefold() for _, c in deck.cards} | {
+        c.name.casefold() for c in deck.commanders
+    }
+
+    gaps = [
+        {
+            "function": c.function.value,
+            "count": c.count,
+            "target": [c.target_min, c.target_max],
+            "needed": c.delta,
+        }
+        for c in report.categories
+        if c.status == "low"
+    ]
+    gaps.sort(key=lambda g: g["needed"], reverse=True)
+    wanted = {g["function"] for g in gaps}
+
+    if not deck.commanders:
+        return {
+            "commanders": [],
+            "color_identity": sorted(allowed),
+            "target_bracket": target,
+            "gaps": gaps,
+            "suggestions": [],
+            "degraded": ["no commander declared, so no candidate source"],
+        }
+
+    degraded: list[str] = []
+    try:
+        pool = commander_synergy(
+            deck.commanders[0].name,
+            variant=variant,
+            limit=max(limit * 8, 80),
+            client=scry,
+            edhrec_client=edhrec_client,
+        )["cards"]
+    except _SourceUnavailable as exc:
+        degraded.append(str(exc))
+        pool = []
+
+    rule = RULES[target]
+    gc_allowance = rule.game_changers_max
+    gc_in_deck = sum(1 for _, c in deck.cards if c.is_game_changer)
+
+    suggestions = []
+    for candidate in pool:
+        if candidate["name"].casefold() in present:
+            continue
+        if not set(candidate["color_identity"]) <= allowed:
+            continue
+        if candidate["legal_commander"] != "legal":
+            continue
+        if gc_allowance is not None and candidate["is_game_changer"]:
+            if gc_in_deck >= gc_allowance:
+                continue
+        fills = sorted(set(candidate["functions"]) & wanted)
+        if not fills:
+            continue
+        rate = candidate.get("inclusion_rate")
+        entry = dict(candidate)
+        entry["fills"] = fills
+        entry["reason"] = (
+            f"fills {', '.join(fills)}; "
+            f"played in {rate:.0%} of recorded {deck.commanders[0].name} decks"
+            if rate
+            else f"fills {', '.join(fills)}"
+        )
+        suggestions.append(entry)
+
+    suggestions.sort(
+        key=lambda s: (len(s["fills"]), s.get("synergy") or 0.0), reverse=True
+    )
+
+    return {
+        "commanders": [c.name for c in deck.commanders],
+        "color_identity": sorted(allowed),
+        "target_bracket": target,
+        "gaps": gaps,
+        "suggestions": suggestions[:limit],
+        "degraded": degraded,
+    }
+```
+
+- [ ] **Step 4: Add the subcommand**
+
+```python
+    suggest = sub.add_parser("suggest", help="Propose cards to add, with reasons")
+    src = suggest.add_mutually_exclusive_group()
+    src.add_argument("--file")
+    src.add_argument("--stdin", action="store_true")
+    suggest.add_argument("--bracket", type=int, default=3, choices=[1, 2, 3, 4, 5])
+    suggest.add_argument("--variant", choices=["budget", "expensive", "upgraded", "cedh"])
+    suggest.add_argument("--limit", type=int, default=10)
+```
+
+Wire it in `main` and add `"suggest"` to the registered-subcommand test.
+
+- [ ] **Step 5: Run the tests**
+
+Run: `python3 -m pytest tests/test_suggest.py -v`
+Expected: PASS, 6 tests.
+
+Run: `python3 -m pytest -q`
+Expected: PASS, all tests.
+
+- [ ] **Step 6: Verify against the live services**
+
+```bash
+python3 -m mtgpt.cli suggest --file tests/fixtures/sample_deck.txt --bracket 3 --limit 5
+```
+
+Expected: `gaps` naming the under-served categories of that 41-card fixture, and up to five
+suggestions, each inside Atraxa's `{W}{U}{B}{G}` identity, each with `fills` and a `reason`
+citing an inclusion rate. **Confirm explicitly that no suggestion is a red card** — Atraxa's
+identity excludes red, and a red suggestion would mean the colour-identity filter is not working.
+Record the actual output.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add mtgpt/api.py mtgpt/cli.py tests/test_suggest.py
+git commit -m "feat: suggest ranked card additions with reasons
+
+The payoff operation: audit finds under-served categories, EDHREC supplies
+candidates with inclusion evidence, Scryfall verifies them, classify
+confirms each fills the gap it was chosen for, and bracket rules reject
+anything that would break the target.
+
+No suggestion can be unverified, outside the commander's colour identity,
+banned, or over its bracket's Game Changer allowance. Degrades to gap
+analysis alone when EDHREC is unreachable.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+```
+
+---
 ## Verification checklist
 
 Layer 1 is done when all of the following hold:

@@ -1,0 +1,35 @@
+{
+  "object": "list",
+  "total_cards": 2,
+  "has_more": false,
+  "data": [
+    {
+      "object": "card",
+      "name": "Cultivate",
+      "cmc": 3.0,
+      "type_line": "Sorcery",
+      "oracle_text": "Search your library for up to two basic land cards, reveal those cards, put one onto the battlefield tapped and the other into your hand, then shuffle.",
+      "mana_cost": "{2}{G}",
+      "color_identity": ["G"],
+      "colors": ["G"],
+      "layout": "normal",
+      "keywords": [],
+      "legalities": {"commander": "legal"},
+      "prices": {"usd": "0.25"}
+    },
+    {
+      "object": "card",
+      "name": "Kodama's Reach",
+      "cmc": 3.0,
+      "type_line": "Sorcery — Arcane",
+      "oracle_text": "Search your library for up to two basic land cards, reveal those cards, put one onto the battlefield tapped and the other into your hand, then shuffle.",
+      "mana_cost": "{2}{G}",
+      "color_identity": ["G"],
+      "colors": ["G"],
+      "layout": "normal",
+      "keywords": [],
+      "legalities": {"commander": "legal"},
+      "prices": {"usd": "0.40"}
+    }
+  ]
+}
