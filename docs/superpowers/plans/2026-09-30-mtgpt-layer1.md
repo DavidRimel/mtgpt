@@ -1745,6 +1745,45 @@ def test_mass_land_denial_is_not_counted_as_a_sweeper():
     assert F.SWEEPER not in tags
 
 
+@pytest.mark.parametrize(
+    "name,oracle,is_mld,is_sweeper",
+    [
+        ("Armageddon", "Destroy all lands.", True, False),
+        ("Ravages of War", "Destroy all lands.", True, False),
+        # "lands" is not adjacent to "all" on the classic MLD cards.
+        ("Jokulhaups",
+         "Destroy all artifacts, creatures, and lands. They can't be regenerated.",
+         True, True),
+        ("Devastation", "Destroy all creatures and lands.", True, True),
+        ("Wrath of God", "Destroy all creatures. They can't be regenerated.", False, True),
+        # "nonland" must not register as a land.
+        ("Nonland wipe", "Destroy all nonland permanents.", False, True),
+        ("Cyclonic Rift overload",
+         "Return all nonland permanents you don't control to their owners' hands.",
+         False, False),
+    ],
+    ids=["armageddon", "ravages", "jokulhaups", "devastation", "wrath", "nonland", "rift"],
+)
+def test_mass_land_denial_detection(name, oracle, is_mld, is_sweeper):
+    tags = classify(card(name, "Sorcery", oracle))
+    assert (F.MASS_LAND_DENIAL in tags) is is_mld
+    assert (F.SWEEPER in tags) is is_sweeper
+
+
+@pytest.mark.parametrize(
+    "name,oracle",
+    [
+        ("Time Warp", "Target player takes an extra turn after this one."),
+        ("Nexus of Fate", "Take an extra turn after this one."),
+        # Plural: "takes two extra turns".
+        ("Time Stretch", "Target player takes two extra turns after this one."),
+    ],
+    ids=["time-warp", "nexus", "time-stretch"],
+)
+def test_extra_turn_spells_detected(name, oracle):
+    assert F.EXTRA_TURNS in classify(card(name, "Sorcery", oracle))
+
+
 def test_counterspell():
     cs = card("Counterspell", "Instant", "Counter target spell.")
     assert F.COUNTERSPELL in classify(cs)
@@ -1972,11 +2011,19 @@ _SWEEPER = re.compile(
     r"all creatures get -",
     re.IGNORECASE,
 )
+#: Mass land denial. "lands" need not sit immediately after "all": Jokulhaups
+#: destroys "all artifacts, creatures, and lands" and Devastation "all creatures
+#: and lands". Requiring adjacency misses the format's defining MLD cards, and
+#: MLD is the rule brackets 1-3 care most about. [^.] keeps the match inside one
+#: sentence; \blands?\b will not fire on "nonland".
 _MASS_LAND_DENIAL = re.compile(
-    r"(destroy|exile)\s+(all|each)\s+lands?\b|"
+    r"(?:destroy|exile)\s+(?:all|each)\b[^.]{0,60}?\blands?\b|"
     r"each player sacrifices\s+(?:a|an|all|X|\d+)?\s*lands?\b",
     re.IGNORECASE,
 )
+#: Denial that hits ONLY lands. Armageddon is not a creature sweeper, but
+#: Jokulhaups genuinely is both, so only the lands-only form suppresses SWEEPER.
+_LANDS_ONLY_DENIAL = re.compile(r"(?:destroy|exile)\s+(?:all|each)\s+lands?\b", re.IGNORECASE)
 #: Real counterspells rarely read "counter target spell": Swan Song says
 #: "Counter target enchantment, instant, or sorcery spell", Dovin's Veto says
 #: "noncreature spell". A window between "target" and "spell" catches them.
@@ -1986,7 +2033,8 @@ _PROTECTION = re.compile(
     r"\bshroud\b|can't be countered|sacrifice .{0,30}\binstead\b",
     re.IGNORECASE,
 )
-_EXTRA_TURNS = re.compile(r"takes? an extra turn", re.IGNORECASE)
+#: "takes an extra turn", but also Time Stretch's "takes two extra turns".
+_EXTRA_TURNS = re.compile(r"takes?\s+\w+\s+extra\s+turns?", re.IGNORECASE)
 _WINCON = re.compile(r"\bwins? the game\b|\bloses? the game\b", re.IGNORECASE)
 _RECURSION = re.compile(
     r"return .{0,60}from (?:your|a|target player's) graveyard", re.IGNORECASE
@@ -2015,7 +2063,9 @@ def classify(card: Card) -> frozenset[Function]:
         tags.add(F.COUNTERSPELL)
     if _MASS_LAND_DENIAL.search(text):
         tags.add(F.MASS_LAND_DENIAL)
-    if _SWEEPER.search(text) and F.MASS_LAND_DENIAL not in tags:
+    # Lands-only denial is not a creature sweeper; a list-form wipe like
+    # Jokulhaups is both, so only suppress on the lands-only form.
+    if _SWEEPER.search(text) and not _LANDS_ONLY_DENIAL.search(text):
         tags.add(F.SWEEPER)
     # A counterspell is its own category, never spot removal.
     if (
@@ -2065,7 +2115,7 @@ def classify_deck(deck: ResolvedDeck) -> dict[str, frozenset[Function]]:
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `python3 -m pytest tests/test_classify.py -v`
-Expected: PASS, 35 tests (23 named + 12 parametrized real staples).
+Expected: PASS, 45 tests (23 named + 12 real staples + 7 MLD + 3 extra-turn).
 
 If `test_treasure_maker_is_ramp` and `test_produced_mana_alone_does_not_make_ramp` cannot both pass, the Treasure clause in `_ADDS_MANA` is matching too broadly or too narrowly — adjust that clause only, and do not fall back to keying on `produced_mana`, which is the bug both tests exist to prevent.
 
@@ -3375,7 +3425,7 @@ Expected: PASS, 11 tests.
 - [ ] **Step 6: Run the whole suite**
 
 Run: `python3 -m pytest -v`
-Expected: PASS, 133 tests across 8 files.
+Expected: PASS, 143 tests across 8 files.
 
 - [ ] **Step 7: Verify against the live API**
 
@@ -3723,7 +3773,7 @@ Expected: `SKILL.md frontmatter ok`
 - [ ] **Step 6: Run the full suite one more time**
 
 Run: `python3 -m pytest`
-Expected: PASS, 133 tests.
+Expected: PASS, 143 tests.
 
 - [ ] **Step 7: Commit**
 
