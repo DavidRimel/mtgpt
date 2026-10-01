@@ -16,6 +16,7 @@ def test_every_subcommand_is_registered():
         "card", "search", "classify", "read", "validate", "audit", "bracket", "report",
         "synergy", "themes", "combos", "card-combos", "suggest",
         "goldfish", "goldfish-compare", "goldfish-new", "goldfish-step",
+        "goldfish-scan", "card-rule",
     }
 
 
@@ -309,3 +310,33 @@ def test_write_json_failure_keeps_the_old_file(monkeypatch, capsys, tmp_path):
     assert target.read_text() == '{"old": 1}'
     assert not (tmp_path / "game.json.tmp").exists()
     assert _envelope_error(capsys)["type"] == "OSError"
+
+
+def test_card_rule_records_through_the_api(monkeypatch, capsys):
+    seen = {}
+
+    def fake(name, *, status, rule, note, client=None):
+        seen.update(name=name, status=status, rule=rule, note=note)
+        return {"name": name, "entry": {"status": status}}
+
+    monkeypatch.setattr(cli.api, "card_rule_set", fake)
+    code = cli.main(["card-rule", "Blood Artist", "--status", "override",
+                     "--rule", '{"on": "creature_dies", "drain": 1}', "--note", "drains"])
+    assert code == 0
+    assert seen == {"name": "Blood Artist", "status": "override",
+                    "rule": {"on": "creature_dies", "drain": 1}, "note": "drains"}
+
+
+def test_card_rule_without_status_shows_the_entry(monkeypatch, capsys):
+    monkeypatch.setattr(cli.api, "card_rule_show", lambda name: {"name": name, "entry": None})
+    assert cli.main(["card-rule", "Sol Ring"]) == 0
+    assert json.loads(capsys.readouterr().out)["data"] == {"name": "Sol Ring", "entry": None}
+
+
+def test_goldfish_scan_passes_the_goal(monkeypatch, capsys, tmp_path):
+    seen = {}
+    monkeypatch.setattr(cli.api, "goldfish_scan",
+                        lambda text, goal, client=None: seen.update(goal=goal) or {"cards": []})
+    assert cli.main(["goldfish-scan", "--file", str(FIXTURES / "sample_deck.txt"),
+                     "--goal", goal_file(tmp_path)]) == 0
+    assert seen["goal"] == {"archetype": "go_wide"}

@@ -1,0 +1,330 @@
+{
+  "version": 1,
+  "cards": {
+    "All Is Dust": {
+      "status": "parsed",
+      "note": "sweeper held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Anguished Unmaking": {
+      "status": "parsed",
+      "note": "removal held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Approach of the Second Sun": {
+      "status": "parsed",
+      "note": "first cast goes 7th from the top; a second cast from hand wins the game",
+      "reviewed": "2026-10-01"
+    },
+    "Arcane Signet": {
+      "status": "parsed",
+      "note": "one mana of any commander color",
+      "reviewed": "2026-10-01"
+    },
+    "Baleful Strix": {
+      "status": "parsed",
+      "note": "ETB: draw a card",
+      "reviewed": "2026-10-01"
+    },
+    "Beast Within": {
+      "status": "parsed",
+      "note": "removal held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Birds of Paradise": {
+      "status": "parsed",
+      "note": "dork, any color",
+      "reviewed": "2026-10-01"
+    },
+    "Bloom Tender": {
+      "status": "parsed",
+      "note": "one mana per color among your permanents",
+      "reviewed": "2026-10-01"
+    },
+    "Boros Charm": {
+      "status": "parsed",
+      "note": "protection that survives a wipe (indestructible mode)",
+      "reviewed": "2026-10-01"
+    },
+    "Casualties of War": {
+      "status": "parsed",
+      "note": "removal held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Chromatic Lantern": {
+      "status": "parsed",
+      "note": "one mana of any color; lands tap for any color",
+      "reviewed": "2026-10-01"
+    },
+    "Chromatic Orrery": {
+      "status": "parsed",
+      "note": "5 mana, all your mana any color; its {5},{T} draw ability is not modeled",
+      "reviewed": "2026-10-01"
+    },
+    "Conflux": {
+      "status": "parsed",
+      "note": "five tutors (the one-of-each-color constraint is approximated)",
+      "reviewed": "2026-10-01"
+    },
+    "Consecrated Sphinx": {
+      "status": "parsed",
+      "note": "draws 2 per opponent draw (6 a round), stopping 15 cards above decking (user's rule)",
+      "reviewed": "2026-10-01"
+    },
+    "Counterspell": {
+      "status": "parsed",
+      "note": "counterspell held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Cyclonic Rift": {
+      "status": "parsed",
+      "note": "removal/sweeper held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Deflecting Swat": {
+      "status": "parsed",
+      "note": "free redirect: protection",
+      "reviewed": "2026-10-01"
+    },
+    "Diabolic Tutor": {
+      "status": "parsed",
+      "note": "tutor: any card",
+      "reviewed": "2026-10-01"
+    },
+    "Dig Through Time": {
+      "status": "parsed",
+      "note": "best 2 of the top 7, with delve",
+      "reviewed": "2026-10-01"
+    },
+    "Dryad of the Ilysian Grove": {
+      "status": "parsed",
+      "note": "extra land drop; lands tap for any color",
+      "reviewed": "2026-10-01"
+    },
+    "Elvish Mystic": {
+      "status": "parsed",
+      "note": "dork, G",
+      "reviewed": "2026-10-01"
+    },
+    "Emergent Ultimatum": {
+      "status": "parsed",
+      "note": "finds 3 monocolored cards; opponents shuffle back the best one; the other two are cast free",
+      "reviewed": "2026-10-01"
+    },
+    "Enter the Infinite": {
+      "status": "parsed",
+      "note": "draws the library, puts one back; auto pilot casts it only when the round wins",
+      "reviewed": "2026-10-01"
+    },
+    "Expropriate": {
+      "status": "parsed",
+      "note": "1 extra turn (optimistic: assumes one 'time' vote); 'money' votes have no goldfish effect",
+      "reviewed": "2026-10-01"
+    },
+    "Faeburrow Elder": {
+      "status": "parsed",
+      "note": "one mana per color among your permanents; its +1/+1 per color is not modeled",
+      "reviewed": "2026-10-01"
+    },
+    "Fell the Profane // Fell Mire": {
+      "status": "parsed",
+      "note": "MDFC: removal held in hand, or a B land",
+      "reviewed": "2026-10-01"
+    },
+    "Fist of Suns": {
+      "status": "parsed",
+      "note": "alt cost WUBRG, same as Jodah",
+      "reviewed": "2026-10-01"
+    },
+    "Flawless Maneuver": {
+      "status": "parsed",
+      "note": "free protection that survives a wipe",
+      "reviewed": "2026-10-01"
+    },
+    "Genesis Ultimatum": {
+      "status": "parsed",
+      "note": "top 5: permanents onto the battlefield, the rest into hand",
+      "reviewed": "2026-10-01"
+    },
+    "Heroic Intervention": {
+      "status": "parsed",
+      "note": "protection that survives a wipe",
+      "reviewed": "2026-10-01"
+    },
+    "Ignoble Hierarch": {
+      "status": "parsed",
+      "note": "dork, B/R/G; exalted not modeled",
+      "reviewed": "2026-10-01"
+    },
+    "Imoti, Celebrant of Bounty": {
+      "status": "parsed",
+      "note": "cascade; your spells with mana value 6+ gain cascade",
+      "reviewed": "2026-10-01"
+    },
+    "In Garruk's Wake": {
+      "status": "parsed",
+      "note": "one-sided sweeper held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Insurrection": {
+      "status": "ignored",
+      "note": "steals opponents' creatures; nothing to steal in a goldfish (the goal can still count casting it as a win)",
+      "reviewed": "2026-10-01"
+    },
+    "Jegantha, the Wellspring": {
+      "status": "parsed",
+      "note": "taps for WUBRG, which can't pay generic costs; companion clause irrelevant",
+      "reviewed": "2026-10-01"
+    },
+    "Jodah, Archmage Eternal": {
+      "status": "parsed",
+      "note": "alt cost WUBRG for every spell while on the battlefield",
+      "reviewed": "2026-10-01"
+    },
+    "Leyline of Mutation": {
+      "status": "parsed",
+      "note": "begins on the battlefield from the opening hand; alt cost WUBRG",
+      "reviewed": "2026-10-01"
+    },
+    "Lightning Greaves": {
+      "status": "parsed",
+      "note": "protection permanent: stops commander removal while on the battlefield",
+      "reviewed": "2026-10-01"
+    },
+    "Llanowar Elves": {
+      "status": "parsed",
+      "note": "dork, G",
+      "reviewed": "2026-10-01"
+    },
+    "Lotus Cobra": {
+      "status": "parsed",
+      "note": "landfall: one mana of any color",
+      "reviewed": "2026-10-01"
+    },
+    "Mystic Confluence": {
+      "status": "parsed",
+      "note": "counterspell held as interaction in hand; spent by the disruption model; no target in a goldfish; draw modes not used",
+      "reviewed": "2026-10-01"
+    },
+    "Nature's Lore": {
+      "status": "parsed",
+      "note": "fetches a Forest-typed land (duals, triomes) untapped",
+      "reviewed": "2026-10-01"
+    },
+    "Omniscience": {
+      "status": "parsed",
+      "note": "alt cost {0} for spells cast from hand",
+      "reviewed": "2026-10-01"
+    },
+    "One with the Multiverse": {
+      "status": "parsed",
+      "note": "one free spell per turn (saved for 5+ mana spells); casting from the top of the library is not modeled",
+      "reviewed": "2026-10-01"
+    },
+    "Oracle of Mul Daya": {
+      "status": "parsed",
+      "note": "extra land drop; lands from the top of the library",
+      "reviewed": "2026-10-01"
+    },
+    "Phyrexian Arena": {
+      "status": "parsed",
+      "note": "one extra card each upkeep; life loss not tracked",
+      "reviewed": "2026-10-01"
+    },
+    "Portal to Phyrexia": {
+      "status": "ignored",
+      "note": "opponents sacrifice creatures; reanimation needs creatures in graveyards, which a goldfish rarely has",
+      "reviewed": "2026-10-01"
+    },
+    "Rise of the Eldrazi": {
+      "status": "parsed",
+      "note": "draw 4 and an extra turn; its destroy mode has no target",
+      "reviewed": "2026-10-01"
+    },
+    "Ruinous Ultimatum": {
+      "status": "parsed",
+      "note": "one-sided sweeper held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Sink into Stupor // Soporific Springs": {
+      "status": "parsed",
+      "note": "MDFC: removal held in hand, or a U land",
+      "reviewed": "2026-10-01"
+    },
+    "Smothering Tithe": {
+      "status": "parsed",
+      "note": "1 Treasure per round (user's assumption: opponents usually pay)",
+      "reviewed": "2026-10-01"
+    },
+    "Sol Ring": {
+      "status": "parsed",
+      "note": "taps for {C}{C}",
+      "reviewed": "2026-10-01"
+    },
+    "Solve the Equation": {
+      "status": "parsed",
+      "note": "tutor: instant or sorcery",
+      "reviewed": "2026-10-01"
+    },
+    "Sterling Grove": {
+      "status": "parsed",
+      "note": "sacrificed at upkeep to put a missing enchantment the goal names on top; its {1} cost is ignored",
+      "reviewed": "2026-10-01"
+    },
+    "Sublime Epiphany": {
+      "status": "parsed",
+      "note": "counterspell held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Swan Song": {
+      "status": "parsed",
+      "note": "counterspell held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Swords to Plowshares": {
+      "status": "parsed",
+      "note": "removal held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Sylvan Library": {
+      "status": "parsed",
+      "note": "one extra card a turn (paying 4 life once); life not tracked",
+      "reviewed": "2026-10-01"
+    },
+    "Tamiyo's Safekeeping": {
+      "status": "parsed",
+      "note": "protection that survives a wipe",
+      "reviewed": "2026-10-01"
+    },
+    "Three Visits": {
+      "status": "parsed",
+      "note": "fetches a Forest-typed land (duals, triomes) untapped",
+      "reviewed": "2026-10-01"
+    },
+    "Time Stretch": {
+      "status": "parsed",
+      "note": "two extra turns",
+      "reviewed": "2026-10-01"
+    },
+    "Timeless Lotus": {
+      "status": "parsed",
+      "note": "enters tapped; taps for WUBRG",
+      "reviewed": "2026-10-01"
+    },
+    "Tireless Provisioner": {
+      "status": "parsed",
+      "note": "landfall: a Treasure",
+      "reviewed": "2026-10-01"
+    },
+    "Unite the Coalition": {
+      "status": "parsed",
+      "note": "protection/removal held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Wood Elves": {
+      "status": "parsed",
+      "note": "ETB: fetch a Forest-typed land untapped",
+      "reviewed": "2026-10-01"
+    }
+  }
+}

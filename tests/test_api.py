@@ -422,3 +422,22 @@ def test_pilot_view_says_whether_this_is_an_extra_turn():
 def test_pilot_view_shows_put_back_and_loss():
     view = api.goldfish_new(deck_text(), GO_WIDE, client=deck_client())["view"]
     assert (view["pending_put_back"], view["loss_by"]) == (0, None)
+
+
+def test_card_rule_set_uses_the_scryfall_name_and_rejects_fake_cards(empty_card_rules):
+    from mtgpt.errors import UnresolvedCards
+
+    result = api.card_rule_set("sol ring", status="parsed", rule=None, note="rock",
+                               client=client_for(load("collection_sample_deck.json"), NO_GAME_CHANGERS))
+    assert result["name"] == "Sol Ring"
+    assert api.card_rule_show("Sol Ring")["entry"]["status"] == "parsed"
+    with pytest.raises(UnresolvedCards):
+        api.card_rule_set("Blatantly Fake Card", status="parsed", rule=None, note="",
+                          client=client_for({"object": "list", "data": [], "not_found": [{}]}))
+
+
+def test_goldfish_scan_lists_cards_needing_review():
+    report = api.goldfish_scan(deck_text(), client=deck_client())
+    assert report["total"] == len(report["cards"])
+    assert "Forest" not in report["needs_review"]
+    assert "Sol Ring" in report["needs_review"]  # nothing in the (empty) library yet

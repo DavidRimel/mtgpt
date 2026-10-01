@@ -5,10 +5,11 @@ description: Use when building, auditing, or tuning a Magic the Gathering EDH/Co
 
 # mtgpt
 
-Build and tune Commander decks on verified data: seventeen independently
+Build and tune Commander decks on verified data: nineteen independently
 callable operations (`card`, `search`, `classify`, `read`, `validate`,
 `audit`, `bracket`, `report`, `synergy`, `themes`, `combos`, `card-combos`,
-`suggest`, `goldfish`, `goldfish-compare`, `goldfish-new`, `goldfish-step`).
+`suggest`, `goldfish`, `goldfish-compare`, `goldfish-new`, `goldfish-step`,
+`goldfish-scan`, `card-rule`).
 See `python3 -m mtgpt.cli --help` for the full list.
 
 ## The rule that matters
@@ -120,6 +121,40 @@ the turns before the commander go to ramp and engines (`setup`), the
 commander lands on or before curve (`commander`), the deck does its thing
 while holding interaction (`thing`), and how fast it wins (`win`), plus how
 it recovers from disruption (`disruption`).
+
+0. **Scan the deck before every goldfish. This is not optional.** A goldfish
+   is only as good as the sim's model of each card, and a card the sim gets
+   wrong silently skews every number.
+
+   ```bash
+   python3 -m mtgpt.cli goldfish-scan --file deck.txt [--goal deck.goal.json]
+   ```
+
+   For each card the scan shows its oracle text, what the sim does with it
+   (`model`, and whether that comes from its `text`, the `library`, or the
+   `goal`), and its entry in the card rules library. Review every name in
+   `needs_review` — the cards no earlier deck has reviewed — and record a
+   verdict for each:
+
+   ```bash
+   python3 -m mtgpt.cli card-rule "Smothering Tithe" --status parsed --note "Treasure per opponent draw, 1/round"
+   python3 -m mtgpt.cli card-rule "Blood Artist" --status override --rule '{"on": "creature_dies", "drain": 1}' --note "drain 1 each opponent on any death"
+   python3 -m mtgpt.cli card-rule "Swords to Plowshares" --status ignored --note "removal; no target in a goldfish"
+   ```
+
+   - `parsed` — the model matches what the card does in a goldfish.
+   - `override` — the parser misses it but an engine-override rule
+     captures it (the fields under **engine** below). The rule then applies to
+     every future deck with that card.
+   - `ignored` — it only affects opponents (removal, counters, theft); say so.
+
+   If a card matters and neither the parser nor an override can express it,
+   the engine needs a new mechanic: tell the user, propose it, and build it
+   test-first (as cascade, Approach, and the land searches were) before
+   trusting the numbers. Never run a goldfish over unreviewed cards without
+   saying which ones were skipped. The library (`mtgpt/data/card_rules.json`)
+   accumulates across decks: a card reviewed once stays reviewed. A goal
+   file's own `engine` entry overrides the library for that deck.
 
 1. **Ask the user what a winning state is for this deck, and what the
    commander's "thing" is. Never infer either.** Map the answer onto an

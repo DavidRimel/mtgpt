@@ -96,7 +96,7 @@ def _wins_if_cast(state: GameState, action: dict) -> bool:
     ends in a win. Cached per turn and board, since choose() asks again after
     every action while the card stays castable."""
     key = (state.turn_index, action["cast"], available_mana(state), len(state.hand),
-           len(state.battlefield), state.land_played)
+           len(state.battlefield), state.lands_played)
     if key in state.lookahead_cache:
         return state.lookahead_cache[key]
     after = apply(state, action)

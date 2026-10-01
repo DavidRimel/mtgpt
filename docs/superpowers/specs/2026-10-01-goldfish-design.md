@@ -209,6 +209,31 @@ carries the legal list.
 3. Tutor target: the first missing piece of `thing`, then of `win`, then a land if
    under 4 lands, otherwise the highest-priority card not in hand.
 
+### Card mechanics beyond mana and draw
+
+Parsed from card text: land searches by type (a Forest search finds a Bayou);
+alternative costs (Jodah, Fist of Suns, Leyline of Mutation; Omniscience's `{0}`
+from hand) and Leyline openings; nonland permanents that enter tapped; mana that
+can't pay generic costs (Jegantha); multi-card tutors (Conflux); Chromatic Lantern,
+Dryad and Orrery fixing; extra land drops and lands off the top; landfall mana and
+Treasure; mana per color among your permanents (Bloom Tender); cascade, and Imoti's
+grant to 6+ mana-value spells; Approach of the Second Sun's real rule (the second
+cast from hand wins, reported as `won:<card>` whatever the goal says); Genesis
+Ultimatum and Dig Through Time with delve; One with the Multiverse's free spell,
+saved for 5+ mana spells; Emergent Ultimatum (the opponents shuffle back the best
+card); Sylvan Library as one extra card a turn; Sterling Grove putting a missing
+goal enchantment on top; Consecrated Sphinx drawing 2 per opponent draw while 15+
+cards remain; Smothering Tithe as one Treasure a round.
+
+### Card rules library
+
+`mtgpt/data/card_rules.json` records every reviewed card once: `parsed` (the parser
+models it), `override` (an engine-override rule, validated like a goal file's), or
+`ignored` (opponent-only effects), each with a note. `goldfish-scan` shows every
+card's model and library entry and lists those needing review; `card-rule` records
+a verdict, checking the name against Scryfall. Library overrides apply to any deck
+whose goal file does not override that card: goal file, then library, then text.
+
 ### Decking and drawing the library
 
 Drawing from an empty library loses the game on that round; the report's `loss`
