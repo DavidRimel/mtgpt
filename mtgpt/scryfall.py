@@ -11,6 +11,7 @@ requests. We send a real User-Agent and use the polite end of that range.
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -77,6 +78,21 @@ def _front_face(payload: dict) -> dict:
     return faces[0] if faces else payload
 
 
+_LEADING_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+
+
+def _stat(value) -> float | None:
+    """Parse a power or toughness string. "*" is 0 and "1+*" is 1.
+
+    None stays None: it means the card has no power at all, which is not the
+    same as a 0-power creature.
+    """
+    if value is None:
+        return None
+    match = _LEADING_NUMBER.match(str(value))
+    return float(match.group()) if match else 0.0
+
+
 def _number(value, default: float | None = None) -> float | None:
     """Coerce a Scryfall numeric field, falling back rather than raising.
 
@@ -130,6 +146,8 @@ def card_from_json(payload: dict, *, game_changers: frozenset[str]) -> Card:
         is_game_changer=name.casefold() in game_changers,
         usd=_number(price),
         keywords=tuple(payload.get("keywords") or ()),
+        power=_stat(front.get("power", payload.get("power"))),
+        toughness=_stat(front.get("toughness", payload.get("toughness"))),
     )
 
 
