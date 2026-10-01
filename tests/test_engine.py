@@ -117,6 +117,28 @@ def test_wipe_spares_lands_and_rocks_and_needs_the_right_answer():
     assert "Swords to Plowshares" in names(s, s.hand)  # removal cannot stop a wipe
 
 
+GREAVES = card("Lightning Greaves", "Artifact — Equipment",
+               "Equipped creature has shroud and haste.\nEquip {0}", mana_cost="{2}")
+
+
+def test_protection_on_the_battlefield_stops_removal_and_stays():
+    s = rigged(GREAVES, on_board=["Lightning Greaves"], lands_in_play=5,
+               commander_out=True, goal=REMOVAL_EVERY_TURN)
+    s = apply(s, PASS)
+    assert "Test Commander" in [p.name for p in s.battlefield]
+    assert s.events[-1] == {"turn": 2, "kind": "commander_removal", "stopped": True,
+                            "by": "Lightning Greaves"}
+    assert "Lightning Greaves" in [p.name for p in s.battlefield]
+
+
+def test_protection_on_the_battlefield_does_not_stop_a_wipe():
+    s = rigged(GREAVES, on_board=["Lightning Greaves"], lands_in_play=5,
+               commander_out=True, goal=WIPE_EVERY_TURN)
+    s = apply(s, PASS)
+    assert sorted(p.name for p in s.battlefield) == ["Forest"] * 5
+    assert s.events[-1]["stopped"] is False
+
+
 def test_counterspell_stops_a_wipe():
     s = rigged(BEAR, COUNTERSPELL, hand=["Counterspell"], on_board=["Grizzly Bears"],
                goal=WIPE_EVERY_TURN)

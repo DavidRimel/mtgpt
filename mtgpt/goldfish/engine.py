@@ -540,6 +540,12 @@ def _disrupt(s: GameState) -> None:
 
 
 def _event(s: GameState, kind: str) -> None:
+    if kind == "commander_removal":
+        guard = _protection_on_board(s)
+        if guard is not None:
+            s.events.append({"turn": s.turn, "kind": kind, "stopped": True, "by": guard.name})
+            s.log.append(f"T{s.turn}: {kind} stopped by {guard.name} on the battlefield")
+            return
     answer = _answer_in_hand(s, kind)
     if answer is not None:
         s.hand.remove(answer)
@@ -556,6 +562,15 @@ def _event(s: GameState, kind: str) -> None:
         # Lands and noncreature mana rocks survive; everything else goes.
         _kill(s, [p for p in s.battlefield if not p.is_land and not (
             not p.is_creature and p.card is not None and s.cards[p.card].effect.mana)])
+
+
+def _protection_on_board(s: GameState) -> Permanent | None:
+    """A protection permanent (Lightning Greaves, Mother of Runes) guards the
+    commander from removal without being used up. It does not stop a wipe."""
+    for perm in s.battlefield:
+        if not perm.is_land and perm.card is not None and "protection" in s.cards[perm.card].effect.held:
+            return perm
+    return None
 
 
 def _answer_in_hand(s: GameState, kind: str) -> int | None:
