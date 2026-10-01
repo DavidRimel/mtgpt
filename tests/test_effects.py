@@ -194,3 +194,25 @@ def test_unmodeled_ignores_keyword_only_creatures():
 def test_effect_round_trips_through_dict():
     effect = effect_of(TEFERIS_PROTECTION, G)
     assert effect_from_dict(effect_to_dict(effect)) == effect
+
+
+def test_activated_land_search_with_a_mana_cost_is_not_ramp():
+    bauble = card("Wayfarer's Bauble", "Artifact",
+                  "{2}, {T}, Sacrifice this artifact: Search your library for a basic land "
+                  "card, put it onto the battlefield tapped, then shuffle.", mana_cost="{1}")
+    assert effect_of(bauble, G).fetch_battlefield == 0
+
+
+def test_free_sacrifice_land_search_is_ramp():
+    elder = card("Sakura-Tribe Elder", "Creature — Snake Shaman",
+                 "Sacrifice this creature: Search your library for a basic land card, put "
+                 "that card onto the battlefield tapped, then shuffle.",
+                 mana_cost="{1}{G}", power=1.0)
+    assert effect_of(elder, G).fetch_battlefield == 1
+
+
+def test_activated_tutor_with_a_mana_cost_is_not_a_tutor():
+    survival = card("Survival of the Fittest", "Enchantment",
+                    "{G}, Discard a creature card: Search your library for a creature card, "
+                    "reveal it, put it into your hand, then shuffle.", mana_cost="{1}{G}")
+    assert effect_of(survival, G).tutor is None

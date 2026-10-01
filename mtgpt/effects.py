@@ -157,17 +157,22 @@ def effect_of(card: Card, identity: frozenset[str] = _ANY) -> SimEffect:
         treasure_match = _TREASURE.search(line)
         if treasure_match:
             treasure += _count(treasure_match.group(1))
+        # An activated ability that costs mana ("{2}, {T}, Sacrifice: Search...")
+        # is not a free effect of casting the card; a symbol-free cost
+        # ("Sacrifice this creature: Search...") still counts.
+        activated_cost = _is_activated(line)
         if _LAND_SEARCH.search(line):
-            bf, hand, tapped = _fetch(line)
-            fetch_bf += bf
-            fetch_hand += hand
-            fetch_tapped = fetch_tapped or tapped
-        elif tutor is None:
+            if not activated_cost:
+                bf, hand, tapped = _fetch(line)
+                fetch_bf += bf
+                fetch_hand += hand
+                fetch_tapped = fetch_tapped or tapped
+        elif tutor is None and not activated_cost:
             tutor_match = _TUTOR.search(line)
             if tutor_match:
                 tutor = _restriction(tutor_match.group("what"))
         draw_match = _DRAW_N.search(_OPPONENT_DRAW.sub(" ", line))
-        if draw_match and not _is_activated(line):
+        if draw_match and not activated_cost:
             n = _count(draw_match.group(1))
             if line.lower().startswith("at the beginning"):
                 draw_turn += n
