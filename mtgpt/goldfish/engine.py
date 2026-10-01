@@ -383,6 +383,15 @@ def held_counts(state: GameState) -> dict[str, int]:
     return counts
 
 
+def devotion_to_blue(state: GameState) -> int:
+    """Blue mana symbols among your permanents' mana costs."""
+    total = 0
+    for perm in state.battlefield:
+        if perm.card is not None and not perm.is_land:
+            total += sum(1 for pip in parse_cost(state.cards[perm.card].mana_cost)[1] if "U" in pip)
+    return total
+
+
 def find_card(state: GameState, name: str, zone: list[int]) -> int | None:
     for idx in zone:
         if state.cards[idx].name == name:
@@ -536,6 +545,11 @@ def _resolve(s: GameState, idx: int, *, from_hand: bool = False) -> None:
         s.rng.shuffle(s.library)
     else:
         s.graveyard.append(idx)
+    if effect.thoracle and devotion_to_blue(s) >= len(s.library):
+        s.alt_win = card.name
+    if effect.exile_library:
+        s.log.append(f"T{s.turn}: exile the library ({len(s.library)} cards)")
+        s.library = []
     s.extra_turns_pending += effect.extra_turns
     s.pool.extend([_ANY] * effect.mana_once)
     s.treasures += effect.treasure_once
@@ -873,7 +887,8 @@ def _opponent_win_attempt(s: GameState) -> None:
         wanted |= {"removal", "sweeper"}
     if "counterspell" in rule.answers:
         wanted.add("counterspell")
-    for idx in s.hand:
+    # A pact is spent last: its upkeep cost can lose the game.
+    for idx in sorted(s.hand, key=lambda i: bool(s.cards[i].effect.pact_cost)):
         if s.cards[idx].effect.held & wanted:
             _spend_answer(s, idx, due_now=True)
             s.win_attempts.append({"turn": s.turn, "stopped": True, "by": s.cards[idx].name})

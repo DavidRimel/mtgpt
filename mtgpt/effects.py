@@ -180,6 +180,11 @@ class SimEffect:
     discard_land: bool = False
     #: Exiles a card from hand on entering and taps for its colors (Chrome Mox).
     imprint: bool = False
+    #: Wins on entering if your devotion to blue covers the library (Thassa's Oracle).
+    thoracle: bool = False
+    #: Exiles the whole library (Demonic Consultation, Tainted Pact naming a
+    #: card not in the deck).
+    exile_library: bool = False
 
     @property
     def is_ramp(self) -> bool:
@@ -203,6 +208,7 @@ class SimEffect:
             or self.grants_cascade_min or self.approach or self.dig_permanents or self.dig_look
             or self.free_spell_per_turn or self.emergent or self.sac_tutor_top
             or self.opp_draw_cards or self.opp_draw_treasure or self.stax or self.imprint
+            or self.thoracle or self.exile_library
         )
 
 
@@ -508,6 +514,11 @@ def _mechanics(card: Card, text: str) -> dict:
     if re.search(r"\b(?:your opponents|each opponent|players|your opponents' spells) can't (?:cast|search|win)", t) \
             or "spells your opponents cast cost" in t or "your opponents can't" in t and "spells" in t:
         out["stax"] = True
+    if "if x is greater than or equal to the number of cards in your library, you win the game" in t:
+        out["thoracle"] = True
+    if ("reveal cards from the top of your library until you reveal a card with the chosen name" in t
+            or "repeat this process until you put a card into your hand or you exile two cards with the same name" in t):
+        out["exile_library"] = True
     if "doesn't untap during your untap step" in t:
         out["no_untap"] = True
     if m := re.search(r"at the beginning of your next upkeep, pay ((?:\{[^}]+\})+)\. if you don't, you lose the game", t):

@@ -15,8 +15,8 @@ cards, which is what makes a before/after comparison mean something.
 from __future__ import annotations
 
 from ..goal import condition_names
-from .engine import (GameState, _alt_costs, apply, available_mana, find_card, legal_actions,
-                     win_label)
+from .engine import (GameState, _alt_costs, apply, available_mana, devotion_to_blue, find_card,
+                     legal_actions, win_label)
 from .mana import parse_cost
 
 RAMP, COMMANDER, ENGINE, VALUE, OTHER = range(5)
@@ -37,6 +37,16 @@ def choose(state: GameState) -> dict:
     lands = [a for a in legal if "play_land" in a]
     if lands:
         return _pick_land(state, lands)
+
+    # Thassa's Oracle wins on the spot when devotion covers the library — a
+    # direct check, so it also works inside a look-ahead.
+    for action in legal:
+        if "cast" in action:
+            idx = _castable_index(state, action["cast"])
+            card = state.cards[idx]
+            if card.effect.thoracle and (devotion_to_blue(state) + sum(
+                    1 for pip in parse_cost(card.mana_cost)[1] if "U" in pip)) >= len(state.library):
+                return action
 
     # Win now if a card the win condition names would do it: no ramp first.
     if not state.looking_ahead:
@@ -71,7 +81,7 @@ def tier(state: GameState, idx: int):
         return "hold"
     # Drawing the whole library (Enter the Infinite) decks you two turns later
     # unless the round it is cast in wins, so it is cast only when it does.
-    if card.effect.draw_library:
+    if card.effect.draw_library or card.effect.exile_library or card.effect.thoracle:
         return "hold"
     if card.is_commander:
         return _COMMANDER_ON_CURVE if state.turn >= state.goal.commander_turn else COMMANDER

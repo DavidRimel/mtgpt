@@ -588,3 +588,56 @@ def test_a_wipe_spares_an_imprinted_mox():
     s.command_zone = []
     s = apply(apply(s, {"cast": "Chrome Mox"}), PASS)
     assert "Chrome Mox" in [p.name for p in s.battlefield]
+
+
+# --- Thassa's Oracle lines ---------------------------------------------------
+
+ORACLE_T = card("Thassa's Oracle", "Creature — Merfolk Wizard", "When Thassa's Oracle enters, look at the "
+                "top X cards of your library, where X is your devotion to blue. Put up to one of them on top "
+                "of your library and the rest on the bottom of your library in a random order. If X is "
+                "greater than or equal to the number of cards in your library, you win the game.",
+                mana_cost="{U}{U}", power=1.0, colors="U")
+CONSULT = card("Demonic Consultation", "Instant", "Choose a card name. Exile the top six cards of your "
+               "library, then reveal cards from the top of your library until you reveal a card with the "
+               "chosen name. Put that card into your hand and exile all other cards revealed this way.",
+               mana_cost="{B}", colors="B")
+TAINTED = card("Tainted Pact", "Instant", "Exile the top card of your library. You may put that card into "
+               "your hand unless it has the same name as another card exiled this way. Repeat this process "
+               "until you put a card into your hand or you exile two cards with the same name, whichever "
+               "comes first.", mana_cost="{1}{B}", colors="B")
+
+
+def test_oracle_and_consultation_parse():
+    assert effect_of(ORACLE_T, WUBRG).thoracle
+    assert effect_of(CONSULT, WUBRG).exile_library
+    assert effect_of(TAINTED, WUBRG).exile_library
+
+
+def test_consultation_then_oracle_wins():
+    s = rigged(source=five_color(ORACLE_T, CONSULT), land="Prism Land", lands_in_play=3,
+               hand=["Thassa's Oracle", "Demonic Consultation"])
+    s.command_zone = []
+    from mtgpt.goldfish.policy import choose
+    s = apply(s, choose(s))  # Consultation: the look-ahead sees the win
+    assert s.library == []
+    s = apply(s, choose(s))  # Oracle
+    s = apply(s, {"pass": True})
+    assert s.over and s.win_by == "won:Thassa's Oracle"
+
+
+def test_oracle_and_consultation_are_held_with_a_full_library():
+    from mtgpt.goldfish.policy import choose
+    s = rigged(source=five_color(ORACLE_T, CONSULT), land="Prism Land", lands_in_play=1,
+               hand=["Thassa's Oracle", "Demonic Consultation"])
+    s.command_zone = []
+    assert choose(s) == {"pass": True}  # one mana: Consultation alone would only exile the library
+
+
+def test_pact_is_the_last_answer_spent():
+    goal = {"archetype": "custom", "thing": "commander", "win": NEVER, "opponent_win": {"from_turn": 2}}
+    from simdeck import COUNTERSPELL
+    s = rigged(source=five_color(PACT, COUNTERSPELL), land="Prism Land", lands_in_play=1,
+               hand=["Pact of Negation", "Counterspell"], goal=goal)
+    s.command_zone = []
+    s = apply(s, PASS)
+    assert s.win_attempts[-1]["by"] == "Counterspell" and "Pact of Negation" in names(s, s.hand)

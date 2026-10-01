@@ -205,6 +205,11 @@
       "note": "top 5: permanents onto the battlefield, the rest into hand",
       "reviewed": "2026-10-01"
     },
+    "Grim Tutor": {
+      "status": "parsed",
+      "note": "tutor: any card; life loss not tracked",
+      "reviewed": "2026-10-01"
+    },
     "Heroic Intervention": {
       "status": "parsed",
       "note": "protection that survives a wipe",
@@ -218,6 +223,11 @@
     "Imoti, Celebrant of Bounty": {
       "status": "parsed",
       "note": "cascade; your spells with mana value 6+ gain cascade",
+      "reviewed": "2026-10-01"
+    },
+    "Imperial Seal": {
+      "status": "parsed",
+      "note": "tutor: any card, to the top; life loss not tracked",
       "reviewed": "2026-10-01"
     },
     "In Garruk's Wake": {
