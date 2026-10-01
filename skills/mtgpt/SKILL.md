@@ -202,6 +202,12 @@ it recovers from disruption (`disruption`).
 6. Report the differences and keep or revert the swap. Later iterations
    reuse the user's mode unless they ask to change it.
 
+Extra turns are full turns (untap, draw, land drop, main, combat) that keep the
+table-turn number: every turn count in the report is a full round of the table,
+so a win on an extra turn is credited to the round its spell was cast in. No
+disruption is rolled on an extra turn. In pilot mode the view's `extra_turn` says
+when you are in one.
+
 Goldfish numbers are optimistic by construction: no opponent, no blockers,
 no interaction but the disruption dice. Say so, and use them to compare
 versions of a deck, not to predict real games. Instant and sorcery

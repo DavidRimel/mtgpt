@@ -216,3 +216,17 @@ def test_activated_tutor_with_a_mana_cost_is_not_a_tutor():
                     "{G}, Discard a creature card: Search your library for a creature card, "
                     "reveal it, put it into your hand, then shuffle.", mana_cost="{1}{G}")
     assert effect_of(survival, G).tutor is None
+
+
+def test_extra_turn_counts_and_self_shuffle():
+    nexus = card("Nexus of Fate", "Instant", "Take an extra turn after this one.\nIf Nexus of Fate "
+                 "would be put into a graveyard from anywhere, reveal Nexus of Fate and shuffle it "
+                 "into its owner's library instead.", mana_cost="{5}{U}{U}")
+    beacon = card("Beacon of Tomorrows", "Sorcery", "Target player takes an extra turn after this "
+                  "one. Shuffle Beacon of Tomorrows into its owner's library.", mana_cost="{6}{U}{U}")
+    stretch = card("Time Stretch", "Sorcery", "Target player takes two extra turns after this one.",
+                   mana_cost="{8}{U}{U}")
+    assert (effect_of(nexus, G).extra_turns, effect_of(nexus, G).shuffle_self) == (1, True)
+    assert (effect_of(beacon, G).extra_turns, effect_of(beacon, G).shuffle_self) == (1, True)
+    assert (effect_of(stretch, G).extra_turns, effect_of(stretch, G).shuffle_self) == (2, False)
+    assert not is_unmodeled(stretch, effect_of(stretch, G))

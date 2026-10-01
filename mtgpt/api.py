@@ -639,6 +639,8 @@ def game_view(state: GameState) -> dict:
     cards = state.cards
     return {
         "turn": state.turn,
+        "extra_turn": state.extra_turn,
+        "extra_turns_pending": state.extra_turns_pending,
         "over": state.over,
         "hand": sorted(cards[i].name for i in state.hand),
         "battlefield": [

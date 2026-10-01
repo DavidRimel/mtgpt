@@ -61,6 +61,8 @@ _TUTOR = re.compile(
 _ENTERS_TAPPED = re.compile(r"enters(?: the battlefield)? tapped(?!\s+unless)", re.IGNORECASE)
 _POWER_BONUS = re.compile(r"(?:equipped|enchanted) creature gets \+(\d+)/", re.IGNORECASE)
 _WIPE_PROOF = re.compile(r"indestructible|phases? out", re.IGNORECASE)
+#: "Take an extra turn after this one", "takes two extra turns".
+_EXTRA_TURN_COUNT = re.compile(r"\btakes? (an|one|two|three|\d+) extra turns?", re.IGNORECASE)
 #: The card types a tutor restriction can name, matched against type lines.
 _TUTOR_TYPES = (
     "creature", "artifact", "enchantment", "equipment", "aura",
@@ -107,6 +109,11 @@ class SimEffect:
     held: frozenset[str] = frozenset()
     #: Protection that survives a board wipe: indestructible or phasing.
     wipe_proof: bool = False
+    #: Extra turns the spell grants (Time Stretch is 2).
+    extra_turns: int = 0
+    #: The spell shuffles itself into the library instead of the graveyard
+    #: (Nexus of Fate, Beacon of Tomorrows).
+    shuffle_self: bool = False
 
     @property
     def is_ramp(self) -> bool:
@@ -120,7 +127,7 @@ class SimEffect:
         """True when the sim gives this card anything to do beyond its power."""
         return bool(
             self.is_ramp or self.draw_once or self.draw_per_turn or self.tutor
-            or self.power_bonus or self.held
+            or self.power_bonus or self.held or self.extra_turns
         )
 
 
@@ -226,6 +233,8 @@ def effect_of(card: Card, identity: frozenset[str] = _ANY) -> SimEffect:
         power_bonus=int(bonus.group(1)) if bonus else 0,
         held=held,
         wipe_proof="protection" in held and bool(_WIPE_PROOF.search(text)),
+        extra_turns=_extra_turns(text),
+        shuffle_self=is_spell and _shuffles_itself(card, text),
     )
 
 
@@ -318,6 +327,19 @@ def _is_activated(line: str) -> bool:
     """An activated ability's cost sits before a colon and contains a symbol."""
     cost, colon, _ = line.partition(":")
     return bool(colon) and "{" in cost
+
+
+def _extra_turns(text: str) -> int:
+    match = _EXTRA_TURN_COUNT.search(text)
+    return _count(match.group(1)) if match else 0
+
+
+def _shuffles_itself(card: Card, text: str) -> bool:
+    """"Shuffle Beacon of Tomorrows into its owner's library", or Nexus of
+    Fate's "shuffle it into its owner's library instead"."""
+    name = re.escape(card.name.partition("//")[0].strip())
+    return bool(re.search(rf"shuffle (?:it|{name}|this (?:card|spell)) into its owner's library",
+                          text, re.IGNORECASE))
 
 
 def _count(word: str) -> int:
