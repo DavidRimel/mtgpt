@@ -1631,6 +1631,8 @@ Likewise `MASS_LAND_DENIAL` suppresses `SWEEPER`: Armageddon reads "Destroy all 
 
 ```python
 # tests/test_classify.py
+import pytest
+
 from mtgpt.classify import classify, classify_deck
 from mtgpt.models import Card, Function, ResolvedDeck
 
@@ -1824,6 +1826,68 @@ def test_mdfc_land_is_not_tagged_land():
     assert F.RECURSION in tags
 
 
+# Real oracle text from Scryfall, 2026-09-30. Each of these was misclassified by
+# an earlier draft of the regexes above; they are the reason those regexes look
+# the way they do. Keep them.
+REAL_STAPLES = [
+    # (name, type_line, oracle_text, must_include, must_exclude)
+    ("Nature's Lore", "Sorcery",
+     "Search your library for a Forest card, put that card onto the battlefield, then shuffle.",
+     {F.RAMP}, {F.TUTOR}),
+    ("Three Visits", "Sorcery",
+     "Search your library for a Forest card, put it onto the battlefield, then shuffle.",
+     {F.RAMP}, {F.TUTOR}),
+    ("Farseek", "Sorcery",
+     "Search your library for a Plains, Island, Swamp, or Mountain card, put it onto "
+     "the battlefield tapped, then shuffle.",
+     {F.RAMP}, {F.TUTOR}),
+    ("Swan Song", "Instant",
+     "Counter target enchantment, instant, or sorcery spell. Its controller creates a "
+     "2/2 blue Bird creature token with flying.",
+     {F.COUNTERSPELL}, {F.SPOT_REMOVAL}),
+    ("Dovin's Veto", "Instant",
+     "This spell can't be countered.\nCounter target noncreature spell.",
+     {F.COUNTERSPELL}, {F.SPOT_REMOVAL}),
+    ("Flusterstorm", "Instant",
+     "Counter target instant or sorcery spell unless its controller pays {1}.",
+     {F.COUNTERSPELL}, {F.SPOT_REMOVAL}),
+    ("Blasphemous Act", "Sorcery",
+     "This spell costs {1} less to cast for each creature on the battlefield.\n"
+     "Blasphemous Act deals 13 damage to each creature.",
+     {F.SWEEPER}, {F.SPOT_REMOVAL}),
+    ("Toxic Deluge", "Sorcery",
+     "As an additional cost to cast this spell, pay X life.\n"
+     "All creatures get -X/-X until end of turn.",
+     {F.SWEEPER}, set()),
+    ("Cyclonic Rift", "Instant",
+     "Return target nonland permanent you don't control to its owner's hand.\n"
+     "Overload {6}{U}",
+     {F.SPOT_REMOVAL}, set()),
+    ("Timetwister", "Sorcery",
+     "Each player shuffles their hand and graveyard into their library, then draws "
+     "seven cards.",
+     {F.DRAW}, set()),
+    ("Smothering Tithe", "Enchantment",
+     "Whenever an opponent draws a card, that player may pay {2}. If the player "
+     "doesn't, you create a Treasure token.",
+     {F.RAMP}, {F.DRAW}),
+    ("Eternal Witness", "Creature — Human Shaman",
+     "When this creature enters, return target card from your graveyard to your hand.",
+     {F.RECURSION}, {F.SPOT_REMOVAL}),
+]
+
+
+@pytest.mark.parametrize(
+    "name,type_line,oracle,must_include,must_exclude",
+    REAL_STAPLES,
+    ids=[s[0] for s in REAL_STAPLES],
+)
+def test_real_staples_classify_correctly(name, type_line, oracle, must_include, must_exclude):
+    tags = classify(card(name, type_line, oracle))
+    assert must_include <= tags, f"{name}: expected {must_include}, got {tags}"
+    assert not (must_exclude & tags), f"{name}: must not be {must_exclude & tags}, got {tags}"
+
+
 def test_classify_deck_keys_by_name():
     sol = card("Sol Ring", "Artifact", "{T}: Add {C}{C}.", produced_mana=frozenset("C"))
     forest = card("Forest", "Basic Land — Forest", "({T}: Add {G}.)",
@@ -1873,20 +1937,39 @@ _ADDS_MANA = re.compile(
     re.IGNORECASE,
 )
 _SEARCH_LIBRARY = re.compile(r"search your library", re.IGNORECASE)
+#: A land fetch names either the word "land" or a basic land TYPE. Nature's Lore,
+#: Three Visits, and Farseek say "Forest card" / "Plains ... card" and never the
+#: word "land", so omitting the type names misfiles the format's most-played ramp
+#: spells as tutors — understating ramp and inflating tutor density at once.
 _LAND_SEARCH = re.compile(
-    r"search your library for (?:up to )?(?:a|an|one|two|three|X|\d+)?\s*"
-    r"(?:basic )?(?:land|lands|[A-Za-z]+ card[s]? .{0,20}land)",
+    r"search your library for (?:up to )?(?:a|an|one|two|three|four|X|\d+)?\s*"
+    r"(?:basic )?(?:lands?|Plains|Island|Swamp|Mountain|Forest|Wastes)\b",
     re.IGNORECASE,
 )
-_DRAW = re.compile(r"\bdraws?\s+(?:a\s+card|one|two|three|four|X|\d+)\b", re.IGNORECASE)
+_DRAW = re.compile(
+    r"\bdraws?\s+(?:a\s+card|one|two|three|four|five|six|seven|eight|nine|ten|X|\d+)\b",
+    re.IGNORECASE,
+)
+#: "Whenever an opponent draws a card" is not card draw for us. Masked out before
+#: _DRAW runs, so Smothering Tithe counts as ramp only.
+_OPPONENT_DRAW = re.compile(
+    r"\bopponents?\s+draws?\s+(?:a\s+card|\w+\s+cards?)", re.IGNORECASE
+)
+#: Bounce is removal. "owner's hand" is what separates it from graveyard
+#: recursion, which returns to "your hand".
 _SPOT_REMOVAL = re.compile(
-    r"(destroy|exile|counter)\s+target\s+(?!spell\b)|"
-    r"target\s+(creature|permanent|player)\s+(?:gets|sacrifices)",
+    r"(destroy|exile)\s+target\b|"
+    r"target\s+(creature|permanent|player)\s+(?:gets|sacrifices)|"
+    r"return target .{0,60}?to (?:its|their) owner'?s hand",
     re.IGNORECASE,
 )
+#: Not every wipe says "destroy". Blasphemous Act deals damage to each creature;
+#: Toxic Deluge gives all creatures -X/-X.
 _SWEEPER = re.compile(
     r"(destroy|exile)\s+(all|each|every)\b|"
-    r"each player sacrifices",
+    r"each player sacrifices|"
+    r"deals \S+ damage to each (?:creature|other creature)|"
+    r"all creatures get -",
     re.IGNORECASE,
 )
 _MASS_LAND_DENIAL = re.compile(
@@ -1894,7 +1977,10 @@ _MASS_LAND_DENIAL = re.compile(
     r"each player sacrifices\s+(?:a|an|all|X|\d+)?\s*lands?\b",
     re.IGNORECASE,
 )
-_COUNTERSPELL = re.compile(r"counter target (spell|ability)", re.IGNORECASE)
+#: Real counterspells rarely read "counter target spell": Swan Song says
+#: "Counter target enchantment, instant, or sorcery spell", Dovin's Veto says
+#: "noncreature spell". A window between "target" and "spell" catches them.
+_COUNTERSPELL = re.compile(r"counter target\b.{0,60}?\b(?:spell|ability)\b", re.IGNORECASE)
 _PROTECTION = re.compile(
     r"\bhexproof\b|\bindestructible\b|protection from|\bphases? out\b|"
     r"\bshroud\b|can't be countered|sacrifice .{0,30}\binstead\b",
@@ -1923,7 +2009,7 @@ def classify(card: Card) -> frozenset[Function]:
         tags.add(F.RAMP)
     if _SEARCH_LIBRARY.search(text) and not _LAND_SEARCH.search(text):
         tags.add(F.TUTOR)
-    if _DRAW.search(text):
+    if _DRAW.search(_OPPONENT_DRAW.sub(" ", text)):
         tags.add(F.DRAW)
     if _COUNTERSPELL.search(text):
         tags.add(F.COUNTERSPELL)
@@ -1931,7 +2017,12 @@ def classify(card: Card) -> frozenset[Function]:
         tags.add(F.MASS_LAND_DENIAL)
     if _SWEEPER.search(text) and F.MASS_LAND_DENIAL not in tags:
         tags.add(F.SWEEPER)
-    if _SPOT_REMOVAL.search(text) and F.SWEEPER not in tags:
+    # A counterspell is its own category, never spot removal.
+    if (
+        _SPOT_REMOVAL.search(text)
+        and F.SWEEPER not in tags
+        and F.COUNTERSPELL not in tags
+    ):
         tags.add(F.SPOT_REMOVAL)
     if _PROTECTION.search(text) or _has_protection_keyword(card):
         tags.add(F.PROTECTION)
@@ -1974,7 +2065,7 @@ def classify_deck(deck: ResolvedDeck) -> dict[str, frozenset[Function]]:
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `python3 -m pytest tests/test_classify.py -v`
-Expected: PASS, 23 tests.
+Expected: PASS, 35 tests (23 named + 12 parametrized real staples).
 
 If `test_treasure_maker_is_ramp` and `test_produced_mana_alone_does_not_make_ramp` cannot both pass, the Treasure clause in `_ADDS_MANA` is matching too broadly or too narrowly — adjust that clause only, and do not fall back to keying on `produced_mana`, which is the bug both tests exist to prevent.
 
@@ -3254,7 +3345,7 @@ Expected: PASS, 11 tests.
 - [ ] **Step 6: Run the whole suite**
 
 Run: `python3 -m pytest -v`
-Expected: PASS, 115 tests across 8 files.
+Expected: PASS, 127 tests across 8 files.
 
 - [ ] **Step 7: Verify against the live API**
 
@@ -3602,7 +3693,7 @@ Expected: `SKILL.md frontmatter ok`
 - [ ] **Step 6: Run the full suite one more time**
 
 Run: `python3 -m pytest`
-Expected: PASS, 115 tests.
+Expected: PASS, 127 tests.
 
 - [ ] **Step 7: Commit**
 
