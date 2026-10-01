@@ -2244,6 +2244,33 @@ def test_generic_and_x_costs_are_not_pips():
     assert audit(deck).pips == ()
 
 
+def test_colorless_and_snow_symbols_are_not_pips():
+    deck = build([(36, FOREST),
+                  (1, card("Rock", "Artifact", mv=2.0, cost="{C}{C}", identity="")),
+                  (1, card("Snowy", "Artifact", mv=2.0, cost="{2}{S}", identity=""))])
+    assert audit(deck).pips == ()
+
+
+@pytest.mark.parametrize(
+    "cost,color,expected_max_pips",
+    [
+        ("{2}{G/W}", "G", 1),
+        ("{2}{G/W}", "W", 1),
+        ("{G/P}", "G", 1),
+        # Monocolored hybrid: the left side is generic. Reporting zero pips here
+        # would understate the deck's need for white sources.
+        ("{2/W}{2/W}{2/W}", "W", 3),
+        ("{2/B}{2/B}{2/B}", "B", 3),
+    ],
+    ids=["hybrid-G", "hybrid-W", "phyrexian", "spectral-procession", "beseech"],
+)
+def test_hybrid_and_monocolored_hybrid_pips_are_counted(cost, color, expected_max_pips):
+    identity = "".join(sorted({c for c in cost if c in "WUBRG"}))
+    deck = build([(36, FOREST), (1, card("Hybrid Card", cost=cost, mv=3.0, identity=identity))])
+    report = next(p for p in audit(deck).pips if p.color == color)
+    assert report.max_pips == expected_max_pips
+
+
 def test_audit_accepts_precomputed_tags():
     deck = build([(36, FOREST), (1, SOL_RING)])
     tags = {"Forest": frozenset({F.LAND}), "Sol Ring": frozenset({F.DRAW})}
@@ -2347,10 +2374,12 @@ F = Function
 #: because they place no demand on the mana base's colors.
 _PIP_RE = re.compile(r"\{([WUBRG])\}")
 
-#: Hybrid and phyrexian symbols, e.g. {G/W} or {G/P}. Each half counts as a
-#: source demand, but only one of them is needed, so they are counted as a
-#: half-strength requirement by attributing the pip to every listed color.
-_HYBRID_RE = re.compile(r"\{([WUBRG])/([WUBRGP])\}")
+#: Hybrid, phyrexian, and monocolored-hybrid symbols: {G/W}, {G/P}, {2/W}.
+#: The left side may be generic, as on Spectral Procession's {2/W} — requiring a
+#: color there reports zero pips for such a card and silently understates the
+#: deck's color needs. Every listed color gets the pip, which overstates demand
+#: slightly for hybrids; that is the safe direction to be wrong in.
+_HYBRID_RE = re.compile(r"\{(?:([WUBRG])|\d+)/([WUBRGP])\}")
 
 #: Mana values above this are grouped into one bucket.
 CURVE_TOP_BUCKET = 7
@@ -2488,7 +2517,8 @@ def _count_pips(mana_cost: str) -> dict[str, int]:
         pips[color] = pips.get(color, 0) + 1
     for left, right in _HYBRID_RE.findall(mana_cost):
         for color in (left, right):
-            if color in "WUBRG":
+            # `left` is empty when the symbol is a monocolored hybrid like {2/W}.
+            if color and color in "WUBRG":
                 pips[color] = pips.get(color, 0) + 1
     return pips
 
@@ -2533,7 +2563,7 @@ def _sources_for(deck: ResolvedDeck, tags: dict[str, frozenset[Function]], color
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `python3 -m pytest tests/test_audit.py -v`
-Expected: PASS, 15 tests.
+Expected: PASS, 21 tests (16 named + 5 parametrized hybrid cases).
 
 - [ ] **Step 6: Commit**
 
@@ -3345,7 +3375,7 @@ Expected: PASS, 11 tests.
 - [ ] **Step 6: Run the whole suite**
 
 Run: `python3 -m pytest -v`
-Expected: PASS, 127 tests across 8 files.
+Expected: PASS, 133 tests across 8 files.
 
 - [ ] **Step 7: Verify against the live API**
 
@@ -3693,7 +3723,7 @@ Expected: `SKILL.md frontmatter ok`
 - [ ] **Step 6: Run the full suite one more time**
 
 Run: `python3 -m pytest`
-Expected: PASS, 127 tests.
+Expected: PASS, 133 tests.
 
 - [ ] **Step 7: Commit**
 
