@@ -137,8 +137,79 @@ _EXTRA_TURNS = re.compile(r"takes?\s+\w+\s+extra\s+turns?", re.IGNORECASE)
 #: "you lose the game" is a drawback (Demonic Pact, Pact of Negation), not a
 #: win condition. "Target player loses the game" still counts.
 _WINCON = re.compile(r"\bwins? the game\b|(?<!you )\bloses? the game\b", re.IGNORECASE)
+#: Recursion: getting a card out of a graveyard and using it again.
+#:
+#: Six templatings, because Magic writes this six ways and the first version of
+#: this pattern read only one of them — `return ... from ... graveyard`. It
+#: therefore missed the entire reanimation archetype: Reanimate, Animate Dead,
+#: Victimize, Necromancy and Rise of the Dark Realms all came back `synergy`, so
+#: a reanimator deck reported almost no recursion. The recursion band is a
+#: headline number in the audit, and it was wrong for exactly the decks that
+#: care about it most.
+#:
+#: The false positive this invites is graveyard HATE, which reads almost
+#: identically to a regex and means the opposite thing. Scavenging Ooze,
+#: Withered Wretch, Soul-Guide Lantern, Faerie Macabre, Relic of Progenitus,
+#: Rest in Peace, Leyline of the Void and Planar Void all talk about cards and
+#: graveyards in the same breath. Every branch below therefore requires a
+#: RECOVERY action — something returned, put onto the battlefield, cast, played,
+#: or granted castability — and "exile from a graveyard" on its own never
+#: matches. Both directions are tested.
+#:
+#: Branch 3's `this card` exclusion is what keeps flashback off the list.
+#: Lingering Souls, Call of the Herd and Deep Analysis say "you may cast THIS
+#: CARD from your graveyard", which recurs only themselves and is a value
+#: rider, not the deck's recursion package. Scryfall Tagger agrees on all three.
+#: It costs us self-escape cards (Uro), which Tagger does call recursion; that
+#: is a deliberate, named disagreement rather than an oversight.
 _RECURSION = re.compile(
-    r"return .{0,60}from (?:your|a|target player's) graveyard", re.IGNORECASE
+    # 1. "Return/Put <card> FROM a graveyard TO/ONTO <zone>". Regrowth, Eternal
+    #    Witness, Reanimate, Persist, Sun Titan, Karmic Guide, Reveillark,
+    #    Unburial Rites, Goryo's Vengeance, Rise of the Dark Realms, Noxious
+    #    Revival, Twilight's Call, Patriarch's Bidding.
+    #
+    #    "from" must PRECEDE the graveyard. That ordering is the whole guard
+    #    against the hate templating "put into a graveyard from anywhere, exile
+    #    it instead" (Rest in Peace, Leyline of the Void, Planar Void), where
+    #    the graveyard comes first and nothing is recovered.
+    r"(?:returns?|puts?)\s[^.]{0,80}?\bfrom\s[^.]{0,30}?graveyards?\b"
+    r"[^.]{0,60}?\b(?:to|onto|on top of)\b"
+    r"|"
+    # 2. "<card> IN a graveyard ... return/put/cast". The choose-then-act
+    #    family, whose two halves sit in different sentences: Victimize, Meren
+    #    of Clan Nel Toth, Command the Dreadhorde, Snapcaster Mage, Emry, and
+    #    the Aura reanimators (Animate Dead, Dance of the Dead).
+    #
+    #    `in\s` rather than `in` is deliberate: it refuses to match "put INTO a
+    #    graveyard", which is how every hate card and every self-mill trigger is
+    #    worded. The window crosses sentences but not lines.
+    r"\bcards?\b[^.]{0,40}?\bin\s+(?:your\s|a\s|an\s|their\s|all\s|each\s|target\s)?"
+    r"(?:opponent's\s|player's\s)?graveyards?\b.{0,160}?\b(?:returns?|puts?|cast)\b"
+    r"|"
+    # 3. "cast/play <something other than this card> from your graveyard". The
+    #    graveyard-as-second-hand engines: Yawgmoth's Will, Crucible of Worlds,
+    #    Ramunap Excavator, Muldrotha, Chainer, Underworld Breach.
+    r"\b(?:cast|play)\b(?![^.]{0,12}?\bthis card\b)[^.]{0,60}?"
+    r"\bfrom\s(?:your|a|their|the|that player's)\s+graveyard"
+    r"|"
+    # 4. Granting castability to cards already in a graveyard, rather than
+    #    moving them: Past in Flames, Snapcaster Mage.
+    r"\b(?:cards?|spells?)\b[^.]{0,40}?\bin\s+(?:your|a|all)\s*graveyards?\b"
+    r"[^.]{0,80}?\bgains?\b[^.]{0,40}?\b(?:flashback|flash|escape|retrace)\b"
+    r"|"
+    # 5. Exile from a graveyard and then put it onto the battlefield, within one
+    #    sentence: Living Death. The same-sentence bound is what stops this
+    #    branch from swallowing hate that only exiles.
+    r"\bexiles?\b[^.]{0,80}?\bfrom\s[^.]{0,30}?graveyards?\b"
+    r"[^.]{0,140}?\bonto the battlefield\b"
+    r"|"
+    # 6. Searching a graveyard and putting what you find into play: Finale of
+    #    Devastation. The graveyard must precede the put, which excludes
+    #    "search your library ... and put them INTO your graveyard" (Buried
+    #    Alive, Entomb) — filling a graveyard is not emptying one.
+    r"\bsearch\b[^.]{0,60}?\bgraveyards?\b[^.]{0,80}?\bput\b"
+    r"[^.]{0,40}?\b(?:onto the battlefield|into your hand)\b",
+    re.IGNORECASE,
 )
 
 
