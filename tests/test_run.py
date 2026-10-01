@@ -105,6 +105,16 @@ def test_unmodeled_cards_are_named():
     assert report["notes"]["unmodeled"] == ["Proliferator"]
 
 
+def test_goal_warns_when_no_card_can_carry_a_counted_tag():
+    report = simulate(deck(BEAR), {"archetype": "spellslinger"}, games=2)
+    warnings = report["notes"]["goal_warnings"]
+    assert len(warnings) == 1 and "'payoff'" in warnings[0] and warnings[0].startswith("thing")
+
+
+def test_goal_warnings_empty_when_every_tag_can_be_carried():
+    assert simulate(deck(BEAR), GO_WIDE, games=2)["notes"]["goal_warnings"] == []
+
+
 def test_games_must_be_positive():
     with pytest.raises(ValueError):
         simulate(deck(), GO_WIDE, games=0)

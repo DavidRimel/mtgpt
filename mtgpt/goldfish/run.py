@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+from ..goal import ENGINE_TAGS, Condition
 from ..models import ResolvedDeck
 from .engine import DEFAULT_TURN_CAP, GameState, Setup, apply, new_game, prepare
 from .policy import choose
@@ -68,9 +69,46 @@ def summarize(setup: Setup, states: list[GameState], *, seed, turn_cap: int,
         "notes": {
             "unmodeled": sorted({c.name for c in setup.cards if c.unmodeled}
                                 - {name for name, _ in goal.engine}),
+            "goal_warnings": goal_warnings(setup),
             "goldfish": GOLDFISH_NOTE,
         },
     }
+
+
+def goal_warnings(setup: Setup) -> list[str]:
+    """A `count` in thing or win whose tag no card in the deck can carry: that
+    condition can never hold, which reads as a bad deck rather than a bad goal."""
+    goal = setup.goal
+    out = []
+    for field, cond in (("thing", goal.thing), ("win", goal.win)):
+        for tag in _count_tags(cond):
+            if tag == "creature" or _deck_can_carry(setup, tag):
+                continue
+            if tag in ENGINE_TAGS:
+                fix = "add an engine override"
+            elif tag == "equipment_aura":
+                fix = "the deck has no Equipment or Aura"
+            else:
+                fix = "no card is classified that way"
+            warning = f"{field} counts '{tag}' but no card in the deck has that tag — {fix}"
+            if warning not in out:
+                out.append(warning)
+    return out
+
+
+def _count_tags(cond: Condition) -> list[str]:
+    tags = [cond.key] if cond.kind == "count" else []
+    for child in cond.children:
+        tags += _count_tags(child)
+    return tags
+
+
+def _deck_can_carry(setup: Setup, tag: str) -> bool:
+    if tag in ENGINE_TAGS:
+        return any(spec.has_tag(tag) for _, spec in setup.goal.engine)
+    if tag == "equipment_aura":
+        return any(t in c.type_line for c in setup.cards for t in ("Equipment", "Aura"))
+    return any(tag in c.functions for c in setup.cards)
 
 
 def _setup_block(states, turn_cap):
