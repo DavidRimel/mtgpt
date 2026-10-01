@@ -74,12 +74,20 @@ def summarize(setup: Setup, states: list[GameState], *, seed, turn_cap: int,
 
 
 def _setup_block(states, turn_cap):
+    """Report setup phase statistics.
+
+    mana_by_turn and lands_by_turn average over games that survived to each turn
+    (see games_by_turn for the survival count by turn).
+    pre_commander_mana_spent_on covers only turns strictly before the commander's
+    first cast.
+    """
     games = len(states)
-    mana_by_turn, lands_by_turn = [], []
+    mana_by_turn, lands_by_turn, games_by_turn = [], [], []
     for turn in range(1, turn_cap + 1):
         rows = [t for s in states for t in s.per_turn if t["turn"] == turn]
         mana_by_turn.append(_mean([r["mana"] for r in rows]))
         lands_by_turn.append(_mean([r["lands"] for r in rows]))
+        games_by_turn.append(len(rows))
     spent = Counter()
     for s in states:
         spent.update(s.pre_commander)
@@ -89,6 +97,7 @@ def _setup_block(states, turn_cap):
     return {
         "mana_by_turn": mana_by_turn,
         "lands_by_turn": lands_by_turn,
+        "games_by_turn": games_by_turn,
         "pre_commander_mana_spent_on": {
             k: _ratio(spent[k], total) for k in ("ramp", "engine", "other", "unspent")},
         "mulligan_rate": _ratio(sum(1 for s in states if s.mulligans), games),
@@ -186,15 +195,67 @@ def _ratio(n, total):
 
 
 def _delta(a, b):
-    """after - before for every number both reports share; nested dicts recurse."""
+    """Compare two reports, returning each metric's before, after, and difference.
+
+    - For dicts: iterate union of keys, treating missing keys as 0 for numbers.
+    - For numbers: after - before (rounded to 4 places).
+    - For lists: diff elementwise.
+    - If exactly one side is None and the other a number, delta is None (visible change).
+    - Exclude bools and the keys 'seed', 'games', 'turn_cap'.
+    """
     out = {}
-    for key, before in a.items():
+    all_keys = set(a.keys()) | set(b.keys())
+
+    for key in all_keys:
+        if key in ("seed", "games", "turn_cap"):
+            continue
+
+        before = a.get(key)
         after = b.get(key)
+        before_exists = key in a
+        after_exists = key in b
+
+        # Both dicts: recurse
         if isinstance(before, dict) and isinstance(after, dict):
             nested = _delta(before, after)
             if nested:
                 out[key] = nested
-        elif (isinstance(before, (int, float)) and isinstance(after, (int, float))
-              and not isinstance(before, bool) and key not in ("seed", "games", "turn_cap")):
+        # Both lists: elementwise diff
+        elif isinstance(before, list) and isinstance(after, list):
+            out[key] = [_diff_pair(bv, av) for bv, av in zip(before, after)]
+        # Both numeric (not bool)
+        elif _is_numeric(before) and _is_numeric(after):
             out[key] = round(after - before, 4)
+        # Both keys exist: handle None values
+        elif before_exists and after_exists:
+            # One is None, the other is numeric
+            if (before is None and _is_numeric(after)) or (after is None and _is_numeric(before)):
+                out[key] = None
+            # Both are None
+            elif before is None and after is None:
+                out[key] = None
+        # One key is missing and the other is numeric: treat missing as 0
+        elif not before_exists and _is_numeric(after):
+            out[key] = round(after - 0, 4)
+        elif not after_exists and _is_numeric(before):
+            out[key] = round(0 - before, 4)
+
     return out
+
+
+def _is_numeric(x):
+    """Check if a value is numeric but not boolean."""
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
+def _diff_pair(before, after):
+    """Diff two values in a list elementwise."""
+    if _is_numeric(before) and _is_numeric(after):
+        return round(after - before, 4)
+    # One is None and the other is numeric
+    if (before is None and _is_numeric(after)) or (after is None and _is_numeric(before)):
+        return None
+    # Both None
+    if before is None and after is None:
+        return None
+    return None
