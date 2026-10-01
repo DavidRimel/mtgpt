@@ -168,6 +168,23 @@ class SimEffect:
     opp_draw_cards: int = 0
     #: A Treasure on opponents' draws (Smothering Tithe).
     opp_draw_treasure: bool = False
+    #: A static hoser that stops opponents' win attempts while it is out.
+    stax: bool = False
+    #: Doesn't untap in your untap step (Mana Vault).
+    no_untap: bool = False
+    #: Pact: once spent, pay this at your next upkeep or lose (Pact of Negation).
+    pact_cost: str | None = None
+    #: A tutor that puts the card on top instead of in hand (Vampiric Tutor).
+    tutor_to_top: bool = False
+    #: Enters only by discarding a land from hand (Mox Diamond).
+    discard_land: bool = False
+    #: Exiles a card from hand on entering and taps for its colors (Chrome Mox).
+    imprint: bool = False
+    #: Wins on entering if your devotion to blue covers the library (Thassa's Oracle).
+    thoracle: bool = False
+    #: Exiles the whole library (Demonic Consultation, Tainted Pact naming a
+    #: card not in the deck).
+    exile_library: bool = False
 
     @property
     def is_ramp(self) -> bool:
@@ -190,7 +207,8 @@ class SimEffect:
             or self.landfall_treasure or self.mana_per_color or self.cascade
             or self.grants_cascade_min or self.approach or self.dig_permanents or self.dig_look
             or self.free_spell_per_turn or self.emergent or self.sac_tutor_top
-            or self.opp_draw_cards or self.opp_draw_treasure
+            or self.opp_draw_cards or self.opp_draw_treasure or self.stax or self.imprint
+            or self.thoracle or self.exile_library
         )
 
 
@@ -270,7 +288,10 @@ def effect_of(card: Card, identity: frozenset[str] = _ANY) -> SimEffect:
 
         # Net mana = produced - cost, only count if positive
         net = produced - cost_mana
-        if net > 0:
+        if net > 0 and re.search(r"sacrifice (?:this|~|" + re.escape(card.name) + ")", cost, re.IGNORECASE):
+            # Sacrificed to make mana (Lotus Petal): once, like a Treasure.
+            treasure = max(treasure, net)
+        elif net > 0:
             mana = max(mana, net)
             colors |= produced_colors
 
@@ -279,6 +300,11 @@ def effect_of(card: Card, identity: frozenset[str] = _ANY) -> SimEffect:
     if _REDIRECT.search(text):
         held |= {"protection"}
     extra = _mechanics(card, text)
+    if extra.get("stax") and is_spell:
+        # An instant that stops opponents casting (Silence) answers a win
+        # attempt the way a counterspell does.
+        held |= {"counterspell"}
+        extra.pop("stax")
     if extra.get("sylvan"):
         draw_turn += 1
     extra.pop("sylvan", None)
@@ -493,6 +519,24 @@ def _mechanics(card: Card, text: str) -> dict:
         out["opp_draw_cards"] = _num(m.group(1))
     if re.search(r"whenever an opponent draws a card, .*you create a treasure", t):
         out["opp_draw_treasure"] = True
+    if re.search(r"\b(?:your opponents|each opponent|players|your opponents' spells) can't (?:cast|search|win)", t) \
+            or "spells your opponents cast cost" in t or "your opponents can't" in t and "spells" in t:
+        out["stax"] = True
+    if "if x is greater than or equal to the number of cards in your library, you win the game" in t:
+        out["thoracle"] = True
+    if ("reveal cards from the top of your library until you reveal a card with the chosen name" in t
+            or "repeat this process until you put a card into your hand or you exile two cards with the same name" in t):
+        out["exile_library"] = True
+    if "doesn't untap during your untap step" in t:
+        out["no_untap"] = True
+    if m := re.search(r"at the beginning of your next upkeep, pay ((?:\{[^}]+\})+)\. if you don't, you lose the game", t):
+        out["pact_cost"] = m.group(1).upper()
+    if re.search(r"search your library for [^.]*?(?:then shuffle and )?put (?:that card|it) on top", t):
+        out["tutor_to_top"] = True
+    if "you may discard a land card instead" in t:
+        out["discard_land"] = True
+    if "imprint — when this artifact enters, you may exile a nonartifact, nonland card from your hand" in t:
+        out["imprint"] = True
     if "at the beginning of your draw step, you may draw two additional cards" in t:
         out["sylvan"] = True
     return out

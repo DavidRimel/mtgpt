@@ -171,7 +171,8 @@ it recovers from disruption (`disruption`).
        "Viscera Seer":  {"sac_outlet": true}
      },
      "win": {"any": [{"opponent_life_lost": 120}, {"cast": "Craterhoof Behemoth"}]},
-     "disruption": {"commander_removal": 0.15, "board_wipe": 0.05, "from_turn": 4}
+     "disruption": {"commander_removal": 0.15, "board_wipe": 0.05, "from_turn": 4},
+     "opponent_win": {"from_turn": 5, "answers": ["removal", "counterspell", "stax"]}
    }
    ```
 
@@ -237,6 +238,11 @@ it recovers from disruption (`disruption`).
    For pilot, replay the same `--seed` and `--game` numbers against the new list.
 6. Report the differences and keep or revert the swap. Later iterations
    reuse the user's mode unless they ask to change it.
+
+For a fast table (bracket 4 and up) add `opponent_win`: from that round on an
+opponent tries to win each round, and you lose unless you hold removal or a
+counterspell (spent) or have a stax piece out. Read `opponent_win` and
+`win.win_by_round` in the report.
 
 Drawing from an empty library loses: the report's `loss` block gives the loss
 rate, the rounds, and the reason (`decked`). Enter the Infinite draws the whole

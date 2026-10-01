@@ -413,3 +413,231 @@ def test_new_mechanic_state_round_trips():
     s = apply(s, {"play_land": "Forest"})
     data = to_dict(s)
     assert to_dict(from_dict(json.loads(json.dumps(data)))) == data
+
+
+# --- Opponents' win attempts (fast tables) -------------------------------------
+
+WINNOWER = card("Void Winnower", "Creature — Eldrazi", "Your opponents can't cast spells with even "
+                "mana values. (Zero is even.)\nYour opponents can't block with creatures with even mana "
+                "values.", mana_cost="{9}", power=11.0)
+FAST_TABLE = {"archetype": "custom", "thing": "commander", "win": NEVER,
+              "opponent_win": {"from_turn": 2, "answers": ["removal", "counterspell", "stax"]}}
+
+
+def test_stax_is_parsed():
+    assert effect_of(WINNOWER, WUBRG).stax
+
+
+def test_an_unanswered_win_attempt_loses():
+    s = rigged(lands_in_play=1, goal=FAST_TABLE)
+    s.command_zone = []
+    s = apply(s, PASS)
+    assert s.over and s.loss_by == "opponent_win" and s.checkpoints["loss"] == 2
+
+
+def test_removal_in_hand_answers_and_is_used_up():
+    from simdeck import SWORDS
+    s = rigged(SWORDS, hand=["Swords to Plowshares"], lands_in_play=1, goal=FAST_TABLE)
+    s.command_zone = []
+    s = apply(s, PASS)
+    assert not s.over and "Swords to Plowshares" in names(s, s.graveyard)
+    assert s.win_attempts[-1] == {"turn": 2, "stopped": True, "by": "Swords to Plowshares"}
+    s = apply(s, PASS)  # round 3: they try again, nothing left
+    assert s.loss_by == "opponent_win"
+
+
+def test_a_stax_piece_on_the_battlefield_stops_every_attempt():
+    s = rigged(WINNOWER, on_board=["Void Winnower"], lands_in_play=1, goal=FAST_TABLE)
+    s.command_zone = []
+    for _ in range(3):
+        s = apply(s, PASS)
+    assert not s.over and all(a["by"] == "Void Winnower" for a in s.win_attempts)
+
+
+def test_protection_does_not_answer_a_win_attempt():
+    from simdeck import TEFERIS_PROTECTION
+    s = rigged(TEFERIS_PROTECTION, hand=["Teferi's Protection"], lands_in_play=1, goal=FAST_TABLE)
+    s.command_zone = []
+    s = apply(s, PASS)
+    assert s.loss_by == "opponent_win"
+
+
+def test_answer_kinds_are_configurable():
+    from simdeck import COUNTERSPELL
+    goal = {**FAST_TABLE, "opponent_win": {"from_turn": 2, "answers": ["removal"]}}
+    s = rigged(COUNTERSPELL, hand=["Counterspell"], lands_in_play=1, goal=goal)
+    s.command_zone = []
+    s = apply(s, PASS)
+    assert s.loss_by == "opponent_win"
+
+
+def test_report_has_opponent_win_and_win_by_round():
+    from mtgpt.goldfish.run import simulate
+    from simdeck import deck
+    r = simulate(deck(), {**FAST_TABLE, "opponent_win": {"from_turn": 5}}, games=10)
+    assert r["opponent_win"]["attempts"] == 10 and r["opponent_win"]["answered_rate"] == 0.0
+    assert r["loss"]["by_reason"] == {"opponent_win": 1.0}
+    assert r["win"]["win_by_round"] == [0.0] * 10
+
+
+# --- Fast mana and free interaction (bracket 4) -------------------------------
+
+VAULT = card("Mana Vault", "Artifact", "This artifact doesn't untap during your untap step.\nAt the "
+             "beginning of your upkeep, you may pay {4}. If you do, untap this artifact.\nAt the beginning "
+             "of your draw step, if this artifact is tapped, it deals 1 damage to you.\n{T}: Add {C}{C}{C}.",
+             mana_cost="{1}", colors="")
+PACT = card("Pact of Negation", "Instant", "Counter target spell.\nAt the beginning of your next upkeep, "
+            "pay {3}{U}{U}. If you don't, you lose the game.", mana_cost="{0}", colors="U")
+VAMPIRIC = card("Vampiric Tutor", "Instant", "Search your library for a card, then shuffle and put that "
+                "card on top. You lose 2 life.", mana_cost="{B}", colors="B")
+DIAMOND = card("Mox Diamond", "Artifact", "If this artifact would enter, you may discard a land card "
+               "instead. If you do, put this artifact onto the battlefield. If you don't, put it into its "
+               "owner's graveyard.\n{T}: Add one mana of any color.", mana_cost="{0}", colors="")
+CHROME = card("Chrome Mox", "Artifact", "Imprint — When this artifact enters, you may exile a nonartifact, "
+              "nonland card from your hand.\n{T}: Add one mana of any of the exiled card's colors.",
+              mana_cost="{0}", colors="")
+RED_SPELL = card("Red Spell", "Sorcery", "", mana_cost="{3}{R}", colors="R", identity="R")
+
+
+def test_mana_vault_does_not_untap():
+    assert effect_of(VAULT, WUBRG).no_untap
+    s = rigged(source=five_color(VAULT), land="Prism Land", on_board=["Mana Vault"])
+    s.command_zone = []
+    assert available_mana(s) == 3
+    s.battlefield[0].tapped = True
+    s = apply(s, PASS)
+    assert available_mana(s) == 0  # still tapped next turn
+
+
+def test_a_spent_pact_must_be_paid_next_upkeep_or_you_lose():
+    goal = {"archetype": "custom", "thing": "commander", "win": NEVER,
+            "opponent_win": {"from_turn": 2}}
+    s = rigged(source=five_color(PACT), land="Prism Land", hand=["Pact of Negation"], lands_in_play=2,
+               goal=goal)
+    s.command_zone = []
+    s = apply(s, PASS)  # round 2: Pact answers the attempt; the upkeep trigger is due now
+    assert s.loss_by == "pact"  # two lands cannot pay {3}{U}{U}
+    s = rigged(source=five_color(PACT), land="Prism Land", hand=["Pact of Negation"], lands_in_play=5,
+               goal=goal)
+    s.command_zone = []
+    s = apply(s, PASS)
+    assert not s.over and available_mana(s) == 0  # paid with all five lands
+
+
+def test_vampiric_tutor_puts_the_card_on_top():
+    assert effect_of(VAMPIRIC, WUBRG).tutor_to_top
+    s = rigged(source=five_color(VAMPIRIC, BIG), land="Prism Land", hand=["Vampiric Tutor"],
+               lands_in_play=1)
+    s.command_zone = []
+    s = apply(apply(s, {"cast": "Vampiric Tutor"}), {"tutor": "Big Spell"})
+    assert s.cards[s.library[0]].name == "Big Spell" and "Big Spell" not in names(s, s.hand)
+
+
+def test_mox_diamond_needs_a_land_to_discard():
+    assert effect_of(DIAMOND, WUBRG).discard_land
+    s = rigged(source=five_color(DIAMOND), land="Prism Land", hand=["Mox Diamond"])
+    s.command_zone = []
+    assert {"cast": "Mox Diamond"} not in legal_actions(s)
+    s = rigged(source=five_color(DIAMOND), land="Prism Land", hand=["Mox Diamond", "Prism Land"])
+    s.command_zone = []
+    s = apply(s, {"cast": "Mox Diamond"})
+    assert "Prism Land" in names(s, s.graveyard) and available_mana(s) == 1
+
+
+def test_chrome_mox_imprints_a_card_and_taps_for_its_colors():
+    assert effect_of(CHROME, WUBRG).imprint
+    s = rigged(source=five_color(CHROME, RED_SPELL), land="Prism Land", hand=["Chrome Mox", "Red Spell"])
+    s.command_zone = []
+    s = apply(s, {"cast": "Chrome Mox"})
+    assert "Red Spell" not in names(s, s.hand)
+    assert [sorted(u.colors) for u in __import__("mtgpt.goldfish.engine", fromlist=["_units"])._units(s)] == [["R"]]
+    s2 = rigged(source=five_color(CHROME), land="Prism Land", hand=["Chrome Mox"])
+    s2.command_zone = []
+    s2 = apply(s2, {"cast": "Chrome Mox"})
+    assert available_mana(s2) == 0  # nothing to imprint
+
+
+def test_disruption_spends_pure_protection_before_a_win_attempt_answer():
+    from simdeck import TEFERIS_PROTECTION
+    charm = card("Boros Charm", "Instant", "Choose one —\n• Boros Charm deals 4 damage to target player or "
+                 "planeswalker.\n• Permanents you control gain indestructible until end of turn.\n• Target "
+                 "creature gains double strike until end of turn.", mana_cost="{R}{W}")
+    goal = {"archetype": "custom", "thing": "commander", "win": NEVER,
+            "disruption": {"commander_removal": 1.0, "from_turn": 1}, "opponent_win": {"from_turn": 9}}
+    s = rigged(TEFERIS_PROTECTION, charm, hand=["Boros Charm", "Teferi's Protection"], lands_in_play=1,
+               commander_out=True, goal=goal)
+    s = apply(s, PASS)
+    assert "Teferi's Protection" in names(s, s.graveyard) and "Boros Charm" in names(s, s.hand)
+
+
+def test_imprint_never_takes_an_answer():
+    from simdeck import COUNTERSPELL
+    green = card("Green Thing", "Creature — Elf", "", mana_cost="{3}{G}", power=3.0, colors="G")
+    s = rigged(source=five_color(CHROME, COUNTERSPELL, green), land="Prism Land",
+               hand=["Chrome Mox", "Counterspell", "Green Thing"])
+    s.command_zone = []
+    s = apply(s, {"cast": "Chrome Mox"})
+    assert "Counterspell" in names(s, s.hand) and "Green Thing" not in names(s, s.hand)
+
+
+def test_a_wipe_spares_an_imprinted_mox():
+    goal = {"archetype": "custom", "thing": "commander", "win": NEVER,
+            "disruption": {"board_wipe": 1.0, "from_turn": 1}}
+    s = rigged(source=five_color(CHROME, RED_SPELL), land="Prism Land", hand=["Chrome Mox", "Red Spell"],
+               goal=goal)
+    s.command_zone = []
+    s = apply(apply(s, {"cast": "Chrome Mox"}), PASS)
+    assert "Chrome Mox" in [p.name for p in s.battlefield]
+
+
+# --- Thassa's Oracle lines ---------------------------------------------------
+
+ORACLE_T = card("Thassa's Oracle", "Creature — Merfolk Wizard", "When Thassa's Oracle enters, look at the "
+                "top X cards of your library, where X is your devotion to blue. Put up to one of them on top "
+                "of your library and the rest on the bottom of your library in a random order. If X is "
+                "greater than or equal to the number of cards in your library, you win the game.",
+                mana_cost="{U}{U}", power=1.0, colors="U")
+CONSULT = card("Demonic Consultation", "Instant", "Choose a card name. Exile the top six cards of your "
+               "library, then reveal cards from the top of your library until you reveal a card with the "
+               "chosen name. Put that card into your hand and exile all other cards revealed this way.",
+               mana_cost="{B}", colors="B")
+TAINTED = card("Tainted Pact", "Instant", "Exile the top card of your library. You may put that card into "
+               "your hand unless it has the same name as another card exiled this way. Repeat this process "
+               "until you put a card into your hand or you exile two cards with the same name, whichever "
+               "comes first.", mana_cost="{1}{B}", colors="B")
+
+
+def test_oracle_and_consultation_parse():
+    assert effect_of(ORACLE_T, WUBRG).thoracle
+    assert effect_of(CONSULT, WUBRG).exile_library
+    assert effect_of(TAINTED, WUBRG).exile_library
+
+
+def test_consultation_then_oracle_wins():
+    s = rigged(source=five_color(ORACLE_T, CONSULT), land="Prism Land", lands_in_play=3,
+               hand=["Thassa's Oracle", "Demonic Consultation"])
+    s.command_zone = []
+    from mtgpt.goldfish.policy import choose
+    s = apply(s, choose(s))  # Consultation: the look-ahead sees the win
+    assert s.library == []
+    s = apply(s, choose(s))  # Oracle
+    s = apply(s, {"pass": True})
+    assert s.over and s.win_by == "won:Thassa's Oracle"
+
+
+def test_oracle_and_consultation_are_held_with_a_full_library():
+    from mtgpt.goldfish.policy import choose
+    s = rigged(source=five_color(ORACLE_T, CONSULT), land="Prism Land", lands_in_play=1,
+               hand=["Thassa's Oracle", "Demonic Consultation"])
+    s.command_zone = []
+    assert choose(s) == {"pass": True}  # one mana: Consultation alone would only exile the library
+
+
+def test_pact_is_the_last_answer_spent():
+    goal = {"archetype": "custom", "thing": "commander", "win": NEVER, "opponent_win": {"from_turn": 2}}
+    from simdeck import COUNTERSPELL
+    s = rigged(source=five_color(PACT, COUNTERSPELL), land="Prism Land", lands_in_play=1,
+               hand=["Pact of Negation", "Counterspell"], goal=goal)
+    s.command_zone = []
+    s = apply(s, PASS)
+    assert s.win_attempts[-1]["by"] == "Counterspell" and "Pact of Negation" in names(s, s.hand)

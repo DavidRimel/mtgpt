@@ -6,6 +6,11 @@
       "note": "sweeper held as interaction in hand; spent by the disruption model; no target in a goldfish",
       "reviewed": "2026-10-01"
     },
+    "An Offer You Can't Refuse": {
+      "status": "parsed",
+      "note": "1-mana counter for a noncreature spell, held as an answer; the opponent's Treasures don't matter in a goldfish",
+      "reviewed": "2026-10-01"
+    },
     "Anguished Unmaking": {
       "status": "parsed",
       "note": "removal held as interaction in hand; spent by the disruption model; no target in a goldfish",
@@ -61,6 +66,11 @@
       "note": "5 mana, all your mana any color; its {5},{T} draw ability is not modeled",
       "reviewed": "2026-10-01"
     },
+    "Chrome Mox": {
+      "status": "parsed",
+      "note": "imprints the least needed colored card; taps for its colors",
+      "reviewed": "2026-10-01"
+    },
     "Conflux": {
       "status": "parsed",
       "note": "five tutors (the one-of-each-color constraint is approximated)",
@@ -81,9 +91,33 @@
       "note": "removal/sweeper held as interaction in hand; spent by the disruption model; no target in a goldfish",
       "reviewed": "2026-10-01"
     },
+    "Deadly Rollick": {
+      "status": "parsed",
+      "note": "free removal with a commander out; held as an answer",
+      "reviewed": "2026-10-01"
+    },
     "Deflecting Swat": {
       "status": "parsed",
       "note": "free redirect: protection",
+      "reviewed": "2026-10-01"
+    },
+    "Delighted Halfling": {
+      "status": "override",
+      "note": "dork, any color; its 'can't be countered' clause is not protection",
+      "reviewed": "2026-10-01",
+      "rule": {
+        "mana": 1,
+        "mana_colors": "WUBRG"
+      }
+    },
+    "Demonic Consultation": {
+      "status": "parsed",
+      "note": "exiles the library (naming a card not in the deck); cast only when the look-ahead wins (Oracle)",
+      "reviewed": "2026-10-01"
+    },
+    "Demonic Tutor": {
+      "status": "parsed",
+      "note": "tutor: any card",
       "reviewed": "2026-10-01"
     },
     "Diabolic Tutor": {
@@ -94,6 +128,11 @@
     "Dig Through Time": {
       "status": "parsed",
       "note": "best 2 of the top 7, with delve",
+      "reviewed": "2026-10-01"
+    },
+    "Dovin's Veto": {
+      "status": "parsed",
+      "note": "uncounterable counter for a noncreature spell; held as an answer",
       "reviewed": "2026-10-01"
     },
     "Dryad of the Ilysian Grove": {
@@ -109,6 +148,11 @@
     "Emergent Ultimatum": {
       "status": "parsed",
       "note": "finds 3 monocolored cards; opponents shuffle back the best one; the other two are cast free",
+      "reviewed": "2026-10-01"
+    },
+    "Enlightened Tutor": {
+      "status": "parsed",
+      "note": "tutor: artifact or enchantment, to the top",
       "reviewed": "2026-10-01"
     },
     "Enter the Infinite": {
@@ -131,6 +175,11 @@
       "note": "MDFC: removal held in hand, or a B land",
       "reviewed": "2026-10-01"
     },
+    "Fierce Guardianship": {
+      "status": "parsed",
+      "note": "free counterspell (noncreature) held as an answer",
+      "reviewed": "2026-10-01"
+    },
     "Fist of Suns": {
       "status": "parsed",
       "note": "alt cost WUBRG, same as Jodah",
@@ -141,9 +190,29 @@
       "note": "free protection that survives a wipe",
       "reviewed": "2026-10-01"
     },
+    "Flusterstorm": {
+      "status": "parsed",
+      "note": "counters an instant or sorcery; held as an answer",
+      "reviewed": "2026-10-01"
+    },
+    "Force of Negation": {
+      "status": "parsed",
+      "note": "free counter (noncreature) on opponents' turns; held as an answer",
+      "reviewed": "2026-10-01"
+    },
+    "Force of Will": {
+      "status": "parsed",
+      "note": "free counterspell held as an answer",
+      "reviewed": "2026-10-01"
+    },
     "Genesis Ultimatum": {
       "status": "parsed",
       "note": "top 5: permanents onto the battlefield, the rest into hand",
+      "reviewed": "2026-10-01"
+    },
+    "Grim Tutor": {
+      "status": "parsed",
+      "note": "tutor: any card; life loss not tracked",
       "reviewed": "2026-10-01"
     },
     "Heroic Intervention": {
@@ -159,6 +228,11 @@
     "Imoti, Celebrant of Bounty": {
       "status": "parsed",
       "note": "cascade; your spells with mana value 6+ gain cascade",
+      "reviewed": "2026-10-01"
+    },
+    "Imperial Seal": {
+      "status": "parsed",
+      "note": "tutor: any card, to the top; life loss not tracked",
       "reviewed": "2026-10-01"
     },
     "In Garruk's Wake": {
@@ -201,9 +275,39 @@
       "note": "landfall: one mana of any color",
       "reviewed": "2026-10-01"
     },
+    "Lotus Petal": {
+      "status": "parsed",
+      "note": "one mana of any color once (sacrificed)",
+      "reviewed": "2026-10-01"
+    },
+    "Mana Drain": {
+      "status": "parsed",
+      "note": "counterspell held as an answer; its mana next turn is not modeled",
+      "reviewed": "2026-10-01"
+    },
+    "Mana Vault": {
+      "status": "parsed",
+      "note": "taps for {C}{C}{C} once; doesn't untap (paying 4 to untap is not modeled)",
+      "reviewed": "2026-10-01"
+    },
+    "Mental Misstep": {
+      "status": "parsed",
+      "note": "counters only mana value 1; held as a counterspell (a weak answer to a win attempt)",
+      "reviewed": "2026-10-01"
+    },
+    "Mox Diamond": {
+      "status": "parsed",
+      "note": "one mana of any color; needs a land to discard",
+      "reviewed": "2026-10-01"
+    },
     "Mystic Confluence": {
       "status": "parsed",
       "note": "counterspell held as interaction in hand; spent by the disruption model; no target in a goldfish; draw modes not used",
+      "reviewed": "2026-10-01"
+    },
+    "Mystical Tutor": {
+      "status": "parsed",
+      "note": "tutor: instant or sorcery, to the top",
       "reviewed": "2026-10-01"
     },
     "Nature's Lore": {
@@ -226,6 +330,11 @@
       "note": "extra land drop; lands from the top of the library",
       "reviewed": "2026-10-01"
     },
+    "Pact of Negation": {
+      "status": "parsed",
+      "note": "free counterspell; once spent, pay {3}{U}{U} next upkeep or lose",
+      "reviewed": "2026-10-01"
+    },
     "Phyrexian Arena": {
       "status": "parsed",
       "note": "one extra card each upkeep; life loss not tracked",
@@ -244,6 +353,11 @@
     "Ruinous Ultimatum": {
       "status": "parsed",
       "note": "one-sided sweeper held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Silence": {
+      "status": "parsed",
+      "note": "opponents can't cast this turn: held as an answer to a win attempt",
       "reviewed": "2026-10-01"
     },
     "Sink into Stupor // Soporific Springs": {
@@ -291,9 +405,19 @@
       "note": "one extra card a turn (paying 4 life once); life not tracked",
       "reviewed": "2026-10-01"
     },
+    "Tainted Pact": {
+      "status": "parsed",
+      "note": "exiles the library in a singleton deck without basics; cast only when the look-ahead wins (Oracle)",
+      "reviewed": "2026-10-01"
+    },
     "Tamiyo's Safekeeping": {
       "status": "parsed",
       "note": "protection that survives a wipe",
+      "reviewed": "2026-10-01"
+    },
+    "Thassa's Oracle": {
+      "status": "parsed",
+      "note": "wins on entering if devotion to blue >= library size; cast only when it wins",
       "reviewed": "2026-10-01"
     },
     "Three Visits": {
@@ -319,6 +443,16 @@
     "Unite the Coalition": {
       "status": "parsed",
       "note": "protection/removal held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Vampiric Tutor": {
+      "status": "parsed",
+      "note": "tutor: any card, to the top; life loss not tracked",
+      "reviewed": "2026-10-01"
+    },
+    "Void Winnower": {
+      "status": "parsed",
+      "note": "stax: opponents can't cast even-mana-value spells; counts as an answer to every win attempt while out (optimistic: odd-cost wins get through)",
       "reviewed": "2026-10-01"
     },
     "Wood Elves": {

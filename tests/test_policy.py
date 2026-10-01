@@ -218,3 +218,45 @@ def test_before_the_curve_turn_ramp_still_comes_first():
     s = rigged(SOL_RING, lands_in_play=5, hand=["Sol Ring"])
     assert s.turn < s.goal.commander_turn
     assert play_out_turn(s)[:2] == ["Sol Ring", "Test Commander"]
+
+
+def test_a_finisher_that_wins_now_is_cast_before_ramp():
+    finisher = card("Finisher", "Sorcery", "", mana_cost="{3}")
+    goal = {"archetype": "custom", "thing": "commander", "win": {"cast": "Finisher"}}
+    s = rigged(SOL_RING, finisher, hand=["Sol Ring", "Finisher"], lands_in_play=3, goal=goal)
+    s.command_zone = []
+    assert choose(s) == {"cast": "Finisher"}  # Sol Ring first would leave 2 mana
+
+
+def test_a_tutor_completes_the_oracle_combo_first():
+    oracle = card("Thassa's Oracle", "Creature — Merfolk Wizard", "If X is greater than or equal to the "
+                  "number of cards in your library, you win the game.", mana_cost="{U}{U}", power=1.0)
+    consult = card("Demonic Consultation", "Instant", "Choose a card name. Reveal cards from the top of "
+                   "your library until you reveal a card with the chosen name.", mana_cost="{B}")
+    finisher = card("Finisher", "Sorcery", "", mana_cost="{9}")
+    goal = {"archetype": "custom", "thing": "commander", "win": {"cast": "Finisher"}}
+    s = rigged(DEMONIC_TUTOR, oracle, consult, finisher, hand=["Demonic Tutor", "Thassa's Oracle"],
+               lands_in_play=2, goal=goal)
+    s.command_zone = []
+    s = apply(s, {"cast": "Demonic Tutor"})
+    assert choose(s) == {"tutor": "Demonic Consultation"}
+
+
+def test_commander_is_held_for_a_same_turn_kill_when_removal_threatens():
+    finisher = card("Finisher", "Sorcery", "", mana_cost="{3}")
+    goal = {"archetype": "custom", "thing": "commander", "win": {"cast": "Finisher"},
+            "disruption": {"commander_removal": 0.2, "from_turn": 1}}
+    s = rigged(finisher, hand=["Finisher", "Forest"], lands_in_play=4, goal=goal)
+    s.turn = s.goal.commander_turn
+    s = apply(s, choose(s))  # land: 5 mana, commander 4 + finisher 3 needs 7
+    assert choose(s) != {"cast": "Test Commander"}
+
+
+def test_commander_is_not_held_without_removal_risk():
+    finisher = card("Finisher", "Sorcery", "", mana_cost="{3}")
+    goal = {"archetype": "custom", "thing": "commander", "win": {"cast": "Finisher"}}
+    s = rigged(finisher, hand=["Finisher", "Forest"], lands_in_play=4, goal=goal)
+    s.turn = s.goal.commander_turn
+    s = apply(s, choose(s))
+    from mtgpt.goldfish.policy import _hold_commander_for_kill
+    assert not _hold_commander_for_kill(s, s.command_zone[0])

@@ -67,6 +67,7 @@ def summarize(setup: Setup, states: list[GameState], *, seed, turn_cap: int,
         "disruption": _disruption_block(states),
         "win": _win_block(states),
         "loss": _loss_block(states),
+        "opponent_win": _opponent_win_block(states),
         "notes": {
             "unmodeled": sorted({c.name for c in setup.cards if c.unmodeled}
                                 - {name for name, _ in goal.engine}),
@@ -205,6 +206,25 @@ def _win_block(states):
         "win_rate": _ratio(len(wins), games),
         "win_turn": _distribution(wins),
         "by_condition": {k: _ratio(v, games) for k, v in sorted(by.items())},
+        "win_by_round": _cumulative(wins, games, max((s.turn_cap for s in states), default=0)),
+    }
+
+
+def _cumulative(turns: list[int], games: int, cap: int) -> list:
+    """Share of games won by the end of each round 1..cap."""
+    return [_ratio(sum(1 for t in turns if t <= r), games) for r in range(1, cap + 1)]
+
+
+def _opponent_win_block(states):
+    """Fast-table win attempts: how often you had an answer, and with what."""
+    attempts = [a for s in states for a in s.win_attempts]
+    stopped = [a for a in attempts if a["stopped"]]
+    by = Counter(a["by"] for a in stopped)
+    return {
+        "attempts": len(attempts),
+        "answered_rate": _ratio(len(stopped), len(attempts)),
+        "lost_to_it_rate": _ratio(sum(1 for s in states if s.loss_by == "opponent_win"), len(states)),
+        "answered_by": dict(by.most_common(10)),
     }
 
 
