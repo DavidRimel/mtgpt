@@ -19,7 +19,7 @@ from __future__ import annotations
 import copy
 import random
 from collections import Counter
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
 from ..classify import classify
 from ..effects import SimEffect, effect_from_dict, effect_of, effect_to_dict, is_unmodeled
@@ -158,6 +158,7 @@ def prepare(deck: ResolvedDeck, goal_raw: dict) -> Setup:
                      commander_mv=min(c.mana_value for c in deck.commanders))
     cards = [_info(c, identity, True) for c in deck.commanders]
     cards += [_info(c, identity, False) for c in deck.iter_cards()]
+    cards = [_overridden(c) if goal.engine_for(c.name) is not None else c for c in cards]
     return Setup(
         cards=tuple(cards),
         commanders=tuple(range(len(deck.commanders))),
@@ -183,6 +184,16 @@ def new_game(setup: Setup, *, seed, turn_cap: int = DEFAULT_TURN_CAP,
     _mulligan(state)
     _begin_turn(state)
     return state
+
+
+def _overridden(info: CardInfo) -> CardInfo:
+    """An engine override replaces the parsed effect: only the card's body
+    (power, equipment bonus) and land face survive, so its text's draw, mana,
+    and interaction no longer apply on top of the override."""
+    e = info.effect
+    return replace(info, effect=SimEffect(power=e.power, power_bonus=e.power_bonus,
+                                          land_colors=e.land_colors,
+                                          enters_tapped=e.enters_tapped))
 
 
 def _info(card, identity, is_commander: bool) -> CardInfo:

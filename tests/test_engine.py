@@ -3,7 +3,7 @@ import json
 import pytest
 
 from mtgpt.goldfish.engine import (
-    TRIGGER_CAP, IllegalAction, apply, available_mana, from_dict, legal_actions,
+    TRIGGER_CAP, IllegalAction, apply, available_mana, from_dict, held_counts, legal_actions,
     new_game, prepare, to_dict,
 )
 
@@ -265,3 +265,24 @@ def test_malformed_game_file_is_reported():
     from mtgpt.goldfish.engine import InvalidGameState
     with pytest.raises(InvalidGameState):
         from_dict({})
+
+
+ARENA = card("Phyrexian Arena", "Enchantment",
+             "At the beginning of your upkeep, you draw a card and you lose 1 life.",
+             mana_cost="{1}{G}{G}")
+
+
+def test_engine_override_replaces_the_parsed_draw():
+    goal = {"archetype": "custom", "thing": "commander", "win": NEVER,
+            "engine": {"Phyrexian Arena": {"on": "upkeep", "draw": 1}}}
+    s = rigged(ARENA, on_board=["Phyrexian Arena"], goal=goal)
+    before = len(s.hand)
+    s = apply(s, PASS)
+    assert len(s.hand) == before + 2  # the draw step plus the override, not the text too
+
+
+def test_overridden_protection_is_not_counted_as_held():
+    goal = {"archetype": "custom", "thing": "commander", "win": NEVER,
+            "engine": {"Teferi's Protection": {"priority": "engine"}}}
+    s = rigged(TEFERIS_PROTECTION, hand=["Teferi's Protection"], goal=goal)
+    assert held_counts(s)["protection"] == 0
