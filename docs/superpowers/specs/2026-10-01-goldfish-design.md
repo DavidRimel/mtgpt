@@ -209,6 +209,17 @@ carries the legal list.
 3. Tutor target: the first missing piece of `thing`, then of `win`, then a land if
    under 4 lands, otherwise the highest-priority card not in hand.
 
+### Extra turns
+
+An extra-turn spell ("take an extra turn", Time Stretch's two) queues full turns —
+untap, upkeep, draw, a land drop, main, combat, end — taken right after the current
+one. They keep the table-turn number: `turn`, checkpoints, the turn cap, and every
+reported turn count full rounds of the table, so a win in an extra turn is credited
+to the round it was cast in. Summoning sickness counts every turn taken. No
+disruption is rolled on an extra turn, since no opponent has played. A spell that
+shuffles itself into its owner's library (Nexus of Fate, Beacon of Tomorrows) goes
+there instead of the graveyard. At most 20 extra turns are taken per table turn.
+
 ### Disruption
 
 From `from_turn`, each turn rolls independently:

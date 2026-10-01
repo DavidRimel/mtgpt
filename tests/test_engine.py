@@ -373,3 +373,85 @@ def test_override_mana_taps_for_its_count_but_not_the_turn_it_enters():
     assert available_mana(s) == 2 + 3
     tender = next(p for p in s.battlefield if p.name == "Bloom Tender")
     assert s.cards[tender.card].effect.mana_colors == ALL_COLORS
+
+
+# --- Extra turns --------------------------------------------------------------
+
+STRETCH = card("Time Stretch", "Sorcery", "Target player takes two extra turns after this one.",
+               mana_cost="{1}")
+NEXUS = card("Nexus of Fate", "Instant", "Take an extra turn after this one.\nIf Nexus of Fate "
+             "would be put into a graveyard from anywhere, reveal Nexus of Fate and shuffle it "
+             "into its owner's library instead.", mana_cost="{1}")
+
+
+def test_extra_turns_keep_the_table_turn_number_and_are_full_turns():
+    s = rigged(STRETCH, BEAR, hand=["Time Stretch", "Forest", "Forest", "Forest"],
+               on_board=["Grizzly Bears"], lands_in_play=1)
+    s.command_zone = []
+    s = apply(apply(s, {"cast": "Time Stretch"}), PASS)
+    assert (s.turn, s.extra_turn) == (1, True)
+    hand_before = len(s.hand)
+    assert any("play_land" in a for a in legal_actions(s))  # a land drop
+    s = apply(s, PASS)
+    assert (s.turn, s.extra_turn) == (1, True)
+    assert len(s.hand) == hand_before + 1  # a draw step
+    s = apply(s, PASS)
+    assert (s.turn, s.extra_turn) == (2, False)
+    assert s.opponent_life_lost == 2 * 3  # Bears attacked on turn 1 and both extra turns
+
+
+def test_a_creature_cast_before_an_extra_turn_attacks_in_it():
+    s = rigged(STRETCH, BEAR, hand=["Time Stretch", "Grizzly Bears"], lands_in_play=3)
+    s.command_zone = []
+    s = apply(apply(s, {"cast": "Grizzly Bears"}), {"cast": "Time Stretch"})
+    s = apply(s, PASS)  # turn 1 ends; Bears is sick on turn 1
+    assert s.opponent_life_lost == 0
+    s = apply(s, PASS)  # first extra turn: Bears attacks
+    assert s.opponent_life_lost == 2
+
+
+def test_a_win_in_an_extra_turn_is_credited_to_the_table_turn():
+    goal = {"archetype": "custom", "thing": "commander", "win": {"opponent_life_lost": 6}}
+    s = rigged(STRETCH, BEAR, hand=["Time Stretch"], on_board=["Grizzly Bears"],
+               lands_in_play=1, goal=goal)
+    s.command_zone = []
+    s = apply(apply(s, {"cast": "Time Stretch"}), PASS)  # turn 1: 2 damage
+    s = apply(apply(s, PASS), PASS)  # both extra turns: 6 total
+    assert s.over and s.checkpoints["win"] == 1 and s.extra_turn
+
+
+def test_no_disruption_during_extra_turns():
+    s = rigged(STRETCH, hand=["Time Stretch"], lands_in_play=1, commander_out=True,
+               goal=REMOVAL_EVERY_TURN)
+    s = apply(apply(s, {"cast": "Time Stretch"}), PASS)
+    assert s.events == [] and s.command_zone == []  # Jodah-style commander survives the extra turn
+    s = apply(apply(s, PASS), PASS)  # finish both extra turns; table turn 2 rolls
+    assert s.turn == 2 and len(s.events) == 1
+
+
+def test_nexus_shuffles_itself_back_into_the_library():
+    s = rigged(NEXUS, hand=["Nexus of Fate"], lands_in_play=1)
+    s.command_zone = []
+    s = apply(s, {"cast": "Nexus of Fate"})
+    assert "Nexus of Fate" in [s.cards[i].name for i in s.library]
+    assert "Nexus of Fate" not in names(s, s.graveyard)
+
+
+def test_extra_turns_per_table_turn_are_capped():
+    from mtgpt.goldfish.engine import EXTRA_TURN_CAP
+    s = rigged(NEXUS, hand=["Nexus of Fate"], lands_in_play=1, turn_cap=3)
+    s.command_zone = []
+    s.extra_turns_pending = EXTRA_TURN_CAP + 5
+    s = apply(s, PASS)
+    for _ in range(EXTRA_TURN_CAP):
+        s = apply(s, PASS)
+    assert s.turn == 2 and not s.extra_turn
+    assert any("extra-turn cap" in line for line in s.log)
+
+
+def test_extra_turn_state_round_trips():
+    s = rigged(STRETCH, hand=["Time Stretch"], lands_in_play=1)
+    s.command_zone = []
+    s = apply(apply(s, {"cast": "Time Stretch"}), PASS)
+    data = to_dict(s)
+    assert to_dict(from_dict(json.loads(json.dumps(data)))) == data

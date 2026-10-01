@@ -33,6 +33,10 @@ DEFAULT_TURN_CAP = 10
 #: creature, which enters. Past this many resolutions in one turn the engine
 #: stops firing them and logs it, rather than looping forever.
 TRIGGER_CAP = 200
+#: Extra turns are taken one after another inside a table turn, so a loop such
+#: as Nexus of Fate under Omniscience would never end. Past this many in one
+#: table turn the rest are dropped and the log says so.
+EXTRA_TURN_CAP = 20
 _ANY = frozenset("WUBRG")
 _PERMANENT_TYPES = ("Artifact", "Creature", "Enchantment", "Planeswalker", "Battle")
 _SPEND_CATEGORIES = ("ramp", "engine", "other")
@@ -77,7 +81,8 @@ class Permanent:
     name: str
     power: float
     is_creature: bool
-    #: Turn it entered. A creature cannot attack or tap for mana that turn.
+    #: `turn_index` when it entered. A creature cannot attack or tap for mana
+    #: during the turn it entered, extra turns included.
     entered: int
     tapped: bool = False
     #: True for a land, including an MDFC played as its land face.
@@ -113,7 +118,16 @@ class GameState:
     command_zone: list[int] = field(default_factory=list)
     #: Commander tax by card index: 2 per time it has left the battlefield.
     tax: dict[int, int] = field(default_factory=dict)
+    #: The table turn: a full round of the table. Extra turns do not advance it,
+    #: so checkpoints, the turn cap, and win turns all count rounds.
     turn: int = 0
+    #: Every turn taken, extra turns included. Summoning sickness counts these.
+    turn_index: int = 0
+    #: True while the current turn is an extra one.
+    extra_turn: bool = False
+    extra_turns_pending: int = 0
+    #: Extra turns taken so far in this table turn, for EXTRA_TURN_CAP.
+    extra_turns_taken: int = 0
     over: bool = False
     land_played: bool = False
     #: Mana floating this main phase, one entry per mana.
@@ -196,7 +210,9 @@ def _overridden(info: CardInfo, spec) -> CardInfo:
     return replace(info, effect=SimEffect(power=e.power, power_bonus=e.power_bonus,
                                           land_colors=e.land_colors,
                                           enters_tapped=e.enters_tapped,
-                                          mana=spec.mana, mana_colors=spec.mana_colors))
+                                          mana=spec.mana, mana_colors=spec.mana_colors,
+                                          extra_turns=e.extra_turns,
+                                          shuffle_self=e.shuffle_self))
 
 
 def _info(card, identity, is_commander: bool) -> CardInfo:
@@ -357,7 +373,7 @@ def _play_land(s: GameState, name: str) -> None:
     card = s.cards[idx]
     tapped = card.effect.enters_tapped if card.is_land else False
     s.battlefield.append(Permanent(card=idx, name=name, power=0.0, is_creature=False,
-                                   entered=s.turn, tapped=tapped, is_land=True))
+                                   entered=s.turn_index, tapped=tapped, is_land=True))
     s.land_played = True
     s.log.append(f"T{s.turn}: play {name}" + (" (tapped)" if tapped else ""))
 
@@ -386,12 +402,16 @@ def _resolve(s: GameState, idx: int) -> None:
     effect = card.effect
     if card.is_permanent:
         perm = Permanent(card=idx, name=card.name, power=effect.power,
-                         is_creature=card.is_creature, entered=s.turn)
+                         is_creature=card.is_creature, entered=s.turn_index)
         s.battlefield.append(perm)
         if card.is_creature:
             _fire(s, "creature_etb", exclude=perm)
+    elif effect.shuffle_self:
+        s.library.append(idx)
+        s.rng.shuffle(s.library)
     else:
         s.graveyard.append(idx)
+    s.extra_turns_pending += effect.extra_turns
     s.pool.extend([_ANY] * effect.mana_once)
     s.treasures += effect.treasure_once
     for _ in range(effect.fetch_battlefield):
@@ -430,7 +450,7 @@ def _fetch_land(s: GameState, *, to_battlefield: bool, tapped: bool) -> None:
     s.library.remove(idx)
     if to_battlefield:
         s.battlefield.append(Permanent(card=idx, name=s.cards[idx].name, power=0.0,
-                                       is_creature=False, entered=s.turn, tapped=tapped,
+                                       is_creature=False, entered=s.turn_index, tapped=tapped,
                                        is_land=True))
     else:
         s.hand.append(idx)
@@ -479,7 +499,7 @@ def _fire(s: GameState, event: str, *, exclude: Permanent | None = None,
         s.treasures += spec.treasure
         for _ in range(spec.tokens):
             token = Permanent(card=None, name="Token", power=spec.token_power,
-                              is_creature=True, entered=s.turn)
+                              is_creature=True, entered=s.turn_index)
             s.battlefield.append(token)
             _fire(s, "creature_etb", exclude=token)
 
@@ -527,8 +547,18 @@ def _bottom_one(s: GameState) -> None:
     s.library.append(idx)
 
 
-def _begin_turn(s: GameState) -> None:
-    s.turn += 1
+def _begin_turn(s: GameState, *, extra: bool = False) -> None:
+    """Untap, upkeep, draw, and (on a table turn) the disruption roll.
+
+    An extra turn is a full turn — untap, draw, a land drop, main, combat — but
+    the opponents get no turn before it, so it keeps the table-turn number and
+    rolls no disruption.
+    """
+    s.turn_index += 1
+    s.extra_turn = extra
+    if not extra:
+        s.turn += 1
+        s.extra_turns_taken = 0
     s.land_played = False
     s.pool = []
     s.triggers_this_turn = 0
@@ -539,9 +569,10 @@ def _begin_turn(s: GameState) -> None:
         if perm.card is not None:
             _draw(s, s.cards[perm.card].effect.draw_per_turn)
     _fire(s, "upkeep")
-    if s.turn > 1:
+    if s.turn_index > 1:
         _draw(s, 1)
-    _disrupt(s)
+    if not extra:
+        _disrupt(s)
 
 
 def _disrupt(s: GameState) -> None:
@@ -612,8 +643,10 @@ def _end_turn(s: GameState) -> None:
         for key in _SPEND_CATEGORIES:
             s.pre_commander[key] += s.spent_this_turn[key]
         s.pre_commander["unspent"] += max(0, available - sum(s.spent_this_turn.values()))
-    s.per_turn.append({"turn": s.turn, "mana": production(s),
-                       "lands": sum(1 for p in s.battlefield if p.is_land)})
+    # A table turn is recorded once: an extra turn overwrites its row, so the
+    # row holds the board at the end of the round's last turn.
+    _record(s.per_turn, {"turn": s.turn, "mana": production(s),
+                         "lands": sum(1 for p in s.battlefield if p.is_land)})
 
     if s.checkpoints["commander"] is None and _commanders_on_board(s):
         s.checkpoints["commander"] = s.turn
@@ -622,23 +655,40 @@ def _end_turn(s: GameState) -> None:
     if evaluate(s, s.goal.thing):
         if s.checkpoints["thing"] is None:
             s.checkpoints["thing"] = s.turn
-        s.thing_turns.append({"turn": s.turn, **held_counts(s)})
+        _record(s.thing_turns, {"turn": s.turn, **held_counts(s)})
     label = win_label(s)
     if label is not None:
         s.checkpoints["win"] = s.turn
         s.win_by = label
         s.over = True
         s.log.append(f"T{s.turn}: win ({label})")
+        return
+    if s.extra_turns_pending and s.extra_turns_taken >= EXTRA_TURN_CAP:
+        s.log.append(f"T{s.turn}: extra-turn cap ({EXTRA_TURN_CAP}) reached; "
+                     f"dropped {s.extra_turns_pending} more")
+        s.extra_turns_pending = 0
+    if s.extra_turns_pending:
+        s.extra_turns_pending -= 1
+        s.extra_turns_taken += 1
+        s.log.append(f"T{s.turn}: extra turn")
+        _begin_turn(s, extra=True)
     elif s.turn >= s.turn_cap:
         s.over = True
     else:
         _begin_turn(s)
 
 
+def _record(rows: list[dict], row: dict) -> None:
+    if rows and rows[-1]["turn"] == row["turn"]:
+        rows[-1] = row
+    else:
+        rows.append(row)
+
+
 def _combat(s: GameState) -> None:
     """Unblocked combat. An `attack` trigger fires once per combat, not once
     per attacking creature."""
-    attackers = [p for p in s.battlefield if p.is_creature and p.entered < s.turn]
+    attackers = [p for p in s.battlefield if p.is_creature and p.entered < s.turn_index]
     if not attackers:
         return
     _fire(s, "attack")
@@ -685,7 +735,7 @@ def _produces(s: GameState, perm: Permanent, *, ignore_sickness: bool = False) -
     effect = s.cards[perm.card].effect
     if perm.is_land:
         return [effect.land_colors] if effect.land_colors else []
-    if perm.is_creature and perm.entered >= s.turn and not ignore_sickness:
+    if perm.is_creature and perm.entered >= s.turn_index and not ignore_sickness:
         return []
     return [effect.mana_colors] * effect.mana
 
@@ -831,6 +881,10 @@ def to_dict(s: GameState) -> dict:
         "command_zone": list(s.command_zone),
         "tax": {str(k): v for k, v in s.tax.items()},
         "turn": s.turn,
+        "turn_index": s.turn_index,
+        "extra_turn": s.extra_turn,
+        "extra_turns_pending": s.extra_turns_pending,
+        "extra_turns_taken": s.extra_turns_taken,
         "over": s.over,
         "land_played": s.land_played,
         "pool": [sorted(c) for c in s.pool],
@@ -888,6 +942,12 @@ def _from_dict(data: dict) -> GameState:
         "commander_damage", "cast_names", "commander_cast_turn", "checkpoints", "win_by",
         "mulligans", "spent_this_turn", "pre_commander", "per_turn", "thing_turns",
         "events", "late_reason", "log")}
+    # Game files written before extra turns existed have no turn_index; their
+    # turns were all table turns, so the two counters were equal.
+    plain["turn_index"] = data.get("turn_index", data["turn"])
+    plain["extra_turn"] = data.get("extra_turn", False)
+    plain["extra_turns_pending"] = data.get("extra_turns_pending", 0)
+    plain["extra_turns_taken"] = data.get("extra_turns_taken", 0)
     return GameState(
         cards=cards, goal=goal, goal_raw=data["goal"], turn_cap=data["turn_cap"],
         disruption=data["disruption"], rng=_load_rng(data["rng"]),

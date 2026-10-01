@@ -412,3 +412,8 @@ def test_goal_error_payload_names_the_field():
     payload = api.error_payload(err.value)
     assert (payload["type"], payload["field"], payload["values"]) == (
         "GoalError", "archetype", ["elves"])
+
+
+def test_pilot_view_says_whether_this_is_an_extra_turn():
+    view = api.goldfish_new(deck_text(), GO_WIDE, client=deck_client())["view"]
+    assert (view["extra_turn"], view["extra_turns_pending"]) == (False, 0)
