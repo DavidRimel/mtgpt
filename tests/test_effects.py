@@ -78,8 +78,8 @@ def test_whenever_treasure_is_skipped():
                  "Whenever an opponent draws a card, that player may pay {2}. If the "
                  "player doesn't, you create a Treasure token.")
     effect = effect_of(tithe, G)
-    assert effect.treasure_once == 0
-    assert is_unmodeled(tithe, effect)
+    assert effect.treasure_once == 0  # not a Treasure on cast
+    assert effect.opp_draw_treasure  # modeled as opponents' draws instead
 
 
 def test_rampant_growth_fetches_one_tapped():

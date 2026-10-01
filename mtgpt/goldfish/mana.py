@@ -79,7 +79,8 @@ def plan_payment(units: list[Unit], generic: int,
     for pip in range(len(pips)):
         if not assign(pip, set()):
             return None
-    rest = [unit for unit in order if unit not in match]
+    # "*" marks mana that can't pay generic costs (Jegantha).
+    rest = [unit for unit in order if unit not in match and "*" not in units[unit].colors]
     if len(rest) < generic:
         return None
     return list(match) + rest[:generic]

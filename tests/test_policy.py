@@ -139,7 +139,7 @@ def test_unmodeled_mdfc_spell_face_is_kept_as_a_land():
                 "Each player proliferates.", mana_cost="{1}{G}")
     s = rigged(mdfc, hand=["Odd Spell // Odd Land"], lands_in_play=5)
     s.command_zone = []
-    s.land_played = True
+    s.lands_played = 1
     assert s.cards[find_card(s, "Odd Spell // Odd Land", s.hand)].unmodeled
     assert choose(s) == {"pass": True}
 
@@ -150,7 +150,7 @@ def test_goal_named_unmodeled_mdfc_is_cast():
     goal = {"archetype": "custom", "thing": "commander", "win": {"cast": "Odd Spell"}}
     s = rigged(mdfc, hand=["Odd Spell // Odd Land"], lands_in_play=5, goal=goal)
     s.command_zone = []
-    s.land_played = True
+    s.lands_played = 1
     assert choose(s) == {"cast": "Odd Spell // Odd Land"}
 
 

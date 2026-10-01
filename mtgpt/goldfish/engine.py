@@ -37,6 +37,11 @@ TRIGGER_CAP = 200
 #: as Nexus of Fate under Omniscience would never end. Past this many in one
 #: table turn the rest are dropped and the log says so.
 EXTRA_TURN_CAP = 20
+#: Consecrated Sphinx stops drawing once the library would fall below this,
+#: so its triggers never deck you (the user's rule).
+SPHINX_LIBRARY_FLOOR = 15
+#: Smothering Tithe Treasures per round: opponents usually pay (the user's rule).
+TITHE_TREASURES_PER_ROUND = 1
 _ANY = frozenset("WUBRG")
 _PERMANENT_TYPES = ("Artifact", "Creature", "Enchantment", "Planeswalker", "Battle")
 _SPEND_CATEGORIES = ("ramp", "engine", "other")
@@ -72,6 +77,8 @@ class CardInfo:
     functions: tuple[str, ...]
     effect: SimEffect
     unmodeled: bool = False
+    #: The card's colors, for "each color among permanents you control".
+    colors: tuple[str, ...] = ()
 
 
 @dataclass
@@ -129,7 +136,14 @@ class GameState:
     #: Extra turns taken so far in this table turn, for EXTRA_TURN_CAP.
     extra_turns_taken: int = 0
     over: bool = False
-    land_played: bool = False
+    #: Lands played this turn; extra land drops raise the limit above one.
+    lands_played: int = 0
+    #: Spells cast free this turn through One with the Multiverse.
+    free_spells_used: int = 0
+    #: Set when a card wins the game outright (Approach of the Second Sun).
+    alt_win: str | None = None
+    #: Searches left on a multi-card tutor (Conflux) while pending_tutor is set.
+    tutors_left: int = 0
     #: Mana floating this main phase, one entry per mana.
     pool: list[frozenset[str]] = field(default_factory=list)
     treasures: int = 0
@@ -205,6 +219,11 @@ def new_game(setup: Setup, *, seed, turn_cap: int = DEFAULT_TURN_CAP,
         command_zone=list(setup.commanders),
     )
     _mulligan(state)
+    for idx in [i for i in state.hand if state.cards[i].effect.leyline]:
+        state.hand.remove(idx)
+        state.battlefield.append(Permanent(card=idx, name=state.cards[idx].name, power=0.0,
+                                           is_creature=False, entered=0))
+        state.log.append(f"T1: {state.cards[idx].name} begins on the battlefield")
     _begin_turn(state)
     return state
 
@@ -240,6 +259,7 @@ def _info(card, identity, is_commander: bool) -> CardInfo:
         functions=tuple(sorted(f.value for f in classify(card))),
         effect=effect,
         unmodeled=is_unmodeled(card, effect),
+        colors=tuple(sorted(card.colors)),
     )
 
 
@@ -259,9 +279,11 @@ def legal_actions(state: GameState) -> list[dict]:
         return [{"tutor": name} for name in names] or [{"tutor": None}]
 
     actions: list[dict] = []
-    if not state.land_played:
+    if _land_drops_left(state):
         for name in _distinct(state, state.hand, lambda c: c.is_land or c.is_mdfc_land):
             actions.append({"play_land": name})
+        if state.library and _lands_from_top(state) and state.cards[state.library[0]].is_land:
+            actions.append({"play_land_top": state.cards[state.library[0]].name})
     units = _units(state)
     for idx in _first_of_each(state, state.hand + state.command_zone):
         if not state.cards[idx].is_land and _payment(state, idx, units) is not None:
@@ -280,7 +302,9 @@ def available_mana(state: GameState) -> int:
 
 def production(state: GameState) -> int:
     """Mana the board makes per turn, tapped or not, summoning sickness aside."""
-    return sum(len(_produces(state, p, ignore_sickness=True)) for p in state.battlefield)
+    statics = _statics(state)
+    return sum(len(_produces(state, p, ignore_sickness=True, statics=statics))
+               for p in state.battlefield)
 
 
 def evaluate(state: GameState, cond: Condition) -> bool:
@@ -313,6 +337,8 @@ def evaluate(state: GameState, cond: Condition) -> bool:
 
 def win_label(state: GameState) -> str | None:
     """Which win condition holds, as a `describe` label; None if none does."""
+    if state.alt_win:
+        return f"won:{state.alt_win}"
     win = state.goal.win
     if win.kind == "any":
         for child in win.children:
@@ -366,6 +392,10 @@ def apply(state: GameState, action: dict, *, in_place: bool = False) -> GameStat
         state, {id(state.cards): state.cards, id(state.goal): state.goal})
     if "play_land" in action:
         _play_land(s, action["play_land"])
+    elif "play_land_top" in action:
+        idx = s.library.pop(0)
+        _put_land(s, idx, tapped=s.cards[idx].effect.enters_tapped)
+        s.lands_played += 1
     elif "cast" in action:
         _cast(s, action["cast"])
     elif "put_back" in action:
@@ -383,41 +413,104 @@ def _play_land(s: GameState, name: str) -> None:
     idx = find_card(s, name, s.hand)
     s.hand.remove(idx)
     card = s.cards[idx]
-    tapped = card.effect.enters_tapped if card.is_land else False
+    _put_land(s, idx, tapped=card.effect.enters_tapped if card.is_land else False)
+    s.lands_played += 1
+
+
+def _put_land(s: GameState, idx: int, *, tapped: bool) -> None:
+    """A land enters under your control, played or fetched: landfall fires."""
+    name = s.cards[idx].name
     s.battlefield.append(Permanent(card=idx, name=name, power=0.0, is_creature=False,
                                    entered=s.turn_index, tapped=tapped, is_land=True))
-    s.land_played = True
-    s.log.append(f"T{s.turn}: play {name}" + (" (tapped)" if tapped else ""))
+    s.log.append(f"T{s.turn}: land {name}" + (" (tapped)" if tapped else ""))
+    for perm in s.battlefield:
+        if perm.card is not None and not perm.is_land:
+            effect = s.cards[perm.card].effect
+            s.pool.extend([_ANY] * effect.landfall_mana)
+            s.treasures += effect.landfall_treasure
 
 
 def _cast(s: GameState, name: str) -> None:
     from_hand = find_card(s, name, s.hand)
     idx = from_hand if from_hand is not None else find_card(s, name, s.command_zone)
     units = _units(s)
-    plan = _payment(s, idx, units)
+    plan, delved, free = _payment_full(s, idx, units)
     _spend(s, plan, units)
     (s.hand if from_hand is not None else s.command_zone).remove(idx)
     card = s.cards[idx]
+    del s.graveyard[:delved]  # delve exiles them
+    s.free_spells_used += free
     s.spent_this_turn[_spend_category(s, idx)] += len(plan)
     s.cast_names.append(name)
     if card.is_commander and s.commander_cast_turn is None:
         s.commander_cast_turn = s.turn
-    s.log.append(f"T{s.turn}: cast {name} ({len(plan)} mana)")
+    s.log.append(f"T{s.turn}: cast {name} ({len(plan)} mana)" + (" free" if free else ""))
     _fire(s, "spell_cast")
     if "Instant" in card.type_line or "Sorcery" in card.type_line:
         _fire(s, "instant_sorcery_cast")
+    _cascades(s, card)
+    _resolve(s, idx, from_hand=from_hand is not None)
+
+
+def _cast_free(s: GameState, idx: int) -> None:
+    """Cast a card without paying (cascade, Emergent Ultimatum), not from hand."""
+    card = s.cards[idx]
+    s.cast_names.append(card.name)
+    s.log.append(f"T{s.turn}: cast {card.name} free")
+    _fire(s, "spell_cast")
+    if "Instant" in card.type_line or "Sorcery" in card.type_line:
+        _fire(s, "instant_sorcery_cast")
+    _cascades(s, card)
     _resolve(s, idx)
 
 
-def _resolve(s: GameState, idx: int) -> None:
+def _cascades(s: GameState, card: CardInfo) -> None:
+    count = card.effect.cascade
+    if not card.is_land and any(
+            p.card is not None and 0 < s.cards[p.card].effect.grants_cascade_min <= card.mana_value
+            for p in s.battlefield):
+        count += 1
+    for _ in range(count):
+        _cascade_once(s, card.mana_value)
+
+
+def _cascade_once(s: GameState, mana_value: float) -> None:
+    """Exile from the top until a nonland card of lower mana value; cast it free.
+    A card that draws the library is declined: casting it blind risks decking."""
+    exiled, hit = [], None
+    while s.library and not s.over:
+        idx = s.library.pop(0)
+        card = s.cards[idx]
+        if not card.is_land and card.mana_value < mana_value:
+            if card.effect.draw_library:
+                exiled.append(idx)
+            else:
+                hit = idx
+            break
+        exiled.append(idx)
+    s.rng.shuffle(exiled)
+    s.library.extend(exiled)
+    if hit is not None:
+        s.log.append(f"T{s.turn}: cascade into {s.cards[hit].name}")
+        _cast_free(s, hit)
+
+
+def _resolve(s: GameState, idx: int, *, from_hand: bool = False) -> None:
     card = s.cards[idx]
     effect = card.effect
     if card.is_permanent:
         perm = Permanent(card=idx, name=card.name, power=effect.power,
-                         is_creature=card.is_creature, entered=s.turn_index)
+                         is_creature=card.is_creature, entered=s.turn_index,
+                         tapped=effect.enters_tapped)
         s.battlefield.append(perm)
         if card.is_creature:
             _fire(s, "creature_etb", exclude=perm)
+    elif effect.approach:
+        if from_hand and s.cast_names.count(card.name) >= 2:
+            s.alt_win = card.name
+            s.graveyard.append(idx)
+        else:
+            s.library.insert(min(6, len(s.library)), idx)  # seventh from the top
     elif effect.shuffle_self:
         s.library.append(idx)
         s.rng.shuffle(s.library)
@@ -427,24 +520,88 @@ def _resolve(s: GameState, idx: int) -> None:
     s.pool.extend([_ANY] * effect.mana_once)
     s.treasures += effect.treasure_once
     for _ in range(effect.fetch_battlefield):
-        _fetch_land(s, to_battlefield=True, tapped=effect.fetch_tapped)
+        _fetch_land(s, to_battlefield=True, tapped=effect.fetch_tapped, types=effect.fetch_types)
     for _ in range(effect.fetch_hand):
-        _fetch_land(s, to_battlefield=False, tapped=False)
+        _fetch_land(s, to_battlefield=False, tapped=False, types=effect.fetch_types)
     _draw(s, effect.draw_once)
     if effect.draw_library:
         _draw(s, len(s.library))
         s.pending_put_back = min(effect.put_back, len(s.hand))
+    if effect.dig_permanents:
+        _dig_permanents(s, effect.dig_permanents)
+    if effect.dig_look:
+        top = s.library[:effect.dig_look]
+        del s.library[:effect.dig_look]
+        chosen = _best_cards(s, top, effect.dig_take)
+        s.hand.extend(chosen)
+        s.library.extend(i for i in top if i not in chosen)
+    if effect.emergent:
+        _emergent(s, effect.emergent)
     if effect.tutor and any(_tutor_matches(s.cards[i], effect.tutor) for i in s.library):
         s.pending_tutor = effect.tutor
+        s.tutors_left = max(1, effect.tutor_count)
+
+
+def _dig_permanents(s: GameState, n: int) -> None:
+    """Genesis Ultimatum: permanents from the top N onto the battlefield, the
+    rest into hand."""
+    top = s.library[:n]
+    del s.library[:n]
+    for idx in top:
+        card = s.cards[idx]
+        if card.is_land:
+            _put_land(s, idx, tapped=card.effect.enters_tapped)
+        elif card.is_permanent:
+            _resolve(s, idx)
+        else:
+            s.hand.append(idx)
+
+
+def _emergent(s: GameState, n: int) -> None:
+    """Emergent Ultimatum: find N monocolored cards with different names; the
+    opponent shuffles the best one back; cast the rest free."""
+    seen, pool = set(), []
+    for idx in s.library:
+        card = s.cards[idx]
+        if not card.is_land and len(card.colors) == 1 and card.name not in seen:
+            seen.add(card.name)
+            pool.append(idx)
+    found = _best_cards(s, pool, n)
+    for idx in found:
+        s.library.remove(idx)
+    if found:
+        s.library.append(found[0])  # the opponent's pick goes back
+        s.rng.shuffle(s.library)
+    for idx in found[1:]:
+        _cast_free(s, idx)
+
+
+def _best_cards(s: GameState, idxs: list[int], k: int) -> list[int]:
+    """The k cards a pilot would keep: pieces the goal names, then the most
+    expensive spells, then lands."""
+    wanted = condition_names(s.goal.thing) + condition_names(s.goal.win)
+
+    def score(idx):
+        card = s.cards[idx]
+        return (card.name not in wanted, card.is_land, -card.mana_value, card.name)
+
+    return sorted(idxs, key=score)[:k]
 
 
 def _tutor(s: GameState, name: str | None) -> None:
+    restriction = s.pending_tutor
     s.pending_tutor = None
     if name is not None:
         idx = find_card(s, name, s.library)
         s.library.remove(idx)
         s.hand.append(idx)
         s.log.append(f"T{s.turn}: tutor {name}")
+    s.tutors_left = max(0, s.tutors_left - 1)
+    if s.tutors_left and name is not None and any(
+            _tutor_matches(s.cards[i], restriction) for i in s.library):
+        s.pending_tutor = restriction
+        return
+    s.tutors_left = 0
     s.rng.shuffle(s.library)
 
 
@@ -454,19 +611,34 @@ def _sacrifice(s: GameState, name: str) -> None:
     _kill(s, [perm])
 
 
-def _fetch_land(s: GameState, *, to_battlefield: bool, tapped: bool) -> None:
-    """Take the basic land that adds a color the deck has least of."""
-    basics = [i for i in s.library if s.cards[i].is_basic]
-    if not basics:
+def _fetch_land(s: GameState, *, to_battlefield: bool, tapped: bool, types: str = "basic") -> None:
+    """Take the land the search allows that adds a color the deck has least of.
+
+    `types` is "basic", "land", or land types ("forest"), which a nonbasic dual
+    or triome with that type also satisfies (Nature's Lore finds a Bayou).
+    """
+    types = types or "basic"
+
+    def allowed(card):
+        if not card.is_land:
+            return False
+        if types == "basic":
+            return card.is_basic
+        if types == "land":
+            return True
+        return any(t in card.type_line.lower() for t in types.split("|"))
+
+    candidates = [i for i in s.library if allowed(s.cards[i])]
+    if not candidates:
         return
     have = Counter(c for p in s.battlefield if p.is_land and p.card is not None
                    for c in s.cards[p.card].effect.land_colors)
-    idx = min(basics, key=lambda i: min((have[c] for c in s.cards[i].effect.land_colors), default=0))
+    idx = min(candidates, key=lambda i: (
+        min((have[c] for c in s.cards[i].effect.land_colors), default=0),
+        -len(s.cards[i].effect.land_colors)))
     s.library.remove(idx)
     if to_battlefield:
-        s.battlefield.append(Permanent(card=idx, name=s.cards[idx].name, power=0.0,
-                                       is_creature=False, entered=s.turn_index, tapped=tapped,
-                                       is_land=True))
+        _put_land(s, idx, tapped=tapped)
     else:
         s.hand.append(idx)
 
@@ -594,12 +766,16 @@ def _begin_turn(s: GameState, *, extra: bool = False) -> None:
     if not extra:
         s.turn += 1
         s.extra_turns_taken = 0
-    s.land_played = False
+    s.lands_played = 0
+    s.free_spells_used = 0
     s.pool = []
     s.triggers_this_turn = 0
     s.spent_this_turn = dict.fromkeys(_SPEND_CATEGORIES, 0)
+    if not extra and s.turn_index > 1:
+        _opponents_draws(s)
     for perm in s.battlefield:
         perm.tapped = False
+    _sac_tutors(s)
     for perm in list(s.battlefield):
         if perm.card is not None:
             _draw(s, s.cards[perm.card].effect.draw_per_turn)
@@ -608,6 +784,40 @@ def _begin_turn(s: GameState, *, extra: bool = False) -> None:
         _draw(s, 1)
     if not extra and not s.over:
         _disrupt(s)
+
+
+def _opponents_draws(s: GameState) -> None:
+    """Each opponent drew once since your last turn: Consecrated Sphinx draws
+    two per draw (stopping short of decking), Smothering Tithe makes Treasure."""
+    for perm in list(s.battlefield):
+        if perm.card is None or perm.is_land:
+            continue
+        effect = s.cards[perm.card].effect
+        for _ in range(OPPONENTS if effect.opp_draw_cards else 0):
+            if len(s.library) - effect.opp_draw_cards >= SPHINX_LIBRARY_FLOOR:
+                _draw(s, effect.opp_draw_cards)
+        if effect.opp_draw_treasure:
+            s.treasures += TITHE_TREASURES_PER_ROUND
+
+
+def _sac_tutors(s: GameState) -> None:
+    """Sterling Grove: sacrifice it to put a missing goal piece of its type on top."""
+    wanted = condition_names(s.goal.thing) + condition_names(s.goal.win)
+    present = {p.name for p in s.battlefield} | {s.cards[i].name for i in s.hand}
+    for perm in list(s.battlefield):
+        if perm.card is None or not s.cards[perm.card].effect.sac_tutor_top:
+            continue
+        kind = s.cards[perm.card].effect.sac_tutor_top
+        target = next((i for i in s.library if s.cards[i].name in wanted
+                       and s.cards[i].name not in present
+                       and kind in s.cards[i].type_line.lower()), None)
+        if target is None:
+            continue
+        s.battlefield.remove(perm)
+        s.graveyard.append(perm.card)
+        s.library.remove(target)
+        s.library.insert(0, target)
+        s.log.append(f"T{s.turn}: sacrifice {perm.name}, {s.cards[target].name} on top")
 
 
 def _disrupt(s: GameState) -> None:
@@ -764,50 +974,112 @@ def _late_reason(s: GameState) -> str:
 # --- Mana ------------------------------------------------------------------
 
 
-def _produces(s: GameState, perm: Permanent, *, ignore_sickness: bool = False) -> list[frozenset[str]]:
+def _statics(s: GameState) -> tuple[bool, bool, frozenset[str]]:
+    """Board-wide mana rules: lands tap for any color (Lantern, Dryad); all mana
+    is any color (Orrery); and the colors among your permanents (Bloom Tender)."""
+    lands_any = mana_any = False
+    colors: set[str] = set()
+    for perm in s.battlefield:
+        if perm.card is None or perm.is_land:
+            continue
+        card = s.cards[perm.card]
+        lands_any = lands_any or card.effect.lands_any_color
+        mana_any = mana_any or card.effect.mana_any_color
+        colors.update(card.colors)
+    return lands_any, mana_any, frozenset(colors) & _ANY
+
+
+def _produces(s: GameState, perm: Permanent, *, ignore_sickness: bool = False,
+              statics=None) -> list[frozenset[str]]:
     if perm.card is None:
         return []
+    lands_any, mana_any, permanent_colors = statics or _statics(s)
     effect = s.cards[perm.card].effect
     if perm.is_land:
-        return [effect.land_colors] if effect.land_colors else []
+        if not effect.land_colors:
+            return []
+        colors = effect.land_colors | (_ANY if lands_any or mana_any else frozenset())
+        return [colors]
     if perm.is_creature and perm.entered >= s.turn_index and not ignore_sickness:
         return []
-    return [effect.mana_colors] * effect.mana
+    if effect.mana_per_color:
+        units = [frozenset({c}) for c in sorted(permanent_colors)]
+    else:
+        units = [effect.mana_colors] * effect.mana
+    if mana_any:
+        units = [u | _ANY for u in units]
+    if effect.colored_only:
+        units = [u | {"*"} for u in units]  # "*": this mana can't pay generic costs
+    return units
 
 
 def _units(s: GameState) -> list[Unit]:
     units = [Unit(colors, "pool", i) for i, colors in enumerate(s.pool)]
+    statics = _statics(s)
     for i, perm in enumerate(s.battlefield):
         if not perm.tapped:
             kind = "land" if perm.is_land else "rock"
-            units.extend(Unit(colors, kind, i) for colors in _produces(s, perm))
+            units.extend(Unit(colors, kind, i) for colors in _produces(s, perm, statics=statics))
     units.extend(Unit(_ANY, "treasure", -1) for _ in range(s.treasures))
     return units
 
 
 def _payment(s: GameState, idx: int, units: list[Unit]) -> list[int] | None:
-    """The cheapest payable plan: the card's own cost, or an alternative cost
-    a permanent on the battlefield offers (Jodah's WUBRG). Tax applies to
-    either. A tie goes to the card's own cost."""
+    return _payment_full(s, idx, units)[0]
+
+
+def _payment_full(s: GameState, idx: int, units: list[Unit]) -> tuple[list[int] | None, int, int]:
+    """The cheapest payable plan, with how many graveyard cards it delves and
+    whether it uses a free cast.
+
+    The options are the card's own cost and any alternative cost a permanent
+    offers (Jodah's WUBRG; Omniscience's {0}, from hand only); tax applies to
+    each, delve pays generic from the graveyard, and a tie goes to the card's
+    own cost. One with the Multiverse's free cast is saved for a spell that
+    would otherwise cost five or more, or could not be cast at all.
+    """
+    card = s.cards[idx]
     tax = s.tax.get(idx, 0)
-    best = None
-    for cost in [s.cards[idx].mana_cost, *_alt_costs(s)]:
+    in_hand = idx in s.hand
+    best, best_delve = None, 0
+    for cost, hand_only in [(card.mana_cost, False), *_alt_cost_options(s)]:
+        if hand_only and not in_hand:
+            continue
         generic, pips = parse_cost(cost)
-        plan = plan_payment(units, generic + tax, pips)
+        generic += tax
+        delve = min(generic, len(s.graveyard)) if card.effect.delve else 0
+        plan = plan_payment(units, generic - delve, pips)
         if plan is not None and (best is None or len(plan) < len(best)):
-            best = plan
-    return best
+            best, best_delve = plan, delve
+    frees = sum(s.cards[p.card].effect.free_spell_per_turn for p in s.battlefield
+                if p.card is not None)
+    if frees > s.free_spells_used and (best is None or len(best) >= 5):
+        return [], 0, 1
+    return best, best_delve, 0
 
 
-def _alt_costs(s: GameState) -> list[str]:
-    costs: list[str] = []
+def _alt_cost_options(s: GameState) -> list[tuple[str, bool]]:
+    """(cost, from-hand-only) for every alternative cost on the battlefield,
+    from card text or from a goal-file override."""
+    options: list[tuple[str, bool]] = []
     for perm in s.battlefield:
         if perm.card is None:
             continue
-        spec = s.goal.engine_for(s.cards[perm.card].name)
-        if spec is not None and spec.alt_cost and spec.alt_cost not in costs:
-            costs.append(spec.alt_cost)
-    return costs
+        card = s.cards[perm.card]
+        spec = s.goal.engine_for(card.name)
+        if spec is not None and spec.alt_cost:
+            option = (spec.alt_cost, False)
+        elif card.effect.alt_cost:
+            option = (card.effect.alt_cost, card.effect.alt_cost_hand_only)
+        else:
+            continue
+        if option not in options:
+            options.append(option)
+    return options
+
+
+def _alt_costs(s: GameState) -> list[str]:
+    return [cost for cost, _ in _alt_cost_options(s)]
 
 
 def _spend(s: GameState, plan: list[int], units: list[Unit]) -> None:
@@ -876,6 +1148,17 @@ def _count_tag(s: GameState, tag: str) -> int:
     return count
 
 
+def _land_drops_left(s: GameState) -> int:
+    extra = sum(s.cards[p.card].effect.extra_land_drops for p in s.battlefield
+                if p.card is not None and not p.is_land)
+    return max(0, 1 + extra - s.lands_played)
+
+
+def _lands_from_top(s: GameState) -> bool:
+    return any(p.card is not None and not p.is_land and s.cards[p.card].effect.lands_from_top
+               for p in s.battlefield)
+
+
 def _tutor_matches(card: CardInfo, restriction: str) -> bool:
     if restriction == "any":
         return True
@@ -902,7 +1185,7 @@ def to_dict(s: GameState) -> dict:
     version, internal, gauss = s.rng.getstate()
     return {
         "cards": [{**{k: v for k, v in asdict(c).items() if k != "effect"},
-                   "functions": list(c.functions), "effect": effect_to_dict(c.effect)}
+                   "functions": list(c.functions), "colors": list(c.colors), "effect": effect_to_dict(c.effect)}
                   for c in s.cards],
         "goal": s.goal_raw,
         "turn_cap": s.turn_cap,
@@ -921,7 +1204,10 @@ def to_dict(s: GameState) -> dict:
         "extra_turns_pending": s.extra_turns_pending,
         "extra_turns_taken": s.extra_turns_taken,
         "over": s.over,
-        "land_played": s.land_played,
+        "lands_played": s.lands_played,
+        "free_spells_used": s.free_spells_used,
+        "alt_win": s.alt_win,
+        "tutors_left": s.tutors_left,
         "pool": [sorted(c) for c in s.pool],
         "treasures": s.treasures,
         "pending_tutor": s.pending_tutor,
@@ -970,11 +1256,12 @@ def _from_dict(data: dict) -> GameState:
     cards = tuple(
         CardInfo(**{**{k: v for k, v in c.items() if k != "effect"},
                     "functions": tuple(c["functions"]),
+                    "colors": tuple(c.get("colors", ())),
                     "effect": effect_from_dict(c["effect"])})
         for c in data["cards"])
     goal = load_goal(data["goal"], deck_names=[c.name for c in cards])
     plain = {k: data[k] for k in (
-        "library", "hand", "graveyard", "command_zone", "turn", "over", "land_played",
+        "library", "hand", "graveyard", "command_zone", "turn", "over",
         "treasures", "pending_tutor", "triggers_this_turn", "opponent_life_lost",
         "commander_damage", "cast_names", "commander_cast_turn", "checkpoints", "win_by",
         "mulligans", "spent_this_turn", "pre_commander", "per_turn", "thing_turns",
@@ -988,6 +1275,10 @@ def _from_dict(data: dict) -> GameState:
     plain["pending_put_back"] = data.get("pending_put_back", 0)
     plain["loss_by"] = data.get("loss_by")
     plain["checkpoints"] = {"loss": None, **plain["checkpoints"]}
+    plain["lands_played"] = data.get("lands_played", int(bool(data.get("land_played", False))))
+    plain["free_spells_used"] = data.get("free_spells_used", 0)
+    plain["alt_win"] = data.get("alt_win")
+    plain["tutors_left"] = data.get("tutors_left", 0)
     return GameState(
         cards=cards, goal=goal, goal_raw=data["goal"], turn_cap=data["turn_cap"],
         disruption=data["disruption"], rng=_load_rng(data["rng"]),
