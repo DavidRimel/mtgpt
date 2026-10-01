@@ -38,6 +38,10 @@ _PERMANENT_TYPES = ("Artifact", "Creature", "Enchantment", "Planeswalker", "Batt
 _SPEND_CATEGORIES = ("ramp", "engine", "other")
 
 
+class InvalidGameState(MtgptError):
+    """A saved game that cannot be read back."""
+
+
 class IllegalAction(MtgptError):
     """An action that is not in `legal_actions(state)`. Carries both."""
 
@@ -99,6 +103,9 @@ class GameState:
     turn_cap: int
     disruption: bool
     rng: random.Random
+    #: Disruption's own dice, so matched seeds roll matched disruption whatever
+    #: the shuffles did.
+    dice: random.Random
     library: list[int] = field(default_factory=list)
     hand: list[int] = field(default_factory=list)
     battlefield: list[Permanent] = field(default_factory=list)
@@ -169,6 +176,7 @@ def new_game(setup: Setup, *, seed, turn_cap: int = DEFAULT_TURN_CAP,
         turn_cap=turn_cap,
         disruption=disruption,
         rng=random.Random(seed),
+        dice=random.Random(f"{seed}-disruption"),
         library=[i for i in range(len(setup.cards)) if i not in setup.commanders],
         command_zone=list(setup.commanders),
     )
@@ -487,8 +495,11 @@ def _keepable(s: GameState) -> bool:
 
 
 def _bottom_one(s: GameState) -> None:
-    lands = [i for i in s.hand if s.cards[i].is_land]
-    spells = [i for i in s.hand if not s.cards[i].is_land]
+    def is_land(i):
+        return s.cards[i].is_land or s.cards[i].is_mdfc_land
+
+    lands = [i for i in s.hand if is_land(i)]
+    spells = [i for i in s.hand if not is_land(i)]
     if len(lands) > 4 or not spells:
         idx = lands[0]
     else:
@@ -520,8 +531,8 @@ def _disrupt(s: GameState) -> None:
     d = s.goal.disruption
     if not s.disruption or d is None or s.turn < d.from_turn:
         return
-    removal = s.rng.random() < d.commander_removal
-    wipe = s.rng.random() < d.board_wipe
+    removal = s.dice.random() < d.commander_removal
+    wipe = s.dice.random() < d.board_wipe
     if removal and _commanders_on_board(s):
         _event(s, "commander_removal")
     if wipe and any(not p.is_land for p in s.battlefield):
@@ -591,6 +602,8 @@ def _end_turn(s: GameState) -> None:
 
 
 def _combat(s: GameState) -> None:
+    """Unblocked combat. An `attack` trigger fires once per combat, not once
+    per attacking creature."""
     attackers = [p for p in s.battlefield if p.is_creature and p.entered < s.turn]
     if not attackers:
         return
@@ -754,6 +767,7 @@ def to_dict(s: GameState) -> dict:
         "turn_cap": s.turn_cap,
         "disruption": s.disruption,
         "rng": [version, list(internal), gauss],
+        "dice": _dump_rng(s.dice),
         "library": list(s.library),
         "hand": list(s.hand),
         "battlefield": [asdict(p) for p in s.battlefield],
@@ -784,16 +798,34 @@ def to_dict(s: GameState) -> dict:
     }
 
 
+def _dump_rng(rng: random.Random) -> list:
+    version, internal, gauss = rng.getstate()
+    return [version, list(internal), gauss]
+
+
+def _load_rng(data) -> random.Random:
+    rng = random.Random()
+    version, internal, gauss = data
+    rng.setstate((version, tuple(internal), gauss))
+    return rng
+
+
 def from_dict(data: dict) -> GameState:
+    try:
+        return _from_dict(data)
+    except (KeyError, TypeError, ValueError, AttributeError) as err:
+        raise InvalidGameState(
+            f"the game file is malformed ({type(err).__name__}: {err}); "
+            "start a new game with goldfish-new") from err
+
+
+def _from_dict(data: dict) -> GameState:
     cards = tuple(
         CardInfo(**{**{k: v for k, v in c.items() if k != "effect"},
                     "functions": tuple(c["functions"]),
                     "effect": effect_from_dict(c["effect"])})
         for c in data["cards"])
     goal = load_goal(data["goal"], deck_names=[c.name for c in cards])
-    rng = random.Random()
-    version, internal, gauss = data["rng"]
-    rng.setstate((version, tuple(internal), gauss))
     plain = {k: data[k] for k in (
         "library", "hand", "graveyard", "command_zone", "turn", "over", "land_played",
         "treasures", "pending_tutor", "triggers_this_turn", "opponent_life_lost",
@@ -802,7 +834,8 @@ def from_dict(data: dict) -> GameState:
         "events", "late_reason", "log")}
     return GameState(
         cards=cards, goal=goal, goal_raw=data["goal"], turn_cap=data["turn_cap"],
-        disruption=data["disruption"], rng=rng,
+        disruption=data["disruption"], rng=_load_rng(data["rng"]),
+        dice=_load_rng(data["dice"]),
         battlefield=[Permanent(**p) for p in data["battlefield"]],
         tax={int(k): v for k, v in data["tax"].items()},
         pool=[frozenset(c) for c in data["pool"]],

@@ -206,3 +206,40 @@ def test_mdfc_played_as_land_makes_its_color():
     s = rigged(mdfc, hand=["Spell // Land"])
     s = apply(s, {"play_land": "Spell // Land"})
     assert available_mana(s) == 1
+
+
+# --- Fix round 1 ------------------------------------------------------------
+
+HALF_DISRUPTION = {"archetype": "custom", "thing": "commander", "win": NEVER,
+                   "disruption": {"commander_removal": 0.5, "board_wipe": 0.5, "from_turn": 1}}
+
+
+def test_matched_seeds_roll_matched_dice():
+    a = new_game(prepare(deck(SOL_RING), HALF_DISRUPTION), seed=7)
+    b = new_game(prepare(deck(*[BEAR] * 40), HALF_DISRUPTION), seed=7)
+    assert a.mulligans != b.mulligans
+    assert a.dice.getstate() == b.dice.getstate()
+    assert [a.dice.random() for _ in range(6)] == [b.dice.random() for _ in range(6)]
+
+
+def test_disruption_does_not_touch_the_shuffle_rng():
+    s = rigged(goal=HALF_DISRUPTION)
+    rng_before, dice_before = s.rng.getstate(), s.dice.getstate()
+    s = apply(s, PASS)
+    assert s.rng.getstate() == rng_before
+    assert s.dice.getstate() != dice_before
+
+
+def test_bottoming_keeps_mdfc_lands():
+    from mtgpt.goldfish.engine import _bottom_one
+    mdfc = card("Spell // Land", "Sorcery // Land", "Draw two cards.", mana_cost="{3}{G}",
+                produced_mana="G")
+    s = rigged(mdfc, hand=["Forest"] * 4 + ["Spell // Land"])
+    _bottom_one(s)
+    assert "Spell // Land" in names(s, s.hand)
+
+
+def test_malformed_game_file_is_reported():
+    from mtgpt.goldfish.engine import InvalidGameState
+    with pytest.raises(InvalidGameState):
+        from_dict({})
