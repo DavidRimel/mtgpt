@@ -31,6 +31,7 @@ def validate(deck: ResolvedDeck) -> tuple[Violation, ...]:
     findings: list[Violation] = []
     findings.extend(_check_size(deck))
     findings.extend(_check_commanders(deck))
+    findings.extend(_check_command_zone_duplicates(deck))
     findings.extend(_check_singleton(deck))
     findings.extend(_check_color_identity(deck))
     findings.extend(_check_banned(deck))
@@ -91,6 +92,32 @@ def _check_commanders(deck: ResolvedDeck) -> list[Violation]:
                     message=(
                         f"{commander.name} is not legendary, so it cannot be a "
                         f"commander (type: {commander.type_line})."
+                    ),
+                )
+            )
+    return findings
+
+
+def _check_command_zone_duplicates(deck: ResolvedDeck) -> list[Violation]:
+    """A commander may not also appear in the 99.
+
+    Singleton is enforced per-entry by _check_singleton, which only sees
+    deck.cards. Without this cross-zone check, two copies of one card — one in
+    the command zone, one in the deck — report as a legal 100-card deck.
+    """
+    if not deck.commanders:
+        return []
+    commander_names = {c.name.casefold() for c in deck.commanders}
+    findings: list[Violation] = []
+    for _, card in deck.cards:
+        if card.name.casefold() in commander_names:
+            findings.append(
+                Violation(
+                    severity=Severity.ERROR,
+                    code="duplicate_in_command_zone",
+                    message=(
+                        f"{card.name} is the commander and also appears in the 99. "
+                        "A card may be in one zone or the other, not both."
                     ),
                 )
             )

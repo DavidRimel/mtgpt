@@ -188,3 +188,32 @@ def test_errors_sort_before_warnings():
     assert Severity.ERROR in severities and Severity.WARNING in severities
     assert severities == sorted(severities)
     assert severities[0] is Severity.ERROR
+
+
+def test_flags_a_commander_that_also_appears_in_the_deck():
+    """Two copies of one card across zones is illegal and must not read as legal."""
+    spells = tuple((1, card(f"Spell {i}")) for i in range(62))
+    lands = ((36, card("Forest", type_line="Basic Land — Forest",
+                       color_identity=frozenset("G"))),)
+    deck = ResolvedDeck(commanders=(ATRAXA,), cards=spells + lands + ((1, ATRAXA),))
+    violations = [v for v in validate(deck) if v.code == "duplicate_in_command_zone"]
+    assert violations, "a commander duplicated in the 99 must be flagged"
+    assert violations[0].severity is Severity.ERROR
+    assert "Atraxa" in violations[0].message
+
+
+def test_duplicate_check_is_case_insensitive():
+    lower = card("atraxa, praetors' voice",
+                 type_line="Legendary Creature — Phyrexian Angel Horror",
+                 color_identity=frozenset("WUBG"))
+    deck = ResolvedDeck(commanders=(ATRAXA,), cards=((1, lower),))
+    assert "duplicate_in_command_zone" in [v.code for v in validate(deck)]
+
+
+def test_a_legal_deck_has_no_command_zone_duplicate_violation():
+    assert "duplicate_in_command_zone" not in [v.code for v in validate(legal_deck())]
+
+
+def test_no_duplicate_violation_when_there_is_no_commander():
+    deck = ResolvedDeck(commanders=(), cards=((1, card("Sol Ring")),))
+    assert "duplicate_in_command_zone" not in [v.code for v in validate(deck)]
