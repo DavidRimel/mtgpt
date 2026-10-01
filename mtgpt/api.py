@@ -359,6 +359,119 @@ def commander_themes(name: str, *, edhrec_client=None) -> dict:
     }
 
 
+# --- Suggestion operations --------------------------------------------------
+
+
+def suggest_additions(
+    text: str,
+    *,
+    target: int = 3,
+    variant: str | None = None,
+    limit: int = 10,
+    client: ScryfallClient | None = None,
+    edhrec_client=None,
+) -> dict:
+    """Propose specific cards to add, ranked, each justified.
+
+    Composition, not new logic: audit finds the gaps, EDHREC supplies
+    candidates, Scryfall verifies them, classify confirms each one fills the
+    gap it was chosen for, and the bracket rules reject anything that would
+    break the target.
+
+    Degrades rather than failing: if EDHREC is unreachable the gap analysis is
+    still returned, with the outage named in `degraded`.
+    """
+    from .brackets import RULES
+    from .errors import SourceUnavailable as _SourceUnavailable
+
+    scry = _client(client)
+    deck = _resolved(text, scry)
+    tags = classify_deck(deck)
+    report = audit(deck, tags=tags)
+    allowed = deck.command_zone_identity
+    present = {c.name.casefold() for _, c in deck.cards} | {
+        c.name.casefold() for c in deck.commanders
+    }
+
+    gaps = [
+        {
+            "function": c.function.value,
+            "count": c.count,
+            "target": [c.target_min, c.target_max],
+            "needed": c.delta,
+        }
+        for c in report.categories
+        if c.status == "low"
+    ]
+    gaps.sort(key=lambda g: g["needed"], reverse=True)
+    wanted = {g["function"] for g in gaps}
+
+    if not deck.commanders:
+        return {
+            "commanders": [],
+            "color_identity": sorted(allowed),
+            "target_bracket": target,
+            "gaps": gaps,
+            "suggestions": [],
+            "degraded": ["no commander declared, so no candidate source"],
+        }
+
+    degraded: list[str] = []
+    try:
+        pool = commander_synergy(
+            deck.commanders[0].name,
+            variant=variant,
+            limit=max(limit * 8, 80),
+            client=scry,
+            edhrec_client=edhrec_client,
+        )["cards"]
+    except _SourceUnavailable as exc:
+        degraded.append(exc.source)
+        pool = []
+
+    rule = RULES[target]
+    gc_allowance = rule.game_changers_max
+    gc_in_deck = sum(1 for _, c in deck.cards if c.is_game_changer)
+
+    suggestions = []
+    for candidate in pool:
+        if candidate["name"].casefold() in present:
+            continue
+        if not set(candidate["color_identity"]) <= allowed:
+            continue
+        if candidate["legal_commander"] != "legal":
+            continue
+        if gc_allowance is not None and candidate["is_game_changer"]:
+            if gc_in_deck >= gc_allowance:
+                continue
+        fills = sorted(set(candidate["functions"]) & wanted)
+        if not fills:
+            continue
+        rate = candidate.get("inclusion_rate")
+        entry = dict(candidate)
+        entry["fills"] = fills
+        entry["reason"] = (
+            f"fills {', '.join(fills)}; "
+            f"played in {rate:.0%} of recorded {deck.commanders[0].name} decks"
+            if rate
+            else f"fills {', '.join(fills)}"
+        )
+        suggestions.append(entry)
+
+    suggestions.sort(
+        key=lambda s: (len(s["fills"]), s.get("synergy") or 0.0), reverse=True
+    )
+
+    return {
+        "commanders": [c.name for c in deck.commanders],
+        "color_identity": sorted(allowed),
+        "target_bracket": target,
+        "gaps": gaps,
+        "suggestions": suggestions[:limit],
+        "degraded": degraded,
+    }
+
+
 _STATUS_MARK = {"ok": "ok", "low": "LOW", "high": "HIGH"}
 
 

@@ -14,7 +14,7 @@ def test_every_subcommand_is_registered():
     assert actions, "expected a subcommand dest named 'command'"
     assert set(actions[0].choices) == {
         "card", "search", "classify", "read", "validate", "audit", "bracket", "report",
-        "synergy", "themes", "combos", "card-combos",
+        "synergy", "themes", "combos", "card-combos", "suggest",
     }
 
 

@@ -90,6 +90,14 @@ def build_parser() -> argparse.ArgumentParser:
     card_combos_cmd = sub.add_parser("card-combos", help="Combos that use one card")
     card_combos_cmd.add_argument("name")
 
+    suggest = sub.add_parser("suggest", help="Propose cards to add, with reasons")
+    src = suggest.add_mutually_exclusive_group()
+    src.add_argument("--file")
+    src.add_argument("--stdin", action="store_true")
+    suggest.add_argument("--bracket", type=int, default=3, choices=[1, 2, 3, 4, 5])
+    suggest.add_argument("--variant", choices=["budget", "expensive", "upgraded", "cedh"])
+    suggest.add_argument("--limit", type=int, default=10)
+
     return parser
 
 
@@ -174,6 +182,11 @@ def main(argv: list[str] | None = None, client: ScryfallClient | None = None) ->
                     print(api.render_report(report))
                 else:
                     _emit(command, report)
+            elif command == "suggest":
+                _emit(command, api.suggest_additions(
+                    text, target=args.bracket, variant=args.variant,
+                    limit=args.limit, client=client,
+                ))
     except (UnresolvedCards, DeckStructureError, SourceUnavailable) as exc:
         _emit(command, _error_payload(exc), ok=False)
         return EXIT_USER_ERROR
