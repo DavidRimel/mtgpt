@@ -27,6 +27,9 @@ COLLECTION_BATCH_SIZE = 75
 #: Scryfall's requested courtesy delay between requests, in seconds.
 REQUEST_DELAY = 0.1
 
+#: Maximum pages for paginated endpoints before raising an error.
+MAX_GAME_CHANGER_PAGES = 20
+
 USER_AGENT = "mtgpt/0.1"
 
 Transport = Callable[..., dict]
@@ -40,8 +43,11 @@ def _http_transport(url: str, payload: dict | None = None) -> dict:
         data = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=data, headers=headers)
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except ValueError as exc:
+        raise SourceUnavailable("Scryfall", f"malformed response: {exc}") from exc
 
 
 def _front_face(payload: dict) -> dict:
@@ -85,6 +91,20 @@ class ScryfallClient:
     def __init__(self, transport: Transport | None = None, sleep=time.sleep):
         self._transport = transport or _http_transport
         self._sleep = sleep
+        self._made_request = False
+
+    def _request(self, url: str, payload: dict | None = None) -> dict:
+        """Perform a request, honoring Scryfall's courtesy delay across calls.
+
+        The delay is owned here rather than in each method's loop, so two
+        different endpoints hit back to back are still spaced.
+        """
+        if self._made_request:
+            self._sleep(REQUEST_DELAY)
+        self._made_request = True
+        if payload is not None:
+            return self._transport(url, payload)
+        return self._transport(url)
 
     def collection(
         self, names: Sequence[str]
@@ -100,10 +120,8 @@ class ScryfallClient:
         for index in range(0, len(names), COLLECTION_BATCH_SIZE):
             batch = names[index : index + COLLECTION_BATCH_SIZE]
             payload = {"identifiers": [{"name": n} for n in batch]}
-            if index:
-                self._sleep(REQUEST_DELAY)
             try:
-                body = self._transport(f"{API}/cards/collection", payload)
+                body = self._request(f"{API}/cards/collection", payload)
             except (urllib.error.URLError, OSError) as exc:
                 raise SourceUnavailable("Scryfall", str(exc)) from exc
             found.extend(body.get("data") or ())
@@ -122,16 +140,20 @@ class ScryfallClient:
         """
         names: set[str] = set()
         url = f"{API}/cards/search?q=is%3Agamechanger&unique=cards"
+        pages = 0
         while url:
+            pages += 1
+            if pages > MAX_GAME_CHANGER_PAGES:
+                raise SourceUnavailable("Scryfall Game Changers", f"pagination exceeded {MAX_GAME_CHANGER_PAGES} pages")
             try:
-                body = self._transport(url)
+                body = self._request(url)
             except (urllib.error.URLError, OSError) as exc:
                 raise SourceUnavailable("Scryfall Game Changers", str(exc)) from exc
             for card in body.get("data") or ():
-                names.add(card["name"].casefold())
+                name = card.get("name")
+                if name:
+                    names.add(name.casefold())
             url = body.get("next_page") if body.get("has_more") else None
-            if url:
-                self._sleep(REQUEST_DELAY)
         return frozenset(names)
 
 

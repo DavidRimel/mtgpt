@@ -7,6 +7,7 @@ from mtgpt.errors import SourceUnavailable, UnresolvedCards
 from mtgpt.models import DeckEntry, ParsedDeck
 from mtgpt.scryfall import (
     COLLECTION_BATCH_SIZE,
+    REQUEST_DELAY,
     ScryfallClient,
     card_from_json,
     resolve,
@@ -100,7 +101,7 @@ def test_collection_batches_requests_at_the_limit():
     assert missing == ()
 
 
-def test_collection_sleeps_between_requests():
+def test_first_request_does_not_sleep_but_later_ones_do():
     names = [f"Card {i}" for i in range(76)]
     transport = FakeTransport(
         {"data": [{"name": n} for n in names[:75]], "not_found": []},
@@ -109,7 +110,17 @@ def test_collection_sleeps_between_requests():
     slept = []
     client = ScryfallClient(transport=transport, sleep=slept.append)
     client.collection(names)
-    assert slept and all(s >= 0.1 for s in slept)
+    assert slept == [REQUEST_DELAY], "exactly one gap between two requests"
+
+
+def test_throttle_spans_separate_endpoints():
+    """collection() then game_changers() must still be spaced."""
+    parsed = ParsedDeck(entries=(DeckEntry(qty=1, name="Sol Ring"),))
+    transport = FakeTransport(load("collection_basic.json"), {"data": [], "has_more": False})
+    slept = []
+    client = ScryfallClient(transport=transport, sleep=slept.append)
+    resolve(parsed, client=client)
+    assert slept == [REQUEST_DELAY], "the second endpoint must be throttled too"
 
 
 def test_game_changers_returns_casefolded_names():
@@ -129,12 +140,56 @@ def test_game_changers_raises_source_unavailable_on_transport_error():
         client.game_changers()
 
 
+def test_game_changers_follows_pagination():
+    page_one = {
+        "data": [{"name": "Rhystic Study"}],
+        "has_more": True,
+        "next_page": "https://api.scryfall.com/cards/search?q=is%3Agamechanger&page=2",
+    }
+    page_two = {"data": [{"name": "Cyclonic Rift"}], "has_more": False}
+    transport = FakeTransport(page_one, page_two)
+    client = ScryfallClient(transport=transport, sleep=lambda _: None)
+    assert client.game_changers() == frozenset({"rhystic study", "cyclonic rift"})
+    assert len(transport.calls) == 2
+    assert "page=2" in transport.calls[1][0]
+
+
+def test_game_changers_stops_at_the_page_cap():
+    """A server that always says has_more must not hang the client."""
+    def transport(url, payload=None):
+        return {"data": [{"name": "Rhystic Study"}], "has_more": True,
+                "next_page": "https://api.scryfall.com/cards/search?page=99"}
+
+    client = ScryfallClient(transport=transport, sleep=lambda _: None)
+    with pytest.raises(SourceUnavailable):
+        client.game_changers()
+
+
 def test_resolve_matches_mdfc_requested_by_front_face_name():
     parsed = ParsedDeck(entries=(DeckEntry(qty=1, name="Agadeem's Awakening"),))
     transport = FakeTransport(load("collection_mdfc.json"), {"data": [], "has_more": False})
     client = ScryfallClient(transport=transport, sleep=lambda _: None)
     deck = resolve(parsed, client=client)
     assert deck.cards[0][1].name == "Agadeem's Awakening // Agadeem, the Undercrypt"
+
+
+def test_resolve_raises_when_a_returned_card_cannot_be_matched_to_its_request():
+    """collection() can succeed while a name still fails to match the index.
+
+    This is the second line of defense: Scryfall could answer 200 with a card
+    whose name normalizes differently than the one requested.
+    """
+    parsed = ParsedDeck(entries=(DeckEntry(qty=1, name="Sol Ring"),))
+    # not_found is empty, yet the returned card is a different card entirely.
+    transport = FakeTransport(
+        {"data": [{"name": "Mana Crypt", "legalities": {"commander": "legal"}}],
+         "not_found": []},
+        {"data": [], "has_more": False},
+    )
+    client = ScryfallClient(transport=transport, sleep=lambda _: None)
+    with pytest.raises(UnresolvedCards) as excinfo:
+        resolve(parsed, client=client)
+    assert excinfo.value.names == ("Sol Ring",)
 
 
 def test_resolve_separates_commanders_and_preserves_quantities():
