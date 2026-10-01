@@ -183,8 +183,10 @@ def effect_of(card: Card, identity: frozenset[str] = _ANY) -> SimEffect:
         # Calculate cost in mana value
         cost_mana = 0
         for symbol in mana_symbols_in_cost:
-            if symbol.isdigit():
-                cost_mana += int(symbol)
+            # symbol is like "{2}", "{W}", etc. Strip the braces
+            inner = symbol[1:-1]  # Remove { and }
+            if inner.isdigit():
+                cost_mana += int(inner)
             else:  # Colored or C symbol
                 cost_mana += 1
 
@@ -251,9 +253,12 @@ def _land_effect(card: Card, identity: frozenset[str]) -> SimEffect:
     colors = frozenset(card.produced_mana) & (identity | {"C"})
     tapped = bool(_ENTERS_TAPPED.search(text))
 
-    # Shockland case: "If you don't [pay X], it enters tapped" is optimistic
+    # Shockland case: "If you don't, it enters tapped" is optimistic (assume payment made)
     if tapped and "if you don't" in text.lower():
-        tapped = False
+        # Check for the specific shockland pattern to avoid false positives
+        lower_text = text.lower()
+        if re.search(r"if you don't[^.]*?(?:this land |it )enters tapped", lower_text):
+            tapped = False
 
     if not colors and _LAND_SEARCH.search(text):
         # A fetchland makes no mana itself; it becomes the basic it finds.

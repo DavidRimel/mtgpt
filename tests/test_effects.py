@@ -52,6 +52,15 @@ def test_mana_filter_counts_its_net_mana():
     assert not is_unmodeled(signet, effect)
 
 
+def test_generic_cost_mana():
+    # {2}, {T}: Add {B}{B} produces 2 but costs 2, net = 0
+    cost2 = card("Cost2", "Artifact", "{2}, {T}: Add {B}{B}.", mana_cost="{3}")
+    assert effect_of(cost2, BG).mana == 0
+    # {2}, {T}: Add {C}{C}{C} produces 3 but costs 2, net = 1
+    cost2_plus = card("Cost2Plus", "Artifact", "{2}, {T}: Add {C}{C}{C}.", mana_cost="{3}")
+    assert effect_of(cost2_plus, BG).mana == 1
+
+
 def test_ritual_is_one_shot_mana():
     ritual = card("Dark Ritual", "Instant", "Add {B}{B}{B}.", mana_cost="{B}", identity="B")
     effect = effect_of(ritual, frozenset("B"))
