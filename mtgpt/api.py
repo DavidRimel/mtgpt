@@ -330,6 +330,12 @@ def commander_synergy(
     Each candidate is resolved against Scryfall and tagged by function, so the
     agent can see what role it would fill before proposing it — and so a card
     EDHREC lists but Scryfall cannot resolve never reaches the user.
+
+    The returned `game_changers_available` flag tells the caller whether
+    `is_game_changer` on these candidates is trustworthy: a Game Changers
+    outage degrades to every candidate reporting `False` rather than failing
+    the call, and a caller enforcing a bracket allowance must be able to tell
+    the difference between "verified clean" and "unverifiable."
     """
     from .edhrec import EdhrecClient, synergy_cards
 
@@ -337,16 +343,21 @@ def commander_synergy(
     payload = source.commander(name, variant=variant)
     candidates = synergy_cards(payload, limit=limit)
     if not candidates:
-        return {"commander": name, "variant": variant, "count": 0, "cards": []}
+        return {
+            "commander": name, "variant": variant, "count": 0, "cards": [],
+            "game_changers_available": True,
+        }
 
     scry = _client(client)
     verified, _ = scry.collection([c["name"] for c in candidates], strict=False)
-    # A Game Changers outage must not fail the whole operation: the candidate
-    # list is still useful, the bracket filter just cannot run.
+    gc_available = True
     try:
         game_changers = scry.game_changers()
     except SourceUnavailable:
+        # The audit and the candidate list are still useful without it, but the
+        # caller must be able to tell that is_game_changer is unenforced.
         game_changers = frozenset()
+        gc_available = False
 
     by_name = {}
     for p in verified:
@@ -366,7 +377,10 @@ def commander_synergy(
         entry["edhrec_list"] = candidate["list"]
         out.append(entry)
 
-    return {"commander": name, "variant": variant, "count": len(out), "cards": out}
+    return {
+        "commander": name, "variant": variant, "count": len(out), "cards": out,
+        "game_changers_available": gc_available,
+    }
 
 
 def commander_themes(name: str, *, edhrec_client=None) -> dict:
@@ -441,13 +455,19 @@ def suggest_additions(
 
     degraded: list[str] = []
     try:
-        pool = commander_synergy(
+        pool_result = commander_synergy(
             deck.commanders[0].name,
             variant=variant,
             limit=max(limit * 8, 80),
             client=scry,
             edhrec_client=edhrec_client,
-        )["cards"]
+        )
+        pool = pool_result["cards"]
+        if not pool_result.get("game_changers_available", True):
+            degraded.append(
+                "Scryfall Game Changers list unavailable, so the bracket "
+                "Game Changer allowance could not be enforced"
+            )
     except _SourceUnavailable as exc:
         degraded.append(exc.source)
         pool = []

@@ -18,7 +18,10 @@ class FakeTransport:
         self.responses = list(responses)
 
     def __call__(self, url, payload=None):
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 class FakeEdhrec:
@@ -245,6 +248,49 @@ def test_an_off_colour_candidate_is_excluded():
         text, target=3, limit=20, client=client, edhrec_client=FakeEdhrec(payload)
     )
     assert "Lightning Bolt" not in [s["name"] for s in result["suggestions"]]
+
+
+def test_a_game_changers_outage_is_named_in_degraded():
+    """The bracket allowance cannot be enforced without the list, and the
+    caller must be able to tell. Reporting degraded: [] here would claim full
+    health while every candidate silently reports is_game_changer=False.
+    """
+    text = (FIXTURES / "sample_deck.txt").read_text()
+    payload = _edhrec_payload(
+        {"name": "Rhystic Study", "synergy": 0.5, "num_decks": 50, "potential_decks": 100},
+    )
+    client = ScryfallClient(
+        transport=FakeTransport(
+            load("collection_sample_deck.json"), {"data": [], "has_more": False},
+            {"data": [_RHYSTIC_STUDY], "not_found": []},
+            # The Game Changers search itself fails, after candidates resolved fine.
+            OSError("Game Changers search down"),
+        ),
+        sleep=lambda _: None,
+    )
+    result = api.suggest_additions(
+        text, target=2, limit=5, client=client, edhrec_client=FakeEdhrec(payload)
+    )
+    assert any("Game Changer" in d for d in result["degraded"]), result["degraded"]
+    # The gap analysis must still be returned.
+    assert result["gaps"]
+
+
+def test_no_degradation_is_reported_when_the_list_is_available():
+    """The healthy path must not cry wolf."""
+    text = (FIXTURES / "sample_deck.txt").read_text()
+    client = ScryfallClient(
+        transport=FakeTransport(
+            load("collection_sample_deck.json"), {"data": [], "has_more": False},
+            load("collection_basic.json"), {"data": [], "has_more": False},
+        ),
+        sleep=lambda _: None,
+    )
+    result = api.suggest_additions(
+        text, target=3, limit=5, client=client,
+        edhrec_client=FakeEdhrec(load("edhrec_commander.json")),
+    )
+    assert result["degraded"] == []
 
 
 def test_suggest_degrades_when_edhrec_is_unavailable():
