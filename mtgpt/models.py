@@ -110,6 +110,11 @@ class Card:
     is_game_changer: bool
     usd: float | None
     keywords: tuple[str, ...] = ()
+    #: Front-face power and toughness; None for a non-creature. A star reads as
+    #: its printed floor ("*" is 0, "1+*" is 1), since nothing downstream can
+    #: evaluate what the star counts.
+    power: float | None = None
+    toughness: float | None = None
 
     @property
     def front_type_line(self) -> str:

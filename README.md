@@ -19,9 +19,10 @@ Then ask Claude to audit, tune, or explore a Commander deck.
 
 ## Use directly
 
-mtgpt is thirteen independently callable operations, each emitting one JSON
+mtgpt is seventeen independently callable operations, each emitting one JSON
 object: `card`, `search`, `classify`, `read`, `validate`, `audit`, `bracket`,
-`report`, `synergy`, `themes`, `combos`, `card-combos`, `suggest`.
+`report`, `synergy`, `themes`, `combos`, `card-combos`, `suggest`, `goldfish`,
+`goldfish-compare`, `goldfish-new`, `goldfish-step`.
 
 ```bash
 # Full picture, human-readable
@@ -43,6 +44,10 @@ python3 -m mtgpt.cli themes  "Atraxa, Praetors' Voice"
 # Combo detection
 python3 -m mtgpt.cli card-combos "Thassa's Oracle"
 python3 -m mtgpt.cli combos --file mydeck.txt
+
+# Goldfish: how the deck plays, against a goal file you write per deck
+python3 -m mtgpt.cli goldfish         --file mydeck.txt --goal mydeck.goal.json
+python3 -m mtgpt.cli goldfish-compare --file mydeck.txt --file mydeck-v2.txt --goal mydeck.goal.json
 ```
 
 Every subcommand that takes a decklist accepts `--file <path>` or `--stdin`:
@@ -76,17 +81,18 @@ text in with `--stdin`.
 - **Synergy and themes** — EDHREC candidates and inclusion rates for a commander, and how it's usually built
 - **Combos** — Commander Spellbook combos for one card, or what a decklist actually assembles
 - **Suggestions** — ranked cards to add, each justified by the gap it fills and (when available) its EDHREC inclusion rate
+- **Goldfish** — over many simulated games: whether early turns ramp, whether the commander lands on curve, how often the deck's plan is online with interaction in hand, how it recovers from removal and wipes, and how fast it wins
 
 ## Status
 
-Layer 1 (and the combo/synergy/suggest operations added after it). Working
-now: ingest, Scryfall resolution, validation, function classification, the
-ratio and curve audit, bracket checks, EDHREC synergy and themes, Commander
-Spellbook combo detection, and gap-driven suggestions.
+Layers 1-3. Working now: ingest, Scryfall resolution, validation, function
+classification, the ratio and curve audit, bracket checks, EDHREC synergy and
+themes, Commander Spellbook combo detection, gap-driven suggestions, and
+goldfish simulation (auto, and Claude-piloted turn by turn).
 
 Not built yet, and deliberately not improvised by the skill: Moxfield URL
-fetching (see below), goldfish simulation, and building a full deck from
-scratch given only a commander.
+fetching (see below), and building a full deck from scratch given only a
+commander.
 
 ### Moxfield URL fetching
 
@@ -118,3 +124,5 @@ Tests never touch the network; they run against fixtures in `tests/fixtures/`.
 
 - [Design](docs/superpowers/specs/2026-09-30-mtgpt-design.md)
 - [Layer 1 plan](docs/superpowers/plans/2026-09-30-mtgpt-layer1.md)
+- [Goldfish design](docs/superpowers/specs/2026-10-01-goldfish-design.md)
+- [Goldfish plan](docs/superpowers/plans/2026-10-01-goldfish.md)

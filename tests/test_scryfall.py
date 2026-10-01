@@ -383,3 +383,26 @@ def test_an_invented_name_still_raises_even_with_a_slash():
     with pytest.raises(UnresolvedCards) as excinfo:
         client.collection(["Blatantly Fake // Not A Card"])
     assert excinfo.value.names == ("Blatantly Fake // Not A Card",)
+
+
+def test_card_from_json_reads_power_and_toughness():
+    from mtgpt.scryfall import card_from_json
+
+    bear = card_from_json(
+        {"name": "Bear", "type_line": "Creature — Bear", "power": "2", "toughness": "2"},
+        game_changers=frozenset(),
+    )
+    star = card_from_json(
+        {"name": "Star", "type_line": "Creature", "power": "1+*", "toughness": "*"},
+        game_changers=frozenset(),
+    )
+    rock = card_from_json({"name": "Rock", "type_line": "Artifact"}, game_changers=frozenset())
+    mdfc = card_from_json(
+        {"name": "A // B", "type_line": "Creature // Land",
+         "card_faces": [{"name": "A", "power": "3", "toughness": "1"}, {"name": "B"}]},
+        game_changers=frozenset(),
+    )
+    assert (bear.power, bear.toughness) == (2.0, 2.0)
+    assert (star.power, star.toughness) == (1.0, 0.0)
+    assert rock.power is None
+    assert mdfc.power == 3.0

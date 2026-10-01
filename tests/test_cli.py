@@ -15,6 +15,7 @@ def test_every_subcommand_is_registered():
     assert set(actions[0].choices) == {
         "card", "search", "classify", "read", "validate", "audit", "bracket", "report",
         "synergy", "themes", "combos", "card-combos", "suggest",
+        "goldfish", "goldfish-compare", "goldfish-new", "goldfish-step",
     }
 
 
@@ -153,3 +154,158 @@ def test_a_utf8_bom_decklist_still_parses(capsys, tmp_path):
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert payload["data"]["total_cards"] == 37
+
+
+# --- Goldfish ----------------------------------------------------------------
+
+
+def goal_file(tmp_path, data=None):
+    path = tmp_path / "deck.goal.json"
+    path.write_text(json.dumps(data or {"archetype": "go_wide"}))
+    return str(path)
+
+
+def test_goldfish_passes_options_through(monkeypatch, capsys, tmp_path):
+    seen = {}
+
+    def fake(text, goal, **options):
+        seen.update(goal=goal, **options)
+        return {"games": options["games"]}
+
+    monkeypatch.setattr(cli.api, "goldfish", fake)
+    code = cli.main(["goldfish", "--file", str(FIXTURES / "sample_deck.txt"),
+                     "--goal", goal_file(tmp_path), "--games", "50", "--turns", "8",
+                     "--seed", "3", "--no-disruption"])
+    assert code == 0
+    assert seen == {"goal": {"archetype": "go_wide"}, "games": 50, "turns": 8,
+                    "seed": 3, "disruption": False, "client": None}
+
+
+def test_goldfish_rejects_a_malformed_goal_file(capsys, tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    code = cli.main(["goldfish", "--file", str(FIXTURES / "sample_deck.txt"), "--goal", str(bad)])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 2
+    assert payload["error"]["type"] == "JSONDecodeError"
+
+
+def test_goldfish_compare_needs_two_files(capsys, tmp_path):
+    deck = str(FIXTURES / "sample_deck.txt")
+    code = cli.main(["goldfish-compare", "--file", deck, "--goal", goal_file(tmp_path)])
+    assert code == 2
+    assert json.loads(capsys.readouterr().out)["error"]["type"] == "MissingInput"
+
+
+def test_pilot_new_writes_state_and_step_rewrites_it(monkeypatch, capsys, tmp_path):
+    import pytest
+    out = tmp_path / "game.json"
+
+    # Track that goldfish_new is called with the right arguments
+    def mock_goldfish_new(text, goal, **o):
+        return {"state": {"turn": 1}, "view": {"turn": 1}}
+
+    monkeypatch.setattr(cli.api, "goldfish_new", mock_goldfish_new)
+
+    # Test default game=0
+    called = []
+    def mock1(text, goal, **o):
+        called.append(o["game"])
+        return {"state": {"turn": 1}, "view": {"turn": 1}}
+    monkeypatch.setattr(cli.api, "goldfish_new", mock1)
+
+    assert cli.main(["goldfish-new", "--file", str(FIXTURES / "sample_deck.txt"),
+                     "--goal", goal_file(tmp_path), "--out", str(out)]) == 0
+    assert called[-1] == 0
+    assert json.loads(out.read_text()) == {"turn": 1}
+    assert json.loads(capsys.readouterr().out)["data"] == {"turn": 1}
+
+    # Test --game 2
+    assert cli.main(["goldfish-new", "--file", str(FIXTURES / "sample_deck.txt"),
+                     "--goal", goal_file(tmp_path), "--game", "2", "--out", str(out)]) == 0
+    assert called[-1] == 2
+
+    def step(state, action):
+        assert (state, action) == ({"turn": 1}, {"pass": True})
+        return {"state": {"turn": 2}, "view": {"turn": 2}}
+
+    monkeypatch.setattr(cli.api, "goldfish_step", step)
+    assert cli.main(["goldfish-step", "--state", str(out), "--action", '{"pass": true}']) == 0
+    assert json.loads(out.read_text()) == {"turn": 2}
+
+
+def test_pilot_new_rejects_negative_game(tmp_path):
+    import pytest
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["goldfish-new", "--file", str(FIXTURES / "sample_deck.txt"),
+                  "--goal", goal_file(tmp_path), "--game", "-1", "--out", str(tmp_path / "game.json")])
+    assert exc_info.value.code == 2
+
+
+def test_pilot_illegal_action_is_a_user_error(monkeypatch, capsys, tmp_path):
+    from mtgpt.goldfish.engine import IllegalAction
+
+    state = tmp_path / "game.json"
+    state.write_text("{}")
+
+    def step(state, action):
+        raise IllegalAction(action, [{"pass": True}])
+
+    monkeypatch.setattr(cli.api, "goldfish_step", step)
+    code = cli.main(["goldfish-step", "--state", str(state), "--action", '{"cast": "X"}'])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 2
+    assert payload["error"]["legal_actions"] == [{"pass": True}]
+    assert json.loads(state.read_text()) == {}, "a refused action must not touch the game"
+
+
+def _envelope_error(capsys):
+    return json.loads(capsys.readouterr().out)["error"]
+
+
+def test_goldfish_goal_file_must_be_an_object(capsys, tmp_path):
+    code = cli.main(["goldfish", "--file", str(FIXTURES / "sample_deck.txt"),
+                     "--goal", _raw(tmp_path, "null")])
+    assert code == 2
+    assert _envelope_error(capsys)["type"] == "JSONDecodeError"
+
+
+def _raw(tmp_path, text, name="raw.json"):
+    path = tmp_path / name
+    path.write_text(text)
+    return str(path)
+
+
+def test_goldfish_step_state_file_must_be_an_object(capsys, tmp_path):
+    state = _raw(tmp_path, "null", "state.json")
+    assert cli.main(["goldfish-step", "--state", state, "--action", "{}"]) == 2
+    assert _envelope_error(capsys)["type"] == "JSONDecodeError"
+
+
+def test_goldfish_step_action_must_be_an_object(capsys, tmp_path):
+    state = _raw(tmp_path, "{}", "state.json")
+    for bad in ("null", "[1]"):
+        assert cli.main(["goldfish-step", "--state", state, "--action", bad]) == 2
+        err = _envelope_error(capsys)
+        assert (err["type"], err["field"]) == ("JSONDecodeError", "--action")
+
+
+def test_goldfish_step_malformed_state_leaves_file_untouched(capsys, tmp_path):
+    state = _raw(tmp_path, "{not json", "state.json")
+    assert cli.main(["goldfish-step", "--state", state, "--action", "{}"]) == 2
+    assert _envelope_error(capsys)["type"] == "JSONDecodeError"
+    assert open(state).read() == "{not json"
+
+
+def test_write_json_failure_keeps_the_old_file(monkeypatch, capsys, tmp_path):
+    target = tmp_path / "game.json"
+    target.write_text('{"old": 1}')
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(cli.json, "dump", boom)
+    assert cli._write_json(str(target), {"new": 2}, "goldfish-new") is False
+    assert target.read_text() == '{"old": 1}'
+    assert not (tmp_path / "game.json.tmp").exists()
+    assert _envelope_error(capsys)["type"] == "OSError"
