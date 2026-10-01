@@ -12,6 +12,7 @@ deck does not contain is a hard stop, never a silently inert override.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, fields
 from functools import cached_property
@@ -47,7 +48,10 @@ _DEFAULTS: dict[str, tuple[object, object]] = {
     "custom": (None, None),
 }
 _GOAL_FIELDS = ("archetype", "commander_turn", "engine", "thing", "win", "disruption")
-_INT_SPEC_FIELDS = ("drain", "draw", "treasure", "tokens", "anthem")
+_INT_SPEC_FIELDS = ("drain", "draw", "treasure", "tokens", "anthem", "mana")
+#: A mana cost written in symbols: {3}, {W}, {C}, {X}, hybrid {W/U}, {2/W}, Phyrexian {B/P}.
+_MANA_COST = re.compile(r"(?:\{(?:\d+|[WUBRGCXS]|[WUBRG2]/[WUBRGP])\})+")
+_MANA_COLORS = frozenset("WUBRGC")
 _BOOL_SPEC_FIELDS = ("sac_outlet", "payoff", "finisher")
 
 
@@ -89,6 +93,13 @@ class EngineSpec:
     finisher: bool = False
     anthem: int = 0
     priority: str | None = None
+    #: While this permanent is on the battlefield, any spell may be cast for
+    #: this cost instead of its own (Jodah, Fist of Suns). Commander tax still
+    #: applies on top.
+    alt_cost: str | None = None
+    #: Mana this permanent taps for each turn, and its colors (Bloom Tender).
+    mana: int = 0
+    mana_colors: frozenset[str] = frozenset()
 
     def has_tag(self, tag: str) -> bool:
         if tag == "drain":
@@ -276,12 +287,25 @@ def _engine(raw, canon) -> tuple[tuple[str, EngineSpec], ...]:
             bools[key] = value
         if on is None and any(ints[k] for k in ("drain", "draw", "treasure", "tokens")):
             raise GoalError(f"{where}.on", "a trigger effect needs an `on` event")
+        alt_cost = spec.get("alt_cost")
+        if alt_cost is not None and not (isinstance(alt_cost, str) and _MANA_COST.fullmatch(alt_cost)):
+            raise GoalError(f"{where}.alt_cost", "must be a mana cost in symbols, e.g. \"{W}{U}{B}{R}{G}\"",
+                            [alt_cost])
+        mana_colors = _mana_colors(spec.get("mana_colors", ""), f"{where}.mana_colors")
+        if ints["mana"] and not mana_colors:
+            raise GoalError(f"{where}.mana_colors", "`mana` needs the colors it makes, e.g. \"WUBRG\"")
         out.append((card, EngineSpec(
-            on=on, priority=priority,
+            on=on, priority=priority, alt_cost=alt_cost, mana_colors=mana_colors,
             token_power=_number(spec.get("token_power", 1), f"{where}.token_power"),
             **ints, **bools,
         )))
     return tuple(out)
+
+
+def _mana_colors(value, field: str) -> frozenset[str]:
+    if not isinstance(value, str) or not set(value.upper()) <= _MANA_COLORS:
+        raise GoalError(field, "must be a string of mana symbols from WUBRGC, e.g. \"WUBRG\"", [value])
+    return frozenset(value.upper())
 
 
 def _disruption(raw) -> Disruption:

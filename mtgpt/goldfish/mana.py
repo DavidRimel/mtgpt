@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 
 _SYMBOL = re.compile(r"\{([^}]+)\}")
 _PAYABLE = frozenset("WUBRGC")
@@ -18,6 +19,7 @@ _PAYABLE = frozenset("WUBRGC")
 _RANK = {"pool": 0, "land": 1, "rock": 2, "treasure": 3}
 
 
+@lru_cache(maxsize=None)
 def parse_cost(mana_cost: str) -> tuple[int, tuple[frozenset[str], ...]]:
     """Split a cost into (generic, colored pips). Each pip is the set of colors
     that can pay it.

@@ -34,9 +34,34 @@ def test_interaction_alone_is_held():
     assert choose(s) == {"pass": True}
 
 
-def test_untapped_land_is_played_before_a_tapped_one():
+def test_tapped_land_is_played_when_the_untapped_one_casts_nothing_more():
     s = rigged(GUILDGATE, hand=["Gate", "Forest"])
+    assert choose(s) == {"play_land": "Gate"}
+
+
+def test_untapped_land_is_played_when_it_casts_more():
+    bear = card("Grizzly Bears", "Creature — Bear", "", mana_cost="{1}{G}", power=2.0)
+    s = rigged(GUILDGATE, bear, hand=["Gate", "Forest", "Grizzly Bears"], lands_in_play=1)
     assert choose(s) == {"play_land": "Forest"}
+
+
+def test_tapped_land_on_a_turn_the_untapped_one_only_floats_mana():
+    # Three lands out and a 3-drop in hand: the untapped fourth land adds mana
+    # nothing can spend, so the tapped land goes down now.
+    bear = card("Grizzly Bears", "Creature — Bear", "", mana_cost="{2}{G}", power=2.0)
+    s = rigged(GUILDGATE, bear, hand=["Gate", "Forest", "Grizzly Bears"], lands_in_play=3)
+    s.command_zone = []
+    assert choose(s) == {"play_land": "Gate"}
+
+
+def test_land_choice_never_casts_less_than_untapped_first():
+    # Only the untapped land lets Bears resolve this turn, so it must be chosen
+    # and Bears must follow.
+    bear = card("Grizzly Bears", "Creature — Bear", "", mana_cost="{1}{G}", power=2.0)
+    s = rigged(GUILDGATE, bear, hand=["Gate", "Forest", "Grizzly Bears"], lands_in_play=1)
+    s.command_zone = []
+    apply(s, choose(s), in_place=True)
+    assert play_out_turn(s) == ["Grizzly Bears"]
 
 
 def test_tutor_finds_the_missing_combo_piece():
@@ -127,3 +152,22 @@ def test_goal_named_unmodeled_mdfc_is_cast():
     s.command_zone = []
     s.land_played = True
     assert choose(s) == {"cast": "Odd Spell // Odd Land"}
+
+
+def test_land_shortcut_counts_an_alternative_cost():
+    # Jodah out with 4 lands: a 10-drop costs WUBRG, so the untapped fifth land
+    # casts it and must be played over the tapped one.
+    from mtgpt.models import ResolvedDeck
+    prism = card("Prism Land", "Land", "{T}: Add one mana of any color.", produced_mana="WUBRG",
+                 identity="WUBRG", colors="")
+    prism_gate = card("Prism Gate", "Land", "This land enters tapped.\n{T}: Add one mana of any color.",
+                      produced_mana="WUBRG", identity="WUBRG", colors="")
+    big = card("Big Spell", "Sorcery", "", mana_cost="{7}{U}{U}{U}", identity="U")
+    jodah = card("Jodah", "Legendary Creature — Human Wizard", "", mana_cost="{1}{U}{R}{W}",
+                 power=3.0, identity="WUBRG")
+    d = ResolvedDeck(commanders=(jodah,), cards=((1, big), (1, prism_gate), (97, prism)))
+    goal = {"archetype": "custom", "thing": "commander", "win": NEVER,
+            "engine": {"Jodah": {"alt_cost": "{W}{U}{B}{R}{G}"}}}
+    s = rigged(source=d, land="Prism Land", lands_in_play=4, commander_out=True,
+               hand=["Big Spell", "Prism Gate", "Prism Land"], goal=goal)
+    assert choose(s) == {"play_land": "Prism Land"}

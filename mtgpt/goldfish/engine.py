@@ -158,7 +158,8 @@ def prepare(deck: ResolvedDeck, goal_raw: dict) -> Setup:
                      commander_mv=min(c.mana_value for c in deck.commanders))
     cards = [_info(c, identity, True) for c in deck.commanders]
     cards += [_info(c, identity, False) for c in deck.iter_cards()]
-    cards = [_overridden(c) if goal.engine_for(c.name) is not None else c for c in cards]
+    cards = [_overridden(c, spec) if (spec := goal.engine_for(c.name)) is not None else c
+             for c in cards]
     return Setup(
         cards=tuple(cards),
         commanders=tuple(range(len(deck.commanders))),
@@ -186,14 +187,16 @@ def new_game(setup: Setup, *, seed, turn_cap: int = DEFAULT_TURN_CAP,
     return state
 
 
-def _overridden(info: CardInfo) -> CardInfo:
+def _overridden(info: CardInfo, spec) -> CardInfo:
     """An engine override replaces the parsed effect: only the card's body
     (power, equipment bonus) and land face survive, so its text's draw, mana,
-    and interaction no longer apply on top of the override."""
+    and interaction no longer apply on top of the override. The override's own
+    `mana` becomes the card's mana."""
     e = info.effect
     return replace(info, effect=SimEffect(power=e.power, power_bonus=e.power_bonus,
                                           land_colors=e.land_colors,
-                                          enters_tapped=e.enters_tapped))
+                                          enters_tapped=e.enters_tapped,
+                                          mana=spec.mana, mana_colors=spec.mana_colors))
 
 
 def _info(card, identity, is_commander: bool) -> CardInfo:
@@ -331,7 +334,10 @@ def apply(state: GameState, action: dict, *, in_place: bool = False) -> GameStat
     legal = legal_actions(state)
     if action not in legal:
         raise IllegalAction(action, legal)
-    s = state if in_place else copy.deepcopy(state)
+    # The card table and goal are frozen, so the copy shares them: copying a
+    # hundred CardInfos per look-ahead is most of a copy's cost.
+    s = state if in_place else copy.deepcopy(
+        state, {id(state.cards): state.cards, id(state.goal): state.goal})
     if "play_land" in action:
         _play_land(s, action["play_land"])
     elif "cast" in action:
@@ -695,8 +701,28 @@ def _units(s: GameState) -> list[Unit]:
 
 
 def _payment(s: GameState, idx: int, units: list[Unit]) -> list[int] | None:
-    generic, pips = parse_cost(s.cards[idx].mana_cost)
-    return plan_payment(units, generic + s.tax.get(idx, 0), pips)
+    """The cheapest payable plan: the card's own cost, or an alternative cost
+    a permanent on the battlefield offers (Jodah's WUBRG). Tax applies to
+    either. A tie goes to the card's own cost."""
+    tax = s.tax.get(idx, 0)
+    best = None
+    for cost in [s.cards[idx].mana_cost, *_alt_costs(s)]:
+        generic, pips = parse_cost(cost)
+        plan = plan_payment(units, generic + tax, pips)
+        if plan is not None and (best is None or len(plan) < len(best)):
+            best = plan
+    return best
+
+
+def _alt_costs(s: GameState) -> list[str]:
+    costs: list[str] = []
+    for perm in s.battlefield:
+        if perm.card is None:
+            continue
+        spec = s.goal.engine_for(s.cards[perm.card].name)
+        if spec is not None and spec.alt_cost and spec.alt_cost not in costs:
+            costs.append(spec.alt_cost)
+    return costs
 
 
 def _spend(s: GameState, plan: list[int], units: list[Unit]) -> None:

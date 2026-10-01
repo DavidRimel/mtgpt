@@ -148,7 +148,12 @@ it recovers from disruption (`disruption`).
    `creature_etb`, `spell_cast`, `instant_sorcery_cast`, `upkeep`, `attack`;
    effects `drain`, `draw`, `treasure`, `tokens`/`token_power`, `anthem` (number: +N
    power to each creature you control); tags `sac_outlet`, `payoff`, `finisher`;
-   `priority` `engine` or `hold`). Engine names must be in the deck: a `GoalError`
+   `priority` `engine` or `hold`; `alt_cost`, a mana cost such as
+   `"{W}{U}{B}{R}{G}"` that any spell may be cast for while this permanent is
+   out — Jodah, Fist of Suns — with commander tax still added; `mana` (number)
+   with `mana_colors` (e.g. `"WUBRG"`) for a permanent that taps for more than
+   its text parses — Bloom Tender, Faeburrow Elder, or Lotus Cobra's landfall as
+   a per-turn estimate). Engine names must be in the deck: a `GoalError`
    names the field and value at fault. An override replaces the card's parsed
    effect, so restate anything from its text you still want (a Phyrexian Arena
    override with only a `drain` no longer draws).

@@ -300,3 +300,76 @@ def test_goal_named_card_spends_as_engine():
     s = rigged(TRINKET, hand=["Trinket"], lands_in_play=1, goal=goal)
     s = apply(s, {"cast": "Trinket"})
     assert s.spent_this_turn == {"ramp": 0, "engine": 1, "other": 0}
+
+
+# --- Alternative costs and ongoing mana from engine overrides ---------------
+
+JODAH_TEXT = "Flying\nYou may pay {W}{U}{B}{R}{G} rather than pay the mana cost for spells you cast."
+OMNISCIENCE = card("Omniscience", "Enchantment", "You may cast spells from your hand "
+                   "without paying their mana costs.", mana_cost="{7}{U}{U}{U}")
+CHEAP = card("Cheap Trick", "Sorcery", "", mana_cost="{1}")
+TENDER = card("Bloom Tender", "Creature — Elf Druid",
+              "{T}: For each color among permanents you control, add one mana of that color.",
+              mana_cost="{1}{G}", power=1.0)
+ALL_COLORS = frozenset("WUBRG")
+
+
+def any_land():
+    return card("Prism Land", "Land", "{T}: Add one mana of any color.", produced_mana="WUBRG",
+                identity="WUBRG", colors="")
+
+
+def jodah_deck(*spells, lands=None):
+    from mtgpt.models import ResolvedDeck
+    jodah = card("Jodah", "Legendary Creature — Human Wizard", JODAH_TEXT,
+                 mana_cost="{1}{U}{R}{W}", power=3.0, identity="WUBRG")
+    lands = 99 - len(spells) if lands is None else lands
+    return ResolvedDeck(commanders=(jodah,), cards=tuple((1, s) for s in spells) + ((lands, any_land()),))
+
+
+ALT_GOAL = {"archetype": "custom", "thing": "commander", "win": NEVER,
+            "engine": {"Jodah": {"alt_cost": "{W}{U}{B}{R}{G}"}}}
+
+
+def test_alt_cost_applies_only_while_its_permanent_is_out():
+    s = rigged(source=jodah_deck(OMNISCIENCE), land="Prism Land", lands_in_play=5,
+               hand=["Omniscience"], goal=ALT_GOAL)
+    assert {"cast": "Omniscience"} not in legal_actions(s)
+    s = rigged(source=jodah_deck(OMNISCIENCE), land="Prism Land", lands_in_play=5,
+               hand=["Omniscience"], commander_out=True, goal=ALT_GOAL)
+    s = apply(s, {"cast": "Omniscience"})
+    assert any(p.name == "Omniscience" for p in s.battlefield)
+    assert available_mana(s) == 0  # paid exactly WUBRG
+
+
+def test_the_cheaper_cost_is_paid():
+    s = rigged(source=jodah_deck(CHEAP), land="Prism Land", lands_in_play=5,
+               hand=["Cheap Trick"], commander_out=True, goal=ALT_GOAL)
+    s = apply(s, {"cast": "Cheap Trick"})
+    assert available_mana(s) == 4  # paid {1}, not WUBRG
+
+
+def test_commander_tax_adds_to_the_alt_cost():
+    # Fist-of-Suns-style: the alt cost comes from another permanent, the commander pays tax on it.
+    fist = card("Fist of Suns", "Artifact", "You may pay {W}{U}{B}{R}{G} rather than pay the "
+                "mana cost for spells you cast.", mana_cost="{3}")
+    goal = {"archetype": "custom", "thing": "commander", "win": NEVER,
+            "engine": {"Fist of Suns": {"alt_cost": "{W}{U}{B}{R}{G}"}}}
+    s = rigged(source=jodah_deck(fist), land="Prism Land", lands_in_play=6,
+               on_board=["Fist of Suns"], goal=goal)
+    s.tax[0] = 2
+    # Normal cost 4 + 2 tax = 6, alt 5 + 2 = 7: the normal cost is cheaper.
+    s = apply(s, {"cast": "Jodah"})
+    assert available_mana(s) == 0
+
+
+def test_override_mana_taps_for_its_count_but_not_the_turn_it_enters():
+    goal = {"archetype": "custom", "thing": "commander", "win": NEVER,
+            "engine": {"Bloom Tender": {"mana": 3, "mana_colors": "WUBRG"}}}
+    s = rigged(TENDER, hand=["Bloom Tender"], lands_in_play=2, goal=goal)
+    s = apply(s, {"cast": "Bloom Tender"})
+    assert available_mana(s) == 0
+    s = apply(s, {"pass": True})
+    assert available_mana(s) == 2 + 3
+    tender = next(p for p in s.battlefield if p.name == "Bloom Tender")
+    assert s.cards[tender.card].effect.mana_colors == ALL_COLORS
