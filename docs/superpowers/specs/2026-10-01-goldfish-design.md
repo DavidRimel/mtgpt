@@ -193,7 +193,9 @@ carries the legal list.
 
 1. Play a land: an untapped one if it lets you cast something this turn, otherwise a tapped
    one; an MDFC land only when no other land is in hand.
-2. Cast by priority, cheapest first within a tier, repeating while mana remains:
+2. Cast by priority, cheapest first within a tier, repeating while mana remains (from
+   the commander's curve turn — `commander_turn` — on, the commander moves ahead of ramp:
+   ramp is there to cast it sooner, never to delay it):
    1. Ramp.
    2. The commander.
    3. Engine pieces (`priority: "engine"`, or anything the `thing` or `win` condition

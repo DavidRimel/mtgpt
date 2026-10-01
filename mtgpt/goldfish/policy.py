@@ -2,7 +2,8 @@
 """The heuristic pilot: a fixed priority order, so runs are repeatable.
 
 The order is the user's: ramp, then the commander, then the commander's thing,
-then card flow, then everything else. Instant and sorcery interaction is never
+then card flow, then everything else — except that from the commander's curve
+turn on, the commander comes before ramp. Instant and sorcery interaction is never
 cast; it is held and counted, and disruption spends protection when it lands.
 Interaction permanents (Equipment, Lightning Greaves, Mother of Runes) are cast,
 and protect the commander from the battlefield. An MDFC whose spell face the
@@ -21,6 +22,9 @@ from .mana import parse_cost
 RAMP, COMMANDER, ENGINE, VALUE, OTHER = range(5)
 #: Ranks below every tier: a `hold` card cast because it wins this turn.
 _WINS_NOW = -1
+#: From its curve turn on, the commander outranks ramp: ramp exists to cast the
+#: commander sooner, so spending the curve turn on ramp instead defeats it.
+_COMMANDER_ON_CURVE = -0.5
 
 
 def choose(state: GameState) -> dict:
@@ -63,7 +67,7 @@ def tier(state: GameState, idx: int):
     if card.effect.draw_library:
         return "hold"
     if card.is_commander:
-        return COMMANDER
+        return _COMMANDER_ON_CURVE if state.turn >= state.goal.commander_turn else COMMANDER
     named = spec is not None or card.name in _plan_names(state)
     if not named and card.effect.held and not card.is_permanent:
         return None

@@ -202,3 +202,19 @@ def test_put_back_prefers_a_self_shuffling_extra_turn():
     s.command_zone = []
     s = apply(s, {"cast": "Enter the Infinite"})
     assert choose(s) == {"put_back": "Nexus of Fate"}
+
+
+# --- The commander comes first from its curve turn on -----------------------------
+
+
+def test_on_the_curve_turn_the_commander_is_cast_before_ramp():
+    s = rigged(SOL_RING, NIGHTS_WHISPER, lands_in_play=4,
+               hand=["Sol Ring", "Night's Whisper"])
+    s.turn = s.goal.commander_turn  # turn 4 for a 4-drop commander
+    assert play_out_turn(s)[0] == "Test Commander"
+
+
+def test_before_the_curve_turn_ramp_still_comes_first():
+    s = rigged(SOL_RING, lands_in_play=5, hand=["Sol Ring"])
+    assert s.turn < s.goal.commander_turn
+    assert play_out_turn(s)[:2] == ["Sol Ring", "Test Commander"]
