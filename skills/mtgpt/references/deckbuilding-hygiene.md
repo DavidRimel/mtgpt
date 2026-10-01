@@ -25,6 +25,32 @@ Mana rocks, mana dorks, and land-fetch spells. Land fetches count here, not
 as tutors — `classify` tags a land-fetch pattern as `ramp`, and the tutor
 regex in `mtgpt/classify.py` explicitly excludes it.
 
+### Count the basics before trusting the ramp count
+
+A land-fetch spell is only as good as the lands it can find, and the audit
+cannot tell you that: it counts Cultivate as `ramp` whether the deck has
+twenty basics or none. **Before recommending or keeping a land-fetch card,
+count the deck's basic lands and read what the card actually searches for.**
+
+- **"basic land card"** — Cultivate, Kodama's Reach, Rampant Growth,
+  Sakura-Tribe Elder, Solemn Simulacrum, Burnished Hart. With no basics these
+  whiff completely; with only a few, they thin the basics out early and go
+  dead later.
+- **a land *type*** ("Forest card", "Plains, Island, Swamp, or Mountain card")
+  — Nature's Lore, Three Visits, Farseek, Skyshroud Claim, Wood Elves, every
+  fetch land. These find any land with that type, so they grab original duals,
+  shocks, and triomes. Count how many lands carry the type before relying on
+  one.
+- **"land card(s)"** — Reshape the Earth, Crop Rotation. Anything goes.
+- **No search at all** — mana dorks, rocks, Treasure makers (Tireless
+  Provisioner), extra land drops (Dryad of the Ilysian Grove, Azusa, Oracle of
+  Mul Daya). Unaffected by the manabase.
+
+A greedy manabase of duals, shocks, and triomes with zero basics should run
+type-searching ramp and mana creatures and rocks, never basic-only fetches.
+When auditing such a deck, flag every basic-only fetch as dead, even if the
+audit's ramp band reads `ok`.
+
 ## Card draw: 8-12
 
 Commander games go long, and card advantage is what converts a good board

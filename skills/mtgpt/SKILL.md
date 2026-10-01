@@ -124,6 +124,11 @@ that you assumed it.
 5. Vet anything you're considering that `suggest` did not surface:
    `python3 -m mtgpt.cli card "<name>"` or
    `python3 -m mtgpt.cli classify "<name1>" "<name2>"` before naming it.
+   **For land-fetch ramp, count the deck's basic lands first.** A card that
+   searches for a "basic land card" whiffs in a deck with no basics, and
+   the audit still counts it as ramp. In a basic-light deck, prefer ramp that
+   searches by land type ("Forest card"), mana creatures, and rocks. See
+   `references/deckbuilding-hygiene.md`.
 6. Re-run `audit` (or `report --text`) after a swap to confirm the gap
    actually closed.
 
