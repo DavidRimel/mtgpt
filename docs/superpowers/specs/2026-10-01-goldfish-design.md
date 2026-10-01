@@ -223,9 +223,9 @@ by the engine, so Claude can only make legal plays. Effects are the same as auto
 Claude decides better (sequencing, tutor targets, when to cast the commander), but reads
 no card text the engine would not.
 
-The skill uses pilot mode for a few seeded games (default 3) when the user asks how a deck
-plays, or when auto results look wrong. A pilot game's checkpoint turns are reported next
-to the auto distribution for the same seed, which shows where the heuristic misplays.
+Pilot mode runs only when the user chooses it (see [Skill integration](#skill-integration)),
+for a few seeded games (default 3). When both modes run, each pilot game's checkpoint turns
+are reported next to the auto distribution, which shows where the heuristic misplays.
 
 ## Report
 
@@ -258,12 +258,19 @@ the same seeds and returns each metric's before, after, and difference.
 1. **Ask the user what a winning state is** for this deck, and what the commander's
    "thing" is. Never infer it. Map the answer onto an archetype; confirm the goal file
    with the user before running.
-2. Run `goldfish`.
-3. Read the weakest block (setup, commander, thing, win) and say which it is.
-4. Find candidates with `suggest`, `search`, and `classify`; never from memory.
-5. Swap in a copy of the list and run `goldfish-compare` on the same goal.
-6. Report the differences, and keep or revert the swap.
-7. When asked how the deck plays, pilot 3 seeded games and narrate them.
+2. **Ask the user which mode to run**, every time; never pick for them:
+   - **Auto** — `goldfish`, 1000 heuristic games. Statistics; drives the tuning loop.
+   - **Pilot** — Claude plays N seeded games (default 3, user may change) turn by turn and
+     narrates each turn's choices.
+   - **Both** — auto first, then pilot games on seeds from the same run, reported side by
+     side with the auto distribution.
+3. Run the chosen mode.
+4. Read the weakest block (setup, commander, thing, win) and say which it is.
+5. Find candidates with `suggest`, `search`, and `classify`; never from memory.
+6. Swap in a copy of the list and re-run in the same mode: `goldfish-compare` for auto,
+   the same seeds for pilot.
+7. Report the differences, and keep or revert the swap. Later iterations may reuse the
+   user's mode choice unless they ask to change it.
 
 ## Error handling
 
