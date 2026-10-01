@@ -2989,22 +2989,58 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 8: CLI
+## Task 8: Agent-callable operation surface
 
-Composes the stages and renders a report. `render` is a pure function so it can be tested without any I/O, and `main` accepts an injected client so the end-to-end test stays offline.
+**This task was rewritten at the user's direction.** The original specified one `audit` command
+that ran the whole pipeline and printed a report. That is a monolith: it forces a single order
+and granularity, so an agent cannot look up one card, vet three candidate replacements, or
+re-check only the bracket after a swap without re-running everything. Deck tuning is a loop —
+measure, hypothesize, check a candidate, re-measure — and the interface has to support it.
+
+Two layers:
+
+- `mtgpt/api.py` — the stable facade. One function per operation, each taking the smallest input
+  it needs and returning a plain JSON-able `dict`. **All serialization lives here**, so the CLI
+  and any future MCP adapter stay thin.
+- `mtgpt/cli.py` — argparse dispatch to the facade. JSON by default in a fixed envelope;
+  `--text` renders the human report.
+
+Every operation is stateless and independently callable. Errors are data, not prose: an
+unresolved card name returns `{"ok": false, "error": {"type": "UnresolvedCards", "names": [...]}}`
+so an agent can act on it programmatically.
+
+This task also adds a general `search()` to `mtgpt/scryfall.py`, which until now only searched
+internally for Game Changers. Finding candidate cards is what makes the toolkit useful for
+tuning rather than only grading.
 
 **Files:**
+- Create: `mtgpt/api.py`
 - Create: `mtgpt/cli.py`
+- Modify: `mtgpt/scryfall.py` — add `ScryfallClient.search(query, *, limit=25)` only
 - Create: `tests/fixtures/sample_deck.txt`
+- Create: `tests/fixtures/search_results.json`
+- Create: `tests/fixtures/collection_sample_deck.json`
+- Test: `tests/test_api.py`
 - Test: `tests/test_cli.py`
 
 **Interfaces:**
 - Consumes: everything from Tasks 1-7.
-- Produces: `render(deck, violations, audit_report, bracket_report, tags) -> str`, `main(argv=None, client=None) -> int`.
+- Produces, in `api.py`, each returning a JSON-able `dict`:
+  - `lookup_card(name, *, client=None)`
+  - `search_cards(query, *, limit=25, client=None)`
+  - `classify_cards(names, *, client=None)`
+  - `read_deck(text)`
+  - `validate_deck(text, *, client=None)`
+  - `audit_deck(text, *, client=None)`
+  - `bracket_check(text, *, target=3, client=None)`
+  - `full_report(text, *, target=3, client=None)`
+  - `render_report(report) -> str`
+- Produces, in `cli.py`: `build_parser()`, `main(argv=None, client=None) -> int`, subcommands
+  `card`, `search`, `classify`, `read`, `validate`, `audit`, `bracket`, `report`.
 
-- [ ] **Step 1: Write the fixture**
+- [ ] **Step 1: Write the fixtures**
 
-Write `tests/fixtures/sample_deck.txt`:
+`tests/fixtures/sample_deck.txt`:
 
 ```text
 Commander
@@ -3021,402 +3057,815 @@ Maybeboard
 1 Mana Crypt (EMA) 225
 ```
 
-- [ ] **Step 2: Write the failing test**
+`tests/fixtures/search_results.json`:
+
+```json
+{
+  "object": "list",
+  "total_cards": 2,
+  "has_more": false,
+  "data": [
+    {
+      "object": "card",
+      "name": "Cultivate",
+      "cmc": 3.0,
+      "type_line": "Sorcery",
+      "oracle_text": "Search your library for up to two basic land cards, reveal those cards, put one onto the battlefield tapped and the other into your hand, then shuffle.",
+      "mana_cost": "{2}{G}",
+      "color_identity": ["G"],
+      "colors": ["G"],
+      "layout": "normal",
+      "keywords": [],
+      "legalities": {"commander": "legal"},
+      "prices": {"usd": "0.25"}
+    },
+    {
+      "object": "card",
+      "name": "Kodama's Reach",
+      "cmc": 3.0,
+      "type_line": "Sorcery — Arcane",
+      "oracle_text": "Search your library for up to two basic land cards, reveal those cards, put one onto the battlefield tapped and the other into your hand, then shuffle.",
+      "mana_cost": "{2}{G}",
+      "color_identity": ["G"],
+      "colors": ["G"],
+      "layout": "normal",
+      "keywords": [],
+      "legalities": {"commander": "legal"},
+      "prices": {"usd": "0.40"}
+    }
+  ]
+}
+```
+
+`tests/fixtures/collection_sample_deck.json` must resolve exactly the six distinct cards in
+`sample_deck.txt`. Capture it from the live API once, then commit the file:
+
+```bash
+curl -sS -A 'mtgpt/0.1' -H 'Content-Type: application/json' \
+  -d '{"identifiers":[{"name":"Atraxa, Praetors Voice"},{"name":"Sol Ring"},{"name":"Cultivate"},{"name":"Swords to Plowshares"},{"name":"Wrath of God"},{"name":"Forest"}]}' \
+  https://api.scryfall.com/cards/collection -o tests/fixtures/collection_sample_deck.json
+python3 -c "
+import json; d=json.load(open('tests/fixtures/collection_sample_deck.json'))
+assert not d.get('not_found'), d.get('not_found')
+for c in d['data']:
+    print(c['name'], '|', c['type_line'], '|', c.get('produced_mana'))
+"
+```
+
+Confirm `Forest` reads `Basic Land — Forest` with `produced_mana` `["G"]`, and that `Cultivate`
+carries its real land-search oracle text — the tests depend on it classifying as ramp, not tutor.
+
+- [ ] **Step 2: Add `search()` to `mtgpt/scryfall.py`**
+
+Add `import urllib.parse` to the imports, then append this method to `ScryfallClient` beside
+`game_changers()`. Route it through the existing `self._request(...)` seam so the throttle still
+applies. Change nothing else in the file.
 
 ```python
-# tests/test_cli.py
+    def search(self, query: str, *, limit: int = 25) -> tuple[dict, ...]:
+        """Run a Scryfall search and return up to `limit` card payloads.
+
+        This is how an agent finds candidate cards. Results are capped because
+        the caller is choosing among options, not enumerating a set.
+        """
+        url = (
+            f"{API}/cards/search?q={urllib.parse.quote(query)}"
+            "&unique=cards&order=edhrec"
+        )
+        found: list[dict] = []
+        while url and len(found) < limit:
+            try:
+                body = self._request(url)
+            except (urllib.error.URLError, OSError, ValueError) as exc:
+                raise SourceUnavailable("Scryfall search", str(exc)) from exc
+            found.extend(body.get("data") or ())
+            url = body.get("next_page") if body.get("has_more") else None
+        return tuple(found[:limit])
+```
+
+Scryfall answers a zero-match search with HTTP 404, which `_http_transport` raises as
+`URLError`, so an empty search surfaces as `SourceUnavailable`. That is acceptable here — note
+it in your report rather than special-casing it.
+
+- [ ] **Step 3: Write `tests/test_api.py`**
+
+```python
+# tests/test_api.py
 import json
 import pathlib
 
-from mtgpt import cli
-from mtgpt.audit import audit
-from mtgpt.brackets import check
-from mtgpt.classify import classify_deck
-from mtgpt.models import Card, ResolvedDeck, Severity, Violation
-from mtgpt.validate import validate
+import pytest
+
+from mtgpt import api
+from mtgpt.errors import DeckStructureError, UnresolvedCards
+from mtgpt.scryfall import ScryfallClient
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
 
-def card(name, type_line="Artifact", oracle_text="", mv=1.0, cost="{1}",
-         produced=(), identity="", game_changer=False, legal="legal"):
-    return Card(
-        name=name, mana_value=mv, type_line=type_line, oracle_text=oracle_text,
-        mana_cost=cost, color_identity=frozenset(identity), colors=frozenset(identity),
-        legal_commander=legal, produced_mana=frozenset(produced), layout="normal",
-        is_game_changer=game_changer, usd=None, keywords=(),
-    )
+def load(name):
+    return json.loads((FIXTURES / name).read_text())
 
 
-def small_deck():
-    atraxa = card("Atraxa, Praetors' Voice",
-                  "Legendary Creature — Phyrexian Angel Horror",
-                  "Flying", mv=4.0, cost="{3}{G}{W}{U}{B}", identity="WUBG")
-    forest = card("Forest", "Basic Land — Forest", "({T}: Add {G}.)", mv=0.0,
-                  cost="", produced="G", identity="G")
-    sol = card("Sol Ring", "Artifact", "{T}: Add {C}{C}.", produced="C")
-    return ResolvedDeck(commanders=(atraxa,), cards=((36, forest), (1, sol)))
+def deck_text():
+    return (FIXTURES / "sample_deck.txt").read_text()
 
 
-def rendered(deck, bracket=3):
-    tags = classify_deck(deck)
-    return cli.render(
-        deck=deck,
-        violations=validate(deck),
-        audit_report=audit(deck, tags=tags),
-        bracket_report=check(deck, tags=tags, target=bracket),
-        tags=tags,
-    )
+class FakeTransport:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def __call__(self, url, payload=None):
+        self.calls.append((url, payload))
+        if not self.responses:
+            raise AssertionError(f"unexpected extra request to {url}")
+        return self.responses.pop(0)
 
 
-def test_render_includes_commander_and_counts():
-    out = rendered(small_deck())
-    assert "Atraxa, Praetors' Voice" in out
-    assert "Lands" in out
-    assert "36" in out
+NO_GAME_CHANGERS = {"data": [], "has_more": False}
 
 
-def test_render_reports_deck_size_violation():
-    out = rendered(small_deck())
-    assert "38 cards" in out or "deck_size" in out.lower() or "requires 100" in out
+def client_for(*responses):
+    return ScryfallClient(transport=FakeTransport(*responses), sleep=lambda _: None)
 
 
-def test_render_shows_bracket_name():
-    out = rendered(small_deck(), bracket=3)
-    assert "Upgraded" in out
+def deck_client():
+    return client_for(load("collection_sample_deck.json"), NO_GAME_CHANGERS)
 
 
-def test_render_lists_deferred_checks():
-    out = rendered(small_deck())
-    assert "Commander Spellbook" in out
+def test_lookup_card_returns_card_data_and_tags():
+    result = api.lookup_card("Sol Ring", client=deck_client())
+    assert result["name"] == "Sol Ring"
+    assert result["mana_value"] == 1.0
+    assert result["legal_commander"] == "legal"
+    assert "ramp" in result["functions"]
+    assert result["is_land"] is False
 
 
-def test_render_marks_out_of_band_categories():
-    out = rendered(small_deck())
-    # Ramp is 1 against a target of 10-12, so it must be called out as low.
-    assert "low" in out.lower()
+def test_lookup_card_raises_for_an_invented_name():
+    client = client_for({"data": [], "not_found": [{"name": "Fake Card"}]})
+    with pytest.raises(UnresolvedCards):
+        api.lookup_card("Fake Card", client=client)
 
 
-def test_main_reads_a_file_and_returns_zero(tmp_path, monkeypatch, capsys):
-    deck = small_deck()
-    monkeypatch.setattr(cli, "resolve", lambda parsed, client=None: deck)
-    path = tmp_path / "deck.txt"
-    path.write_text("Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n1 Sol Ring\n36 Forest\n")
-    code = cli.main(["audit", "--file", str(path), "--bracket", "3"])
-    out = capsys.readouterr().out
-    assert code == 0
-    assert "Atraxa" in out
+def test_search_cards_returns_candidates_with_tags():
+    client = client_for(load("search_results.json"), NO_GAME_CHANGERS)
+    result = api.search_cards("o:'search your library for' t:sorcery c:g", client=client)
+    assert result["count"] == 2
+    assert [c["name"] for c in result["cards"]] == ["Cultivate", "Kodama's Reach"]
+    # Candidates arrive pre-tagged so the agent can confirm they fill the gap.
+    assert "ramp" in result["cards"][0]["functions"]
+    assert "tutor" not in result["cards"][0]["functions"]
 
 
-def test_main_json_output_is_parseable(tmp_path, monkeypatch, capsys):
-    deck = small_deck()
-    monkeypatch.setattr(cli, "resolve", lambda parsed, client=None: deck)
-    path = tmp_path / "deck.txt"
-    path.write_text("Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n1 Sol Ring\n36 Forest\n")
-    cli.main(["audit", "--file", str(path), "--json"])
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["commanders"] == ["Atraxa, Praetors' Voice"]
-    assert payload["audit"]["land_count"] == 36
-    assert payload["bracket"]["target_name"] == "Upgraded"
+def test_search_cards_respects_limit():
+    client = client_for(load("search_results.json"), NO_GAME_CHANGERS)
+    assert api.search_cards("c:g", limit=1, client=client)["count"] == 1
 
 
-def test_main_reports_unresolved_cards_and_returns_two(tmp_path, monkeypatch, capsys):
-    from mtgpt.errors import UnresolvedCards
-
-    def boom(parsed, client=None):
-        raise UnresolvedCards(["Blatantly Fake Card"])
-
-    monkeypatch.setattr(cli, "resolve", boom)
-    path = tmp_path / "deck.txt"
-    path.write_text("1 Blatantly Fake Card\n")
-    code = cli.main(["audit", "--file", str(path)])
-    err = capsys.readouterr().err
-    assert code == 2
-    assert "Blatantly Fake Card" in err
-    assert "will not guess" in err
+def test_classify_cards_maps_names_to_tags():
+    result = api.classify_cards(["Sol Ring", "Cultivate"], client=deck_client())
+    assert "ramp" in result["Sol Ring"]
+    # The land fetch must be ramp, not a tutor — this drives the bracket verdict.
+    assert "ramp" in result["Cultivate"]
+    assert "tutor" not in result["Cultivate"]
 
 
-def test_main_reports_unparseable_deck(tmp_path, capsys):
-    path = tmp_path / "deck.txt"
-    path.write_text("not a decklist\n")
-    code = cli.main(["audit", "--file", str(path)])
-    assert code == 2
-    assert "No decklist entries" in capsys.readouterr().err
+def test_read_deck_needs_no_network():
+    result = api.read_deck(deck_text())
+    assert result["commanders"] == [{"qty": 1, "name": "Atraxa, Praetors' Voice"}]
+    assert result["total_cards"] == 41
+    assert {"qty": 36, "name": "Forest"} in result["entries"]
+    # Maybeboard is excluded.
+    assert all(e["name"] != "Mana Crypt" for e in result["entries"])
 
 
-def test_main_reads_stdin(monkeypatch, capsys):
-    deck = small_deck()
-    monkeypatch.setattr(cli, "resolve", lambda parsed, client=None: deck)
-    monkeypatch.setattr("sys.stdin", __import__("io").StringIO(
-        "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n1 Sol Ring\n36 Forest\n"
-    ))
-    assert cli.main(["audit", "--stdin"]) == 0
-    assert "Atraxa" in capsys.readouterr().out
+def test_read_deck_raises_on_garbage():
+    with pytest.raises(DeckStructureError):
+        api.read_deck("this is not a decklist")
 
 
-def test_main_rejects_missing_input():
-    assert cli.main(["audit"]) == 2
+def test_validate_deck_returns_only_legality():
+    result = api.validate_deck(deck_text(), client=deck_client())
+    assert result["legal"] is False  # the fixture deck is 41 cards, not 100
+    assert "deck_size" in [v["code"] for v in result["violations"]]
+    assert "audit" not in result
+
+
+def test_audit_deck_returns_only_measurements():
+    result = api.audit_deck(deck_text(), client=deck_client())
+    assert result["land_count"] == 36
+    assert "categories" in result and "pips" in result
+    assert "violations" not in result
+
+
+def test_bracket_check_returns_only_the_verdict():
+    result = api.bracket_check(deck_text(), target=3, client=deck_client())
+    assert result["target"] == 3
+    assert result["target_name"] == "Upgraded"
+    assert "deferred_checks" in result
+    assert "categories" not in result
+
+
+def test_full_report_composes_every_section():
+    result = api.full_report(deck_text(), target=3, client=deck_client())
+    for key in ("commanders", "violations", "audit", "bracket", "tags"):
+        assert key in result
+
+
+def test_render_report_surfaces_per_card_tags():
+    """Classification is heuristic; the design's mitigation is visible tags."""
+    rendered = api.render_report(api.full_report(deck_text(), target=3, client=deck_client()))
+    assert "CARD TAGS" in rendered
+    assert "Cultivate" in rendered
+    assert "ramp" in rendered.lower()
+
+
+def test_operations_are_independent():
+    """bracket_check must work without audit_deck ever being called."""
+    assert api.bracket_check(deck_text(), client=deck_client())["target"] == 3
 ```
 
-- [ ] **Step 3: Run the test to verify it fails**
+- [ ] **Step 4: Run it to verify it fails**
 
-Run: `python3 -m pytest tests/test_cli.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'mtgpt.cli'`
+Run: `python3 -m pytest tests/test_api.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'mtgpt.api'`
 
-- [ ] **Step 4: Write `mtgpt/cli.py`**
+- [ ] **Step 5: Write `mtgpt/api.py`**
 
 ```python
-# mtgpt/cli.py
-"""Command line entry point.
+# mtgpt/api.py
+"""The agent-facing facade.
 
-    python3 -m mtgpt.cli audit --file deck.txt --bracket 3
-    python3 -m mtgpt.cli audit --stdin --json
+One function per operation, each returning a plain JSON-able dict. An agent
+composes these: look up a card, audit a deck, search for candidates, classify
+them, re-audit. Nothing here holds state, and no function depends on another
+having been called first.
 
-`render` is pure so it can be tested without I/O, and `main` takes an
-injectable client so the end-to-end tests stay offline.
+Serialization lives in this module alone, so `cli.py` — and any future MCP
+adapter — stays a thin dispatch layer.
 """
 
 from __future__ import annotations
 
-import argparse
-import dataclasses
-import json
-import sys
-
 from .audit import AuditReport, audit
 from .brackets import BracketReport, check
-from .classify import classify_deck
+from .classify import classify, classify_deck
 from .deckparse import parse
-from .errors import DeckStructureError, SourceUnavailable, UnresolvedCards
-from .models import Function, ResolvedDeck, Violation
-from .scryfall import ScryfallClient, resolve
+from .models import Card, Function, ResolvedDeck, Violation
+from .scryfall import ScryfallClient, card_from_json, resolve
 from .validate import validate
 
-EXIT_OK = 0
-EXIT_USER_ERROR = 2
+
+def _client(client: ScryfallClient | None) -> ScryfallClient:
+    return client or ScryfallClient()
+
+
+def _card_dict(card: Card, functions: frozenset[Function]) -> dict:
+    return {
+        "name": card.name,
+        "mana_value": card.mana_value,
+        "mana_cost": card.mana_cost,
+        "type_line": card.type_line,
+        "oracle_text": card.oracle_text,
+        "color_identity": sorted(card.color_identity),
+        "legal_commander": card.legal_commander,
+        "is_land": card.is_land,
+        "is_mdfc_land": card.is_mdfc_land,
+        "is_game_changer": card.is_game_changer,
+        "usd": card.usd,
+        "functions": sorted(f.value for f in functions),
+    }
+
+
+def _violations(violations: tuple[Violation, ...]) -> list[dict]:
+    return [
+        {"severity": v.severity.name, "code": v.code, "message": v.message}
+        for v in violations
+    ]
+
+
+def _audit_dict(report: AuditReport) -> dict:
+    return {
+        "total_cards": report.total_cards,
+        "land_count": report.land_count,
+        "mdfc_land_count": report.mdfc_land_count,
+        "mana_sources": report.mana_sources,
+        "average_mana_value": report.average_mana_value,
+        "curve_status": report.curve_status,
+        "curve": [list(pair) for pair in report.curve],
+        "categories": [
+            {
+                "function": c.function.value,
+                "count": c.count,
+                "target": [c.target_min, c.target_max],
+                "status": c.status,
+                "delta": c.delta,
+            }
+            for c in report.categories
+        ],
+        "pips": [
+            {
+                "color": p.color,
+                "total_pips": p.total_pips,
+                "max_pips": p.max_pips,
+                "sources": p.sources,
+                "required": p.required,
+                "ok": p.ok,
+            }
+            for p in report.pips
+        ],
+    }
+
+
+def _bracket_dict(report: BracketReport) -> dict:
+    return {
+        "target": report.target,
+        "target_name": report.target_name,
+        "compliant": report.compliant,
+        "game_changers": list(report.game_changers),
+        "tutor_count": report.tutor_count,
+        "mass_land_denial": list(report.mass_land_denial),
+        "extra_turns": list(report.extra_turns),
+        "findings": _violations(report.findings),
+        "deferred_checks": list(report.deferred_checks),
+    }
+
+
+def _tags_dict(tags: dict[str, frozenset[Function]]) -> dict[str, list[str]]:
+    return {name: sorted(f.value for f in fns) for name, fns in tags.items()}
+
+
+# --- Card operations -------------------------------------------------------
+
+
+def lookup_card(name: str, *, client: ScryfallClient | None = None) -> dict:
+    """Resolve one card against Scryfall and tag it.
+
+    Use this before naming any card in a recommendation. Raises
+    UnresolvedCards if the name is not real.
+    """
+    cards, _ = _client(client).collection([name])
+    card = card_from_json(cards[0])
+    return _card_dict(card, classify(card))
+
+
+def search_cards(
+    query: str, *, limit: int = 25, client: ScryfallClient | None = None
+) -> dict:
+    """Find candidate cards with a Scryfall query, pre-tagged by function."""
+    payloads = _client(client).search(query, limit=limit)
+    cards = [card_from_json(p) for p in payloads]
+    return {
+        "query": query,
+        "count": len(cards),
+        "cards": [_card_dict(c, classify(c)) for c in cards],
+    }
+
+
+def classify_cards(
+    names: list[str], *, client: ScryfallClient | None = None
+) -> dict[str, list[str]]:
+    """Tag several cards by function, keyed by name."""
+    cards, _ = _client(client).collection(names)
+    out: dict[str, list[str]] = {}
+    for payload in cards:
+        card = card_from_json(payload)
+        out[card.name] = sorted(f.value for f in classify(card))
+    return out
+
+
+# --- Deck operations -------------------------------------------------------
+
+
+def read_deck(text: str) -> dict:
+    """Parse decklist text. No network, no verification — structure only."""
+    deck = parse(text)
+    return {
+        "commanders": [{"qty": e.qty, "name": e.name} for e in deck.commanders],
+        "entries": [{"qty": e.qty, "name": e.name} for e in deck.entries],
+        "total_cards": deck.total_with_commanders,
+    }
+
+
+def _resolved(text: str, client: ScryfallClient | None) -> ResolvedDeck:
+    return resolve(parse(text), client=_client(client))
+
+
+def validate_deck(text: str, *, client: ScryfallClient | None = None) -> dict:
+    """Legality only: size, singleton, commander, color identity, ban list."""
+    deck = _resolved(text, client)
+    violations = validate(deck)
+    return {
+        "commanders": [c.name for c in deck.commanders],
+        "legal": not violations,
+        "violations": _violations(violations),
+    }
+
+
+def audit_deck(text: str, *, client: ScryfallClient | None = None) -> dict:
+    """Measurements only: ratios, curve, colored sources."""
+    deck = _resolved(text, client)
+    return _audit_dict(audit(deck, tags=classify_deck(deck)))
+
+
+def bracket_check(
+    text: str, *, target: int = 3, client: ScryfallClient | None = None
+) -> dict:
+    """Bracket verdict only."""
+    deck = _resolved(text, client)
+    return _bracket_dict(check(deck, tags=classify_deck(deck), target=target))
+
+
+def full_report(
+    text: str, *, target: int = 3, client: ScryfallClient | None = None
+) -> dict:
+    """Everything composed, for when the agent wants one complete picture."""
+    deck = _resolved(text, client)
+    tags = classify_deck(deck)
+    return {
+        "commanders": [c.name for c in deck.commanders],
+        "color_identity": sorted(deck.command_zone_identity),
+        "total_cards": deck.total_with_commanders,
+        "violations": _violations(validate(deck)),
+        "audit": _audit_dict(audit(deck, tags=tags)),
+        "bracket": _bracket_dict(check(deck, tags=tags, target=target)),
+        "tags": _tags_dict(tags),
+    }
+
 
 _STATUS_MARK = {"ok": "ok", "low": "LOW", "high": "HIGH"}
 
 
-def render(
-    *,
-    deck: ResolvedDeck,
-    violations: tuple[Violation, ...],
-    audit_report: AuditReport,
-    bracket_report: BracketReport,
-    tags: dict[str, frozenset[Function]],
-) -> str:
-    """Render the full text report."""
+def render_report(report: dict) -> str:
+    """Render a `full_report` dict as human-readable text."""
+    from . import targets
+
     lines: list[str] = []
-    commanders = ", ".join(c.name for c in deck.commanders) or "(none declared)"
-    identity = "".join(sorted(deck.command_zone_identity)) or "C"
+    commanders = ", ".join(report["commanders"]) or "(none declared)"
+    identity = "".join(report["color_identity"]) or "C"
+    audit_data = report["audit"]
+    bracket = report["bracket"]
+
+    def band(name):
+        low, high = getattr(targets, name)
+        return f"{low}-{high}"
 
     lines.append("=" * 68)
-    lines.append(f"mtgpt audit — {commanders}")
-    lines.append(f"Color identity: {{{identity}}}   Cards: {deck.total_with_commanders}/100")
+    lines.append(f"mtgpt — {commanders}")
+    lines.append(f"Color identity: {{{identity}}}   Cards: {report['total_cards']}/100")
     lines.append("=" * 68)
 
     lines.append("")
     lines.append("LEGALITY")
-    if violations:
-        for violation in violations:
-            lines.append(f"  [{violation.severity.name}] {violation.message}")
+    if report["violations"]:
+        for v in report["violations"]:
+            lines.append(f"  [{v['severity']}] {v['message']}")
     else:
         lines.append("  No violations found.")
 
     lines.append("")
     lines.append("COMPOSITION")
-    lines.append(f"  {'Lands':<16}{audit_report.land_count:>4}   target {_band('LAND')}")
-    if audit_report.mdfc_land_count:
+    lines.append(f"  {'Lands':<16}{audit_data['land_count']:>4}   target {band('LAND')}")
+    if audit_data["mdfc_land_count"]:
         lines.append(
-            f"  {'MDFC land backs':<16}{audit_report.mdfc_land_count:>4}   "
-            "counted as flex sources, not lands"
+            f"  {'MDFC backs':<16}{audit_data['mdfc_land_count']:>4}   "
+            "flex sources, not lands"
         )
-    for category in audit_report.categories:
-        if category.function.name == "LAND":
+    for c in audit_data["categories"]:
+        if c["function"] == "land":
             continue
-        label = category.function.name.replace("_", " ").title()
-        band = f"{category.target_min}-{category.target_max}"
-        mark = _STATUS_MARK[category.status]
+        label = c["function"].replace("_", " ").title()
+        band_text = f"{c['target'][0]}-{c['target'][1]}"
+        mark = _STATUS_MARK[c["status"]]
         note = ""
-        if category.delta:
-            verb = "add" if category.delta > 0 else "cut"
-            note = f"  ({verb} {abs(category.delta)})"
-        lines.append(f"  {label:<16}{category.count:>4}   target {band:<7} {mark}{note}")
+        if c["delta"]:
+            note = f"  ({'add' if c['delta'] > 0 else 'cut'} {abs(c['delta'])})"
+        lines.append(f"  {label:<16}{c['count']:>4}   target {band_text:<7} {mark}{note}")
     lines.append(
-        f"  {'Mana sources':<16}{audit_report.mana_sources:>4}   "
-        f"target {_band('MANA_SOURCES')}"
+        f"  {'Mana sources':<16}{audit_data['mana_sources']:>4}   "
+        f"target {band('MANA_SOURCES')}"
     )
 
     lines.append("")
     lines.append("CURVE")
     lines.append(
-        f"  Average mana value: {audit_report.average_mana_value} "
-        f"({_STATUS_MARK[audit_report.curve_status]}, target "
-        f"{_band('AVERAGE_MV_BAND')})"
+        f"  Average mana value: {audit_data['average_mana_value']} "
+        f"({_STATUS_MARK[audit_data['curve_status']]}, target {band('AVERAGE_MV_BAND')})"
     )
-    for bucket, count in audit_report.curve:
+    for bucket, count in audit_data["curve"]:
         label = "7+" if bucket >= 7 else str(bucket)
         lines.append(f"  {label:>3} | {'#' * min(count, 40)} {count}")
 
     lines.append("")
     lines.append("COLORED SOURCES")
-    if audit_report.pips:
-        for pip in audit_report.pips:
-            mark = "ok" if pip.ok else "SHORT"
+    if audit_data["pips"]:
+        for p in audit_data["pips"]:
+            verdict = "ok" if p["ok"] else "SHORT"
             lines.append(
-                f"  {{{pip.color}}}  sources {pip.sources:>3}   "
-                f"need {pip.required:>3} for a {pip.max_pips}-pip card   {mark}"
+                f"  {{{p['color']}}}  sources {p['sources']:>3}   "
+                f"need {p['required']:>3} for a {p['max_pips']}-pip card   {verdict}"
             )
     else:
         lines.append("  No colored pips in the deck.")
 
     lines.append("")
-    lines.append(f"BRACKET {bracket_report.target} — {bracket_report.target_name}")
-    verdict = "compliant" if bracket_report.compliant else "NOT compliant"
-    lines.append(f"  Verdict: {verdict}")
-    lines.append(
-        f"  Game Changers: {len(bracket_report.game_changers)}"
-        + (f" ({', '.join(bracket_report.game_changers)})" if bracket_report.game_changers else "")
-    )
-    lines.append(f"  Tutors: {bracket_report.tutor_count} (land fetches excluded)")
-    for finding in bracket_report.findings:
-        lines.append(f"  [{finding.severity.name}] {finding.message}")
+    lines.append(f"BRACKET {bracket['target']} — {bracket['target_name']}")
+    lines.append(f"  Verdict: {'compliant' if bracket['compliant'] else 'NOT compliant'}")
+    gc = bracket["game_changers"]
+    lines.append(f"  Game Changers: {len(gc)}" + (f" ({', '.join(gc)})" if gc else ""))
+    lines.append(f"  Tutors: {bracket['tutor_count']} (land fetches excluded)")
+    for f in bracket["findings"]:
+        lines.append(f"  [{f['severity']}] {f['message']}")
     lines.append("  Not checked at this layer:")
-    for note in bracket_report.deferred_checks:
+    for note in bracket["deferred_checks"]:
         lines.append(f"    - {note}")
+
+    # Classification is heuristic, so the tags are shown for correction.
+    lines.append("")
+    lines.append("CARD TAGS")
+    for name in sorted(report["tags"]):
+        lines.append(f"  {name:<34} {', '.join(report['tags'][name])}")
 
     lines.append("")
     return "\n".join(lines)
+```
+
+- [ ] **Step 6: Run the facade tests**
+
+Run: `python3 -m pytest tests/test_api.py -v`
+Expected: PASS, 13 tests.
+
+- [ ] **Step 7: Write `tests/test_cli.py`**
+
+```python
+# tests/test_cli.py
+import io
+import json
+import pathlib
+
+from mtgpt import cli
+
+FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
 
-def _band(name: str) -> str:
-    from . import targets
-
-    low, high = getattr(targets, name)
-    return f"{low}-{high}"
-
-
-def _to_json(
-    deck: ResolvedDeck,
-    violations: tuple[Violation, ...],
-    audit_report: AuditReport,
-    bracket_report: BracketReport,
-    tags: dict[str, frozenset[Function]],
-) -> str:
-    payload = {
-        "commanders": [c.name for c in deck.commanders],
-        "color_identity": sorted(deck.command_zone_identity),
-        "total_cards": deck.total_with_commanders,
-        "violations": [
-            {"severity": v.severity.name, "code": v.code, "message": v.message}
-            for v in violations
-        ],
-        "audit": {
-            "land_count": audit_report.land_count,
-            "mdfc_land_count": audit_report.mdfc_land_count,
-            "mana_sources": audit_report.mana_sources,
-            "average_mana_value": audit_report.average_mana_value,
-            "curve_status": audit_report.curve_status,
-            "curve": [list(pair) for pair in audit_report.curve],
-            "categories": [
-                {
-                    "function": c.function.value,
-                    "count": c.count,
-                    "target": [c.target_min, c.target_max],
-                    "status": c.status,
-                    "delta": c.delta,
-                }
-                for c in audit_report.categories
-            ],
-            "pips": [dataclasses.asdict(p) | {"ok": p.ok} for p in audit_report.pips],
-        },
-        "bracket": {
-            "target": bracket_report.target,
-            "target_name": bracket_report.target_name,
-            "compliant": bracket_report.compliant,
-            "game_changers": list(bracket_report.game_changers),
-            "tutor_count": bracket_report.tutor_count,
-            "mass_land_denial": list(bracket_report.mass_land_denial),
-            "extra_turns": list(bracket_report.extra_turns),
-            "findings": [
-                {"severity": f.severity.name, "code": f.code, "message": f.message}
-                for f in bracket_report.findings
-            ],
-            "deferred_checks": list(bracket_report.deferred_checks),
-        },
-        "tags": {name: sorted(f.value for f in fns) for name, fns in tags.items()},
+def test_every_subcommand_is_registered():
+    parser = cli.build_parser()
+    actions = [a for a in parser._actions if a.dest == "command"]
+    assert actions, "expected a subcommand dest named 'command'"
+    assert set(actions[0].choices) == {
+        "card", "search", "classify", "read", "validate", "audit", "bracket", "report",
     }
-    return json.dumps(payload, indent=2)
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def test_card_emits_a_success_envelope(monkeypatch, capsys):
+    monkeypatch.setattr(cli.api, "lookup_card",
+                        lambda name, client=None: {"name": name, "functions": ["ramp"]})
+    assert cli.main(["card", "Sol Ring"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["command"] == "card"
+    assert payload["data"]["name"] == "Sol Ring"
+
+
+def test_unresolved_card_emits_a_machine_readable_error(monkeypatch, capsys):
+    from mtgpt.errors import UnresolvedCards
+
+    def boom(name, client=None):
+        raise UnresolvedCards(["Blatantly Fake Card"])
+
+    monkeypatch.setattr(cli.api, "lookup_card", boom)
+    code = cli.main(["card", "Blatantly Fake Card"])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 2
+    assert payload["ok"] is False
+    assert payload["error"]["type"] == "UnresolvedCards"
+    # The offending names are data, so the agent can act on them.
+    assert payload["error"]["names"] == ["Blatantly Fake Card"]
+
+
+def test_search_passes_limit_through(monkeypatch):
+    seen = {}
+
+    def fake(query, limit=25, client=None):
+        seen["query"], seen["limit"] = query, limit
+        return {"query": query, "count": 0, "cards": []}
+
+    monkeypatch.setattr(cli.api, "search_cards", fake)
+    assert cli.main(["search", "c:g t:sorcery", "--limit", "5"]) == 0
+    assert seen == {"query": "c:g t:sorcery", "limit": 5}
+
+
+def test_classify_accepts_several_names(monkeypatch, capsys):
+    monkeypatch.setattr(cli.api, "classify_cards",
+                        lambda names, client=None: {n: ["ramp"] for n in names})
+    assert cli.main(["classify", "Sol Ring", "Arcane Signet"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert set(payload["data"]) == {"Sol Ring", "Arcane Signet"}
+
+
+def test_read_needs_no_network(capsys):
+    assert cli.main(["read", "--file", str(FIXTURES / "sample_deck.txt")]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["data"]["total_cards"] == 41
+
+
+def test_deck_subcommands_accept_stdin(monkeypatch, capsys):
+    monkeypatch.setattr(cli.api, "audit_deck", lambda text, client=None: {"land_count": 36})
+    monkeypatch.setattr("sys.stdin", io.StringIO("1 Sol Ring\n36 Forest\n"))
+    assert cli.main(["audit", "--stdin"]) == 0
+    assert json.loads(capsys.readouterr().out)["data"]["land_count"] == 36
+
+
+def test_bracket_passes_target_through(monkeypatch):
+    seen = {}
+
+    def fake(text, target=3, client=None):
+        seen["target"] = target
+        return {"target": target, "target_name": "Core"}
+
+    monkeypatch.setattr(cli.api, "bracket_check", fake)
+    cli.main(["bracket", "--file", str(FIXTURES / "sample_deck.txt"), "--target", "2"])
+    assert seen["target"] == 2
+
+
+def test_report_text_mode_renders_instead_of_json(monkeypatch, capsys):
+    monkeypatch.setattr(cli.api, "full_report",
+                        lambda text, target=3, client=None: {"stub": True})
+    monkeypatch.setattr(cli.api, "render_report", lambda report: "RENDERED REPORT")
+    assert cli.main(["report", "--file", str(FIXTURES / "sample_deck.txt"), "--text"]) == 0
+    out = capsys.readouterr().out
+    assert "RENDERED REPORT" in out
+    assert "{" not in out
+
+
+def test_missing_deck_input_is_a_user_error(capsys):
+    assert cli.main(["audit"]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert "Export" in payload["error"]["message"]
+
+
+def test_unparseable_deck_is_reported_as_data(capsys, tmp_path):
+    path = tmp_path / "deck.txt"
+    path.write_text("not a decklist\n")
+    assert cli.main(["read", "--file", str(path)]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["type"] == "DeckStructureError"
+```
+
+- [ ] **Step 8: Write `mtgpt/cli.py`**
+
+```python
+# mtgpt/cli.py
+"""Command-line surface over the agent-facing facade.
+
+Each subcommand is one operation, independently callable:
+
+    python3 -m mtgpt.cli card "Sol Ring"
+    python3 -m mtgpt.cli search "o:'add one mana of any color' t:creature c:g" --limit 10
+    python3 -m mtgpt.cli classify "Cultivate" "Demonic Tutor"
+    python3 -m mtgpt.cli read     --file deck.txt
+    python3 -m mtgpt.cli validate --file deck.txt
+    python3 -m mtgpt.cli audit    --file deck.txt
+    python3 -m mtgpt.cli bracket  --file deck.txt --target 3
+    python3 -m mtgpt.cli report   --file deck.txt --bracket 3 [--text]
+
+Output is JSON in a fixed envelope so results feed the next decision:
+
+    {"ok": true,  "command": "audit", "data": {...}}
+    {"ok": false, "command": "audit", "error": {"type": "...", "message": "...", ...}}
+
+Errors are data, never prose only: UnresolvedCards carries the offending names.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+
+from . import api
+from .errors import DeckStructureError, MtgptError, SourceUnavailable, UnresolvedCards
+from .scryfall import ScryfallClient
+
+EXIT_OK = 0
+EXIT_USER_ERROR = 2
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="mtgpt", description="Audit a Magic: The Gathering Commander deck."
+        prog="mtgpt",
+        description="Agent-callable operations for Magic: The Gathering Commander decks.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    audit_cmd = sub.add_parser("audit", help="Audit a decklist")
-    source = audit_cmd.add_mutually_exclusive_group()
-    source.add_argument("--file", help="Path to a decklist text file")
-    source.add_argument("--stdin", action="store_true", help="Read the decklist from stdin")
-    audit_cmd.add_argument(
-        "--bracket", type=int, default=3, choices=[1, 2, 3, 4, 5],
-        help="Target Commander bracket (default: 3)",
-    )
-    audit_cmd.add_argument("--json", action="store_true", help="Emit JSON instead of text")
+
+    card = sub.add_parser("card", help="Resolve and tag one card")
+    card.add_argument("name")
+
+    search = sub.add_parser("search", help="Find candidate cards by Scryfall query")
+    search.add_argument("query")
+    search.add_argument("--limit", type=int, default=25)
+
+    classify_cmd = sub.add_parser("classify", help="Tag several cards by function")
+    classify_cmd.add_argument("names", nargs="+")
+
+    for name, help_text in (
+        ("read", "Parse a decklist without verifying it"),
+        ("validate", "Check legality only"),
+        ("audit", "Measure ratios, curve, and colored sources"),
+        ("bracket", "Check bracket compliance only"),
+        ("report", "Everything composed"),
+    ):
+        cmd = sub.add_parser(name, help=help_text)
+        source = cmd.add_mutually_exclusive_group()
+        source.add_argument("--file", help="Path to a decklist text file")
+        source.add_argument("--stdin", action="store_true", help="Read the decklist from stdin")
+        if name == "bracket":
+            cmd.add_argument("--target", type=int, default=3, choices=[1, 2, 3, 4, 5])
+        if name == "report":
+            cmd.add_argument("--bracket", type=int, default=3, choices=[1, 2, 3, 4, 5])
+            cmd.add_argument("--text", action="store_true", help="Human-readable output")
+
     return parser
 
 
-def main(argv: list[str] | None = None, client: ScryfallClient | None = None) -> int:
-    args = _build_parser().parse_args(argv)
+def _emit(command: str, data, *, ok: bool = True) -> None:
+    key = "data" if ok else "error"
+    print(json.dumps({"ok": ok, "command": command, key: data}, indent=2))
 
+
+def _error_payload(exc: Exception) -> dict:
+    payload = {"type": type(exc).__name__, "message": str(exc)}
+    if isinstance(exc, UnresolvedCards):
+        payload["names"] = list(exc.names)
+    if isinstance(exc, SourceUnavailable):
+        payload["source"] = exc.source
+    return payload
+
+
+def _read_deck_text(args, command: str) -> str | None:
+    """Return the decklist text, or None after emitting a user error."""
     if args.file:
         try:
-            text = open(args.file, encoding="utf-8").read()
+            return open(args.file, encoding="utf-8").read()
         except OSError as exc:
-            print(f"Could not read {args.file}: {exc}", file=sys.stderr)
-            return EXIT_USER_ERROR
-    elif args.stdin:
-        text = sys.stdin.read()
-    else:
-        print(
-            "No decklist given. Pass --file <path> or --stdin.\n"
-            "In Moxfield use Export, then paste the text.",
-            file=sys.stderr,
-        )
-        return EXIT_USER_ERROR
+            _emit(command, {"type": "OSError", "message": str(exc)}, ok=False)
+            return None
+    if args.stdin:
+        return sys.stdin.read()
+    _emit(
+        command,
+        {
+            "type": "MissingInput",
+            "message": (
+                "No decklist given. Pass --file <path> or --stdin. "
+                "In Moxfield use Export, then paste or save the text."
+            ),
+        },
+        ok=False,
+    )
+    return None
+
+
+def main(argv: list[str] | None = None, client: ScryfallClient | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    command = args.command
 
     try:
-        parsed = parse(text)
-    except DeckStructureError as exc:
-        print(str(exc), file=sys.stderr)
+        if command == "card":
+            _emit(command, api.lookup_card(args.name, client=client))
+        elif command == "search":
+            _emit(command, api.search_cards(args.query, limit=args.limit, client=client))
+        elif command == "classify":
+            _emit(command, api.classify_cards(args.names, client=client))
+        else:
+            text = _read_deck_text(args, command)
+            if text is None:
+                return EXIT_USER_ERROR
+            if command == "read":
+                _emit(command, api.read_deck(text))
+            elif command == "validate":
+                _emit(command, api.validate_deck(text, client=client))
+            elif command == "audit":
+                _emit(command, api.audit_deck(text, client=client))
+            elif command == "bracket":
+                _emit(command, api.bracket_check(text, target=args.target, client=client))
+            elif command == "report":
+                report = api.full_report(text, target=args.bracket, client=client)
+                if args.text:
+                    print(api.render_report(report))
+                else:
+                    _emit(command, report)
+    except MtgydError if False else (UnresolvedCards, DeckStructureError, SourceUnavailable) as exc:
+        _emit(command, _error_payload(exc), ok=False)
+        return EXIT_USER_ERROR
+    except MtgptError as exc:
+        _emit(command, _error_payload(exc), ok=False)
         return EXIT_USER_ERROR
 
-    try:
-        deck = resolve(parsed, client=client)
-    except UnresolvedCards as exc:
-        print(str(exc), file=sys.stderr)
-        return EXIT_USER_ERROR
-    except SourceUnavailable as exc:
-        print(f"{exc}\nScryfall is required to verify cards; nothing was audited.",
-              file=sys.stderr)
-        return EXIT_USER_ERROR
-
-    tags = classify_deck(deck)
-    violations = validate(deck)
-    audit_report = audit(deck, tags=tags)
-    bracket_report = check(deck, tags=tags, target=args.bracket)
-
-    if args.json:
-        print(_to_json(deck, violations, audit_report, bracket_report, tags))
-    else:
-        print(render(
-            deck=deck,
-            violations=violations,
-            audit_report=audit_report,
-            bracket_report=bracket_report,
-            tags=tags,
-        ))
     return EXIT_OK
 
 
@@ -3424,40 +3873,55 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+**Note on the except clause above:** the first `except` line as written is deliberately
+nonsense to catch a copy-paste. Write it as:
+
+```python
+    except (UnresolvedCards, DeckStructureError, SourceUnavailable) as exc:
+```
+
+- [ ] **Step 9: Run the CLI tests and the whole suite**
 
 Run: `python3 -m pytest tests/test_cli.py -v`
 Expected: PASS, 11 tests.
 
-- [ ] **Step 6: Run the whole suite**
+Run: `python3 -m pytest -q`
+Expected: PASS, everything.
 
-Run: `python3 -m pytest -v`
-Expected: PASS, 143 tests across 8 files.
+- [ ] **Step 10: Verify against the live API**
 
-- [ ] **Step 7: Verify against the live API**
-
-This is the one step that touches the network. Run it manually:
+Run each and record the actual output in your report:
 
 ```bash
-python3 -m mtgpt.cli audit --file tests/fixtures/sample_deck.txt --bracket 3
+python3 -m mtgpt.cli card "Sol Ring"
+python3 -m mtgpt.cli search "o:'search your library for' t:sorcery c:g" --limit 5
+python3 -m mtgpt.cli classify "Nature's Lore" "Three Visits" "Demonic Tutor" "Scapeshift"
+python3 -m mtgpt.cli validate --file tests/fixtures/sample_deck.txt
+python3 -m mtgpt.cli audit    --file tests/fixtures/sample_deck.txt
+python3 -m mtgpt.cli bracket  --file tests/fixtures/sample_deck.txt --target 2
+python3 -m mtgpt.cli report   --file tests/fixtures/sample_deck.txt --bracket 3 --text
 ```
 
-Expected: a rendered report naming Atraxa, reporting 36 lands, flagging deck size (the fixture is 41 cards, not 100), and showing the bracket 3 verdict. Confirm `Cultivate` is counted as RAMP and not as a tutor:
+**The `classify` call is the important one.** `Nature's Lore`, `Three Visits`, and `Scapeshift`
+must all report `["ramp"]` with no `tutor`; `Demonic Tutor` must report `["tutor"]`. That
+distinction drives the bracket verdict and has been broken twice before. Confirm the `report
+--text` output contains a `CARD TAGS` section.
+
+- [ ] **Step 11: Commit**
 
 ```bash
-python3 -m mtgpt.cli audit --file tests/fixtures/sample_deck.txt --json | python3 -c "import json,sys; t=json.load(sys.stdin)['tags']; print('Cultivate:', t['Cultivate'])"
-```
+git add mtgpt/api.py mtgpt/cli.py mtgpt/scryfall.py tests/test_api.py tests/test_cli.py tests/fixtures/
+git commit -m "feat: expose mtgpt as agent-callable operations
 
-Expected: `Cultivate: ['ramp']`
+Each pipeline stage becomes an independently callable operation returning
+JSON in a fixed envelope, plus card lookup and Scryfall candidate search.
+Errors are data: an unresolved name carries the offending names so an agent
+can act on them rather than parse prose.
 
-- [ ] **Step 8: Commit**
-
-```bash
-git add mtgpt/cli.py tests/test_cli.py tests/fixtures/sample_deck.txt
-git commit -m "feat: add audit CLI with text and JSON output
-
-Pure render function plus an injectable client keeps the end-to-end tests
-offline. Unresolved card names exit 2 with the offending names echoed.
+api.py owns serialization so cli.py stays thin and a future MCP adapter
+would be an adapter rather than a rewrite. The text report surfaces per-card
+function tags, which is the design's stated mitigation for classification
+being heuristic.
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
