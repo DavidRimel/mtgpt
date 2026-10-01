@@ -1,19 +1,24 @@
 ---
 name: mtgpt
-description: Use when building, auditing, or tuning a Magic the Gathering EDH/Commander deck - resolves every card against Scryfall, checks legality and color identity, measures ratios/curve/colored sources against deckbuilding targets, reports bracket compliance, finds combos, and suggests additions from EDHREC synergy data. Triggers on "EDH", "Commander deck", "decklist", "tune my deck", "deck audit", "is this legal", "what bracket", "combo", "synergy".
+description: Use when building, auditing, or tuning a Magic the Gathering EDH/Commander deck - imports decks from an Archidekt URL, resolves every card against Scryfall, checks legality and color identity, measures ratios/curve/colored sources against deckbuilding targets, reports bracket compliance, finds combos, finds cards by community-curated function tag, diffs a deck against EDHREC's average build, and suggests additions from EDHREC synergy data. Triggers on "EDH", "Commander deck", "decklist", "tune my deck", "deck audit", "is this legal", "what bracket", "combo", "synergy", "archidekt", "what am I missing".
 ---
 
 # mtgpt
 
-Build and tune Commander decks on verified data: thirteen independently
-callable operations (`card`, `search`, `classify`, `read`, `validate`,
-`audit`, `bracket`, `report`, `synergy`, `themes`, `combos`, `card-combos`,
-`suggest`). See `python3 -m mtgpt.cli --help` for the full list.
+Build and tune Commander decks on verified data: sixteen independently
+callable operations (`card`, `search`, `find`, `classify`, `import`, `read`,
+`validate`, `audit`, `bracket`, `report`, `compare`, `synergy`, `themes`,
+`combos`, `card-combos`, `suggest`). See `python3 -m mtgpt.cli --help` for the
+full list.
+
+Every deck operation takes its list from `--file`, `--stdin`, or `--url` (an
+Archidekt link).
 
 ## The rule that matters
 
 **Never name a card from memory as a recommendation.** Every card you propose
-must come back from `mtgpt card`, `mtgpt search`, or `mtgpt synergy` first.
+must come back from `mtgpt card`, `mtgpt search`, `mtgpt find`, or
+`mtgpt synergy` first.
 Card names, oracle text, legality, and color identity are all things a model
 misremembers confidently, and a decklist with a fake card in it is worse than
 no decklist.
@@ -48,13 +53,23 @@ and were run against this toolkit.
 
 ### Audit a deck
 
-1. Get the list: ask the user to open Moxfield, click **Export**, and paste
-   the text, or point at a saved file. A `--file` must be UTF-8; if mtgpt
-   reports a `UnicodeDecodeError`, have the user re-save as UTF-8 or pipe the
-   text in with `--stdin`.
+1. Get the list. If the user has an **Archidekt** link, fetch it — no pasting:
+
+   ```bash
+   python3 -m mtgpt.cli import "https://archidekt.com/decks/2000000/my-deck"
+   ```
+
+   Or skip `import` and pass `--url` straight to the operation you wanted.
+   `import` also returns `declared_bracket`, the bracket the deck's author
+   claimed — compare it against what `bracket` computes and say if they
+   disagree. For **Moxfield** and everything else, ask the user to click
+   **Export** and paste the text, or point at a saved file. A `--file` must be
+   UTF-8; if mtgpt reports a `UnicodeDecodeError`, have the user re-save as
+   UTF-8 or pipe the text in with `--stdin`.
 2. Get the whole picture at once:
 
    ```bash
+   python3 -m mtgpt.cli report --url "https://archidekt.com/decks/2000000/" --bracket 3 --text
    python3 -m mtgpt.cli report --file deck.txt --bracket 3 --text
    ```
 
@@ -79,10 +94,37 @@ that you assumed it.
    ranked candidates, each with a `reason` citing which gap it fills and its
    EDHREC inclusion rate. `suggest` already filters to color identity,
    legality, and the bracket's Game Changer allowance.
-3. Vet anything you're considering that `suggest` did not surface:
+3. Widen the candidate pool past this commander's own EDHREC page with
+   `find`, which searches Scryfall's community-curated function tags:
+
+   ```bash
+   python3 -m mtgpt.cli find ramp    --identity wubg --limit 10
+   python3 -m mtgpt.cli find removal --identity wubg --limit 10
+   ```
+
+   `find` answers "what cards do this job in these colours", ordered by how
+   often they are played. `synergy` answers "what do players put in *this*
+   deck". Use `find` for the gap, `synergy` for the theme. `--query` ANDs in
+   extra Scryfall terms (`--query "usd<5"`). Run `find` with no argument you
+   have not seen in `--help`: only probed tags are accepted, and a typo is
+   answered with the full vocabulary.
+4. Diagnose what the typical build plays that this one does not:
+
+   ```bash
+   python3 -m mtgpt.cli compare --file deck.txt
+   ```
+
+   `compare` diffs the deck against EDHREC's average build of its commander and
+   returns `overlap_pct`, `missing_from_yours` (each tagged with the
+   `functions` it would fill, so you can cross it with the audit's gaps) and
+   `unique_to_yours`. **The average deck is a popularity artefact, not a
+   correct deck.** A low overlap is not a fault, and `unique_to_yours` is
+   usually where the deck's actual ideas live. Use it to find *omissions worth
+   explaining*, not a list to converge on.
+5. Vet anything you're considering that `suggest` did not surface:
    `python3 -m mtgpt.cli card "<name>"` or
    `python3 -m mtgpt.cli classify "<name1>" "<name2>"` before naming it.
-4. Re-run `audit` (or `report --text`) after a swap to confirm the gap
+6. Re-run `audit` (or `report --text`) after a swap to confirm the gap
    actually closed.
 
 ### Check a bracket honestly
@@ -112,6 +154,19 @@ bracket spread of recorded decks. `synergy` returns Scryfall-verified
 candidates with `synergy` score and `inclusion_rate`; `--variant` narrows to
 `budget`, `expensive`, `upgraded`, or `cedh` builds.
 
+Then build the packages out by function, in the commander's identity:
+
+```bash
+python3 -m mtgpt.cli find sacrifice_outlet --identity bg --limit 15
+python3 -m mtgpt.cli find graveyard_hate   --identity bg --limit 10
+```
+
+The tag vocabulary covers more than the audit's categories — `wheel`,
+`theft`, `sacrifice_outlet`, `untapper`, `blink`, `landfall`, `pillowfort`,
+`group_hug` and others are all searchable, which is how you assemble a
+*package* rather than a pile of individually good cards. `--help` lists them
+all.
+
 ### Investigate a combo
 
 ```bash
@@ -137,6 +192,57 @@ is present in the deck.
   assembly speed, not card selection taste. Land fetches are deliberately
   excluded from the tutor count (they're counted as ramp instead).
 
+## When the human tags and our regex disagree
+
+`find` returns cards a person tagged; `classify` tags by regex. Each card from
+`find` carries `agrees_with_classify`, and the result carries an overall
+`agreement_rate`. **Say so when they disagree — do not silently pick one.**
+Measured live at `--limit 60`: ramp 0.82, removal 0.80, counterspell 0.82,
+draw 0.83, protection 0.80, sweeper 0.73, recursion 0.37, tutor 0.30.
+
+Three causes, worth telling apart before calling anything a bug:
+
+- **A deliberate difference.** `otag:tutor` includes land fetches; mtgpt counts
+  Cultivate as ramp on purpose, because the bracket rules use tutor density as a
+  combo-assembly measure. Most of the tutor gap is this.
+- **A land.** `classify` tags a land `land` and nothing else, so channel lands
+  (Boseiju, Otawara) and modal DFC spell halves never register as the removal or
+  protection they also are. Expect them in every disagreement list.
+- **A real miss.** `recursion` is the clear one: the regex wants
+  "return ... from a graveyard" and so misses the "put target creature card from
+  a graveyard onto the battlefield" wording — Reanimate, Animate Dead, Victimize,
+  Rise of the Dark Realms. If the audit says a deck is low on recursion, check
+  by hand before believing it.
+
+`find` cannot serve `mass_land_denial`: no Tagger tag for it resolves
+(`land-destruction`, `mass-land-destruction`, `mld` all 404). That category comes
+from `classify` alone.
+
+## Research beyond the toolkit
+
+The toolkit gives verified data. It does not give you *why* a card is good in an
+archetype, what a commander's standard packages are called, or how a line
+actually plays. For that, use `WebSearch` and `WebFetch` — then bring any card
+name you find back through `mtgpt card` before repeating it.
+
+Prefer these sources, which are reachable and worth reading:
+
+- `edhrec.com` — the HTML pages behind the JSON, including theme write-ups
+- `commandersherald.com` — primers and strategy articles
+- `mtggoldfish.com` — metagame and archetype coverage
+- `tcgplayer.com/content` — set and archetype articles
+- `mtgtop8.com` — competitive (cEDH) decklists
+
+**Distrust SEO content farms.** A probe of ten search results found three from a
+single content mill: pages that restate a card's oracle text, rank "top 10
+commanders" with no reasoning, and cite nothing. If a page has no author, no
+argument, and no decklist, it is not evidence — drop it rather than quoting it.
+
+**Reddit is not reachable.** Anthropic's crawler is banned by Reddit's policy, so
+a script, `WebFetch`, and `WebSearch` all refuse — there is no workaround from
+here. If the user wants r/EDH or r/CompetitiveEDH discussion taken into account,
+say plainly that you cannot fetch it and ask them to paste the thread.
+
 ## Honesty requirements
 
 Every bracket report ends with what it did **not** check
@@ -156,6 +262,10 @@ Do not improvise these by hand:
   real browser, and Chromium cannot launch here without four system libraries
   that require root to install (`libnspr4`, `libnss3`, `libnssutil3`,
   `libasound2`) — see the README's "Moxfield URL fetching" section.
+  **Archidekt links do work** (`import`, or `--url`), as does a bare Archidekt
+  deck id. TappedOut, Aetherhub, Deckstats and mtgdecks.net are all bot-blocked.
+- **No deck-from-URL for anything but Archidekt**, and `declared_bracket` from
+  an import is the author's claim, not a verdict — run `bracket` for that.
 - **No goldfish simulation.**
 - **No deck-from-scratch generation** — `synergy`/`themes` inform a build,
   but nothing assembles a full 99 automatically.
@@ -172,3 +282,6 @@ Load these only when the question calls for them:
   audit reports.
 - `references/brackets.md` — the bracket 1-5 table and exactly what mtgpt
   checks versus defers.
+- `references/sources.md` — which external sources are reachable, which are
+  blocked, and what each one gives us. Read it before trying to fetch anything
+  the toolkit does not already wrap.

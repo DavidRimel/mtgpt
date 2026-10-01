@@ -24,6 +24,10 @@ from .errors import SourceUnavailable
 
 BASE = "https://json.edhrec.com/pages/commanders"
 
+#: The consensus decklist pages. A different path root from `BASE`, not a
+#: suffix: `pages/average-decks/<slug>.json`.
+AVERAGE_BASE = "https://json.edhrec.com/pages/average-decks"
+
 #: Bracket/budget variant pages EDHREC publishes per commander.
 VARIANTS = frozenset({"budget", "expensive", "upgraded", "cedh"})
 
@@ -41,6 +45,17 @@ CANDIDATE_LISTS = (
 
 _NON_SLUG = re.compile(r"[^a-z0-9]+")
 
+#: Apostrophes are DELETED before the non-slug substitution, not replaced.
+#:
+#: EDHREC writes "Yuriko, the Tiger's Shadow" as `yuriko-the-tigers-shadow`.
+#: Substituting a hyphen gave `yuriko-the-tiger-s-shadow`, which the CDN answers
+#: with 403 — so `synergy`, `themes`, `suggest` and `compare` all failed for
+#: every commander with an apostrophe inside a word. Verified live against
+#: Gishath, Sun's Avatar; K'rrik, Son of Yawgmoth; and Hanna, Ship's Navigator.
+#: Names where the apostrophe is followed by a space ("Praetors' Voice") are
+#: unaffected either way, which is why the bug survived.
+_APOSTROPHES = re.compile(r"['‘’ʼ]")
+
 Transport = Callable[[str], dict]
 
 
@@ -50,7 +65,7 @@ def commander_slug(name: str) -> str:
     Accents are stripped rather than escaped, and "&" becomes "and", matching
     EDHREC's own slugs.
     """
-    folded = unicodedata.normalize("NFKD", name)
+    folded = unicodedata.normalize("NFKD", _APOSTROPHES.sub("", name))
     ascii_name = folded.encode("ascii", "ignore").decode("ascii")
     ascii_name = ascii_name.replace("&", " and ")
     return _NON_SLUG.sub("-", ascii_name.lower()).strip("-")
@@ -72,6 +87,21 @@ class EdhrecClient:
         self._sleep = sleep
         self._made_request = False
 
+    def _request(self, url: str) -> dict:
+        """Fetch one page, honoring the courtesy delay across calls.
+
+        The delay lives here rather than in each method, so a commander page and
+        an average-deck page fetched back to back are still spaced.
+        """
+        if self._made_request:
+            self._sleep(REQUEST_DELAY)
+        self._made_request = True
+
+        try:
+            return self._transport(url)
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            raise SourceUnavailable("EDHREC", f"{url}: {exc}") from exc
+
     def commander(self, name: str, *, variant: str | None = None) -> dict:
         """Fetch a commander page, optionally a bracket/budget variant."""
         if variant is not None and variant not in VARIANTS:
@@ -81,16 +111,17 @@ class EdhrecClient:
             )
         slug = commander_slug(name)
         suffix = f"/{variant}" if variant else ""
-        url = f"{BASE}/{slug}{suffix}.json"
+        return self._request(f"{BASE}/{slug}{suffix}.json")
 
-        if self._made_request:
-            self._sleep(REQUEST_DELAY)
-        self._made_request = True
+    def average_deck(self, name: str) -> dict:
+        """Fetch the consensus decklist EDHREC publishes for a commander.
 
-        try:
-            return self._transport(url)
-        except (urllib.error.URLError, OSError, ValueError) as exc:
-            raise SourceUnavailable("EDHREC", f"{url}: {exc}") from exc
+        This is the "what does the typical build actually play" page: a full 99
+        with quantities, aggregated across every recorded deck. Distinct from
+        `commander`, which ranks individual cards by synergy without committing
+        to a list.
+        """
+        return self._request(f"{AVERAGE_BASE}/{commander_slug(name)}.json")
 
 
 def _mapping(value) -> dict:
@@ -227,3 +258,72 @@ def bracket_distribution(payload: dict) -> dict[int, int]:
         if 1 <= bracket <= 5:
             out[bracket] = int(count)
     return out
+
+
+def average_commanders(payload: dict) -> tuple[str, ...]:
+    """The commander(s) the average deck is built around, or empty."""
+    deck = _mapping(_mapping(payload).get("deck"))
+    return tuple(
+        name.strip()
+        for name in _sequence(deck.get("commander"))
+        if isinstance(name, str) and name.strip()
+    )
+
+
+def average_cards(payload: dict) -> tuple[dict, ...]:
+    """The average deck's 99, flattened to `{name, qty, type}` entries.
+
+    Read from `deck.cards`, a mapping of card type to `[name, quantity]` pairs,
+    because that is the only place the page states quantities — the `cardlists`
+    block the commander pages use carries names alone, so four basics there mean
+    four *kinds* of basic, not four cards. `cardlists` is the fallback for a
+    reshaped payload, with every quantity recorded as 1 and that visible in the
+    data rather than assumed.
+
+    Commanders are excluded: EDHREC keeps them in `deck.commander`, and a diff
+    against your deck should not report your own commander as a difference.
+
+    Degrades to an empty tuple on any other shape, and skips a single malformed
+    row while keeping its siblings.
+    """
+    deck = _mapping(_mapping(payload).get("deck"))
+    grouped = _mapping(deck.get("cards"))
+
+    out: list[dict] = []
+    for card_type, rows in grouped.items():
+        for row in _sequence(rows):
+            pair = _sequence(row)
+            if not pair or not isinstance(pair[0], str) or not pair[0].strip():
+                continue
+            qty = _number(pair[1], 1.0) if len(pair) > 1 else 1.0
+            if qty is UNCOERCIBLE or qty < 1:
+                continue
+            out.append(
+                {
+                    "name": pair[0].strip(),
+                    "qty": int(qty),
+                    "type": str(card_type),
+                }
+            )
+
+    if out:
+        return tuple(out)
+
+    # Fallback: the type-split cardlists. Names only, so every qty is 1 and the
+    # caller can see that from the data.
+    for cardlist in _cardlists(payload):
+        header = cardlist.get("header")
+        for view in _sequence(cardlist.get("cardviews")):
+            if not isinstance(view, dict):
+                continue
+            name = view.get("name")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            out.append(
+                {
+                    "name": name.strip(),
+                    "qty": 1,
+                    "type": str(header) if isinstance(header, str) else "",
+                }
+            )
+    return tuple(out)

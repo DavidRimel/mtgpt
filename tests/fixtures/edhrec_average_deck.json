@@ -1,0 +1,86 @@
+{
+ "header": "Average Deck for Atraxa, Praetors' Voice",
+ "deck": {
+  "commander": [
+   "Atraxa, Praetors' Voice"
+  ],
+  "cards": {
+   "Artifact": [
+    [
+     "Arcane Signet",
+     1
+    ],
+    [
+     "Astral Cornucopia",
+     1
+    ],
+    [
+     "Chromatic Lantern",
+     1
+    ]
+   ],
+   "Land": [
+    [
+     "Breeding Pool",
+     1
+    ],
+    [
+     "Command Tower",
+     1
+    ],
+    [
+     "Exotic Orchard",
+     1
+    ]
+   ],
+   "Creature": [
+    [
+     "Birds of Paradise",
+     1
+    ],
+    [
+     "Blightbelly Rat",
+     1
+    ],
+    [
+     "Blighted Agent",
+     1
+    ]
+   ],
+   "Enchantment": [
+    [
+     "Brokers Ascendancy",
+     1
+    ],
+    [
+     "Doubling Season",
+     1
+    ],
+    [
+     "Inexorable Tide",
+     1
+    ]
+   ]
+  }
+ },
+ "container": {
+  "json_dict": {
+   "cardlists": [
+    {
+     "header": "Artifacts",
+     "cardviews": [
+      {
+       "name": "Arcane Signet"
+      },
+      {
+       "name": "Astral Cornucopia"
+      },
+      {
+       "name": "Chromatic Lantern"
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

@@ -16,7 +16,7 @@ from .audit import AuditReport, audit
 from .brackets import BracketReport, check
 from .classify import classify, classify_deck
 from .deckparse import parse
-from .errors import SourceUnavailable, UnresolvedCards
+from .errors import DeckStructureError, SourceUnavailable, UnresolvedCards
 from .models import Card, Function, ResolvedDeck, Violation
 from .scryfall import ScryfallClient, card_from_json, resolve
 from .validate import validate
@@ -178,6 +178,83 @@ def search_cards(
     }
 
 
+def find_cards(
+    function: str,
+    *,
+    identity: str | None = None,
+    limit: int = 25,
+    extra_query: str | None = None,
+    cross_check: bool = True,
+    client: ScryfallClient | None = None,
+) -> dict:
+    """Find cards by the function a human said they perform.
+
+    Scryfall exposes community-curated oracle tags as `otag:`, which is a
+    different kind of evidence from everything else here: `search` matches text
+    you wrote, `synergy` reports what players play, and this reports what the
+    tagging community decided a card *does*. Results come back in `order=edhrec`,
+    so the most-played candidates lead.
+
+    Only tags verified to resolve are accepted — see `tagger.TAGS` — because
+    Scryfall answers an unknown `otag:` with a 404 that is indistinguishable
+    from "nothing in those colours".
+
+    `cross_check` (default true) adds `agrees_with_classify` per card and an
+    `agreement_rate` overall, comparing the human tag against `classify.py`'s
+    regex. A disagreement means one of the two is wrong; report it rather than
+    silently trusting whichever you looked at first. It is omitted for tags our
+    own classifier has no notion of (`wheel`, `theft`, ...), where claiming
+    either agreement or disagreement would be inventing a verdict.
+    """
+    from . import tagger
+
+    label = tagger.canonical_label(function)
+    otag = tagger.function_tag(label)
+    query = tagger.build_query(label, identity=identity, extra=extra_query)
+
+    scry = _client(client)
+    # allow_empty: the query is machine-built from a verified vocabulary, so a
+    # 404 here means "no such card in these colours", not a broken query.
+    payloads = scry.search(query, limit=limit, allow_empty=True)
+    game_changers = _game_changers(scry)
+
+    expected = tagger.cross_check_functions(label) if cross_check else frozenset()
+    cards: list[dict] = []
+    agreed = 0
+    for payload in payloads:
+        card = card_from_json(payload, game_changers=game_changers)
+        functions = classify(card)
+        entry = _card_dict(card, functions)
+        entry["source"] = "scryfall-tagger"
+        entry["otag"] = otag
+        if expected:
+            agrees = bool(functions & expected)
+            entry["agrees_with_classify"] = agrees
+            agreed += agrees
+        cards.append(entry)
+
+    result = {
+        "function": label,
+        "otag": otag,
+        "query": query,
+        "identity": identity,
+        "count": len(cards),
+        "cards": cards,
+    }
+    if expected:
+        result["classify_expects"] = sorted(f.value for f in expected)
+        result["agreement_rate"] = round(agreed / len(cards), 4) if cards else None
+    else:
+        result["classify_expects"] = []
+        result["agreement_rate"] = None
+        if cross_check:
+            result["cross_check_note"] = (
+                f"classify.py has no tag corresponding to otag:{otag}, so no "
+                "agreement can be claimed either way."
+            )
+    return result
+
+
 def classify_cards(
     names: list[str], *, client: ScryfallClient | None = None
 ) -> dict[str, list[str]]:
@@ -283,6 +360,43 @@ def full_report(
     if combos_section is not None:
         result["combos"] = combos_section
     return result
+
+
+# --- Archidekt operations ---------------------------------------------------
+
+
+def import_deck(
+    url: str, *, client: ScryfallClient | None = None, archidekt_client=None
+) -> dict:
+    """Fetch a deck from an Archidekt URL and parse it.
+
+    This is the only URL import that works from here: Moxfield answers scripted
+    requests with a Cloudflare challenge and no browser is available. Accepts a
+    full URL, the `/api/` form, or a bare deck id.
+
+    `declared_bracket` is the `edhBracket` the deck's author set — a claim about
+    the deck, not a verdict on it. Pass the returned `decklist` to `bracket` (or
+    use `--url` on it directly) to find out what the rules actually say; the two
+    disagreeing is worth telling the user about.
+
+    `client` is accepted for signature symmetry with the other operations and is
+    unused: parsing is structural, so import makes no Scryfall request. Every
+    operation that verifies cards takes the text from here.
+    """
+    from .archidekt import ArchidektClient, declared_bracket, deck_id, deck_name, to_decklist
+
+    source = archidekt_client or ArchidektClient()
+    identifier = deck_id(url)
+    payload = source.deck(identifier)
+    text = to_decklist(payload)
+    return {
+        "source": "archidekt",
+        "deck_id": identifier,
+        "name": deck_name(payload),
+        "declared_bracket": declared_bracket(payload),
+        "decklist": text,
+        "parsed": read_deck(text),
+    }
 
 
 # --- Commander Spellbook operations -----------------------------------------
@@ -416,6 +530,104 @@ def commander_themes(name: str, *, edhrec_client=None) -> dict:
         "commander": name,
         "themes": [dict(t) for t in themes(payload)],
         "bracket_distribution": {str(k): v for k, v in bracket_distribution(payload).items()},
+    }
+
+
+def compare_to_average(
+    text: str, *, client: ScryfallClient | None = None, edhrec_client=None
+) -> dict:
+    """Diff a decklist against EDHREC's consensus build of its commander.
+
+    Answers the question no other operation here does: not "is this deck legal
+    and well-proportioned", but "what does the typical build of this commander
+    play that this one does not". The average deck is a popularity artefact, not
+    a correct deck — `unique_to_yours` is where a deck's actual ideas live, and a
+    low overlap is not by itself a fault.
+
+    Each entry in `missing_from_yours` carries its `functions`, so the agent can
+    see which gap it would fill and cross the diff with the audit instead of
+    listing cards for their own sake.
+
+    The average list is resolved with `strict=False`: it is a community source,
+    and one name Scryfall cannot resolve must not abort the comparison. Those
+    names are reported in `unresolved_average_names` rather than dropped
+    silently.
+    """
+    from .edhrec import EdhrecClient, average_cards
+
+    scry = _client(client)
+    deck = _resolved(text, scry)
+    if not deck.commanders:
+        raise DeckStructureError(
+            "No commander declared, so there is no average deck to compare "
+            "against. Add a `Commander` section or a *CMDR* flag to the list."
+        )
+    commander = deck.commanders[0].name
+
+    source = edhrec_client or EdhrecClient()
+    average = average_cards(source.average_deck(commander))
+    # Dedupe by name: the average list is already one row per card, but an
+    # unofficial source must not be able to inflate the denominator.
+    by_name: dict[str, dict] = {}
+    for entry in average:
+        by_name.setdefault(entry["name"].casefold(), entry)
+
+    yours: dict[str, str] = {}
+    for _, card in deck.cards:
+        yours[card.name.casefold()] = card.name
+        front, _, _ = card.name.partition("//")
+        yours.setdefault(front.strip().casefold(), card.name)
+
+    in_both = [e["name"] for key, e in by_name.items() if key in yours]
+    missing_keys = [key for key in by_name if key not in yours]
+
+    resolved: dict[str, Card] = {}
+    unresolved: list[str] = []
+    if missing_keys:
+        wanted = [by_name[key]["name"] for key in missing_keys]
+        payloads, not_found = scry.collection(wanted, strict=False)
+        unresolved = list(not_found)
+        game_changers = _game_changers(scry)
+        for payload in payloads:
+            card = card_from_json(payload, game_changers=game_changers)
+            resolved[card.name.casefold()] = card
+            front, _, _ = card.name.partition("//")
+            resolved.setdefault(front.strip().casefold(), card)
+
+    missing: list[dict] = []
+    for key in missing_keys:
+        entry = by_name[key]
+        card = resolved.get(key)
+        if card is None:
+            continue
+        row = _card_dict(card, classify(card))
+        row["average_qty"] = entry["qty"]
+        row["average_type"] = entry["type"]
+        missing.append(row)
+
+    # Walked from the deck rather than from `yours`, whose front-face aliases
+    # would list a modal DFC under two names.
+    average_names = set(by_name)
+    unique_seen: set[str] = set()
+    for _, card in deck.cards:
+        aliases = {
+            card.name.casefold(),
+            card.name.partition("//")[0].strip().casefold(),
+        }
+        if aliases & average_names:
+            continue
+        unique_seen.add(card.name)
+    unique = sorted(unique_seen)
+
+    size = len(by_name)
+    return {
+        "commander": commander,
+        "average_size": size,
+        "in_both": sorted(in_both),
+        "missing_from_yours": missing,
+        "unique_to_yours": unique,
+        "unresolved_average_names": unresolved,
+        "overlap_pct": round(100 * len(in_both) / size, 1) if size else 0.0,
     }
 
 

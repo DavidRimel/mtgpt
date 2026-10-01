@@ -19,9 +19,10 @@ Then ask Claude to audit, tune, or explore a Commander deck.
 
 ## Use directly
 
-mtgpt is thirteen independently callable operations, each emitting one JSON
-object: `card`, `search`, `classify`, `read`, `validate`, `audit`, `bracket`,
-`report`, `synergy`, `themes`, `combos`, `card-combos`, `suggest`.
+mtgpt is sixteen independently callable operations, each emitting one JSON
+object: `card`, `search`, `find`, `classify`, `import`, `read`, `validate`,
+`audit`, `bracket`, `report`, `compare`, `synergy`, `themes`, `combos`,
+`card-combos`, `suggest`.
 
 ```bash
 # Full picture, human-readable
@@ -40,6 +41,16 @@ python3 -m mtgpt.cli suggest --file mydeck.txt --bracket 3
 python3 -m mtgpt.cli synergy "Atraxa, Praetors' Voice" --variant upgraded
 python3 -m mtgpt.cli themes  "Atraxa, Praetors' Voice"
 
+# Import from an Archidekt URL, or pass --url to any deck operation
+python3 -m mtgpt.cli import  "https://archidekt.com/decks/2000000/my-deck"
+python3 -m mtgpt.cli bracket --url "https://archidekt.com/decks/2000000/" --target 3
+
+# Cards that do a job, by community-curated function tag
+python3 -m mtgpt.cli find ramp --identity wubg --limit 10
+
+# What the typical build of this commander plays that yours does not
+python3 -m mtgpt.cli compare --file mydeck.txt
+
 # Combo detection
 python3 -m mtgpt.cli card-combos "Thassa's Oracle"
 python3 -m mtgpt.cli combos --file mydeck.txt
@@ -56,9 +67,10 @@ Output is `{"ok": true, "command": ..., "data": {...}}` on success or
 failure, with exit code 0 or 2 respectively. See
 `skills/mtgpt/SKILL.md` for the full composition patterns.
 
-Export your list from Moxfield with the **Export** button and paste it into a
-file. Moxfield serves scripted requests a Cloudflare challenge, so automated
-fetching is not available — see
+Archidekt links can be fetched directly: `import`, or `--url` on any deck
+operation. Export your list from Moxfield with the **Export** button and paste
+it into a file — Moxfield serves scripted requests a Cloudflare challenge, so
+automated fetching is not available there. See
 [Moxfield URL fetching](#moxfield-url-fetching) for what it would take.
 
 Decklist files must be UTF-8. A Windows editor's "ANSI" (cp1252) or
@@ -76,17 +88,21 @@ text in with `--stdin`.
 - **Synergy and themes** — EDHREC candidates and inclusion rates for a commander, and how it's usually built
 - **Combos** — Commander Spellbook combos for one card, or what a decklist actually assembles
 - **Suggestions** — ranked cards to add, each justified by the gap it fills and (when available) its EDHREC inclusion rate
+- **Function search** — cards carrying a community-curated Scryfall Tagger `otag:`, scoped to a color identity, each cross-checked against mtgpt's own classification so a disagreement is visible
+- **Average-deck diff** — overlap with EDHREC's consensus build of the commander, what it plays that yours does not (tagged by function), and what is unique to yours
 
 ## Status
 
-Layer 1 (and the combo/synergy/suggest operations added after it). Working
-now: ingest, Scryfall resolution, validation, function classification, the
-ratio and curve audit, bracket checks, EDHREC synergy and themes, Commander
-Spellbook combo detection, and gap-driven suggestions.
+Layer 1 (and the combo/synergy/suggest/tagger/import/compare operations added
+after it). Working now: ingest, Archidekt URL import, Scryfall resolution,
+validation, function classification, Scryfall Tagger function search, the ratio
+and curve audit, bracket checks, EDHREC synergy, themes and average-deck diff,
+Commander Spellbook combo detection, and gap-driven suggestions.
 
 Not built yet, and deliberately not improvised by the skill: Moxfield URL
 fetching (see below), goldfish simulation, and building a full deck from
-scratch given only a commander.
+scratch given only a commander. `find` cannot cover mass land denial — no
+Scryfall Tagger tag for it resolves.
 
 ### Moxfield URL fetching
 
@@ -96,7 +112,7 @@ environment without system libraries that require root to install
 (`libnspr4`, `libnss3`, `libnssutil3`, `libasound2`). Verified 2026-10-01.
 
 Use Moxfield's **Export** button and pass the text to `--file` or `--stdin`.
-Every deck operation accepts both.
+Every deck operation accepts both, plus `--url` for an Archidekt link.
 
 ## Data sources
 

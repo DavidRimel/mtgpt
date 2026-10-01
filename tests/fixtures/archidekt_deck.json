@@ -1,0 +1,133 @@
+{
+ "id": 2000000,
+ "name": "Yuriko, the Tigers Shadow",
+ "deckFormat": 3,
+ "edhBracket": 3,
+ "categories": [
+  {
+   "id": 16976863,
+   "name": "Maybeboard",
+   "isPremier": false,
+   "includedInDeck": false,
+   "includedInPrice": false
+  },
+  {
+   "id": 16976817,
+   "name": "Sideboard",
+   "isPremier": false,
+   "includedInDeck": true,
+   "includedInPrice": true
+  },
+  {
+   "id": 16960492,
+   "name": "Commander",
+   "isPremier": true,
+   "includedInDeck": true,
+   "includedInPrice": true
+  },
+  {
+   "id": 16960491,
+   "name": "Land",
+   "isPremier": false,
+   "includedInDeck": true,
+   "includedInPrice": true
+  },
+  {
+   "id": 16960490,
+   "name": "Sorcery",
+   "isPremier": false,
+   "includedInDeck": true,
+   "includedInPrice": true
+  },
+  {
+   "id": 16960489,
+   "name": "Enchantment",
+   "isPremier": false,
+   "includedInDeck": true,
+   "includedInPrice": true
+  },
+  {
+   "id": 16960488,
+   "name": "Instant",
+   "isPremier": false,
+   "includedInDeck": true,
+   "includedInPrice": true
+  },
+  {
+   "id": 16960487,
+   "name": "Artifact",
+   "isPremier": false,
+   "includedInDeck": true,
+   "includedInPrice": true
+  },
+  {
+   "id": 16960486,
+   "name": "Creature",
+   "isPremier": false,
+   "includedInDeck": true,
+   "includedInPrice": true
+  }
+ ],
+ "cards": [
+  {
+   "quantity": 1,
+   "categories": [
+    "Commander"
+   ],
+   "card": {
+    "displayName": null,
+    "oracleCard": {
+     "name": "Yuriko, the Tiger's Shadow"
+    }
+   }
+  },
+  {
+   "quantity": 1,
+   "categories": [
+    "Land"
+   ],
+   "card": {
+    "displayName": null,
+    "oracleCard": {
+     "name": "Halimar Depths"
+    }
+   }
+  },
+  {
+   "quantity": 8,
+   "categories": [
+    "Land"
+   ],
+   "card": {
+    "displayName": null,
+    "oracleCard": {
+     "name": "Island"
+    }
+   }
+  },
+  {
+   "quantity": 1,
+   "categories": [
+    "Instant"
+   ],
+   "card": {
+    "displayName": null,
+    "oracleCard": {
+     "name": "Brainstorm"
+    }
+   }
+  },
+  {
+   "quantity": 1,
+   "categories": [
+    "Artifact"
+   ],
+   "card": {
+    "displayName": null,
+    "oracleCard": {
+     "name": "Sol Ring"
+    }
+   }
+  }
+ ]
+}
