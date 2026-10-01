@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 
+from mtgpt.goldfish.engine import Permanent, find_card, new_game, prepare
 from mtgpt.models import Card, ResolvedDeck
 
 
@@ -73,3 +74,35 @@ def deck(*spells, cmdr=None, lands=None):
     lands = 99 - len(spells) if lands is None else lands
     cards = [(1, s) for s in spells] + [(lands, forest())]
     return ResolvedDeck(commanders=(cmdr or commander(),), cards=tuple(cards))
+
+
+NEVER = {"opponent_life_lost": 100000}
+
+
+def rigged(*spells, hand=(), lands_in_play=0, on_board=(), commander_out=False,
+           goal=None, source=None, land="Forest", **game):
+    """A game on turn 1 with an exact hand and board, whatever the shuffle dealt.
+
+    `source` replaces the default deck of `spells` plus Forests; `land` names
+    the land `lands_in_play` puts out.
+    """
+    setup = prepare(source or deck(*spells), goal or {
+        "archetype": "custom", "thing": "commander", "win": NEVER})
+    s = new_game(setup, seed=1, **game)
+    s.library += s.hand
+    s.hand = []
+    for name in hand:
+        idx = find_card(s, name, s.library)
+        s.library.remove(idx)
+        s.hand.append(idx)
+    for name in [land] * lands_in_play + list(on_board):
+        idx = find_card(s, name, s.library)
+        s.library.remove(idx)
+        c = s.cards[idx]
+        s.battlefield.append(Permanent(card=idx, name=name, power=c.effect.power,
+                                       is_creature=c.is_creature, entered=0, is_land=c.is_land))
+    if commander_out:
+        idx = s.command_zone.pop()
+        s.battlefield.append(Permanent(card=idx, name=s.cards[idx].name,
+                                       power=s.cards[idx].effect.power, is_creature=True, entered=0))
+    return s
