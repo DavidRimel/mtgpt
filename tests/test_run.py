@@ -132,10 +132,22 @@ def test_partner_commanders_both_get_cast():
     assert {"Partner A", "Partner B"} <= set(s.cast_names)
 
 
-def test_running_out_of_library_ends_quietly_at_the_cap():
+def test_running_out_of_library_loses_by_decking():
+    # 12 Forests: 7 in the opening hand, one drawn per turn from turn 2, so the
+    # draw on turn 7 finds an empty library.
     small = ResolvedDeck(commanders=(commander(),), cards=((12, forest()),))
     s = play(prepare(small, GO_WIDE), seed=1, turn_cap=30)
-    assert s.over and s.turn == 30 and s.library == []
+    assert s.over and s.loss_by == "decked" and s.checkpoints["loss"] == s.turn
+    assert s.checkpoints["win"] is None and s.turn < 30
+
+
+def test_report_has_a_loss_block():
+    small = ResolvedDeck(commanders=(commander(),), cards=((12, forest()),))
+    r = simulate(small, GO_WIDE, games=5, turn_cap=30)
+    assert r["loss"]["loss_rate"] == 1.0
+    assert r["loss"]["by_reason"] == {"decked": 1.0}
+    assert r["loss"]["loss_turn"]["median"] is not None
+    assert simulate(deck(), GO_WIDE, games=5)["loss"]["loss_rate"] == 0.0
 
 
 def test_colorless_commander_plays():

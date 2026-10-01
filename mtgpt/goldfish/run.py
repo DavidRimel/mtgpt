@@ -66,6 +66,7 @@ def summarize(setup: Setup, states: list[GameState], *, seed, turn_cap: int,
         "thing": _thing_block(states),
         "disruption": _disruption_block(states),
         "win": _win_block(states),
+        "loss": _loss_block(states),
         "notes": {
             "unmodeled": sorted({c.name for c in setup.cards if c.unmodeled}
                                 - {name for name, _ in goal.engine}),
@@ -204,6 +205,18 @@ def _win_block(states):
         "win_rate": _ratio(len(wins), games),
         "win_turn": _distribution(wins),
         "by_condition": {k: _ratio(v, games) for k, v in sorted(by.items())},
+    }
+
+
+def _loss_block(states):
+    """Games lost before the cap: decking is the only way to lose a goldfish."""
+    games = len(states)
+    lost = [s.checkpoints.get("loss") for s in states if s.checkpoints.get("loss") is not None]
+    by = Counter(s.loss_by for s in states if s.loss_by is not None)
+    return {
+        "loss_rate": _ratio(len(lost), games),
+        "loss_turn": _distribution(lost),
+        "by_reason": {k: _ratio(v, games) for k, v in sorted(by.items())},
     }
 
 

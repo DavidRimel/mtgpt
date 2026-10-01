@@ -230,3 +230,13 @@ def test_extra_turn_counts_and_self_shuffle():
     assert (effect_of(beacon, G).extra_turns, effect_of(beacon, G).shuffle_self) == (1, True)
     assert (effect_of(stretch, G).extra_turns, effect_of(stretch, G).shuffle_self) == (2, False)
     assert not is_unmodeled(stretch, effect_of(stretch, G))
+
+
+def test_enter_the_infinite_draws_the_library_and_puts_one_back():
+    eti = card("Enter the Infinite", "Sorcery", "Draw cards equal to the number of cards in your "
+               "library, then put a card from your hand on top of your library. You have no maximum "
+               "hand size until your next turn.", mana_cost="{8}{U}{U}{U}{U}")
+    effect = effect_of(eti, G)
+    assert (effect.draw_library, effect.put_back) == (True, 1)
+    assert effect.draw_once == 0
+    assert not is_unmodeled(eti, effect)

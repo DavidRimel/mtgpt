@@ -660,6 +660,8 @@ def game_view(state: GameState) -> dict:
         "win_by": state.win_by,
         "events": list(state.events),
         "pending_tutor": state.pending_tutor,
+        "pending_put_back": state.pending_put_back,
+        "loss_by": state.loss_by,
         "legal_actions": legal_actions(state),
         "log": state.log[-12:],
     }

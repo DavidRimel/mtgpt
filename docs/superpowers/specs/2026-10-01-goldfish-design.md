@@ -209,6 +209,15 @@ carries the legal list.
 3. Tutor target: the first missing piece of `thing`, then of `win`, then a land if
    under 4 lands, otherwise the highest-priority card not in hand.
 
+### Decking and drawing the library
+
+Drawing from an empty library loses the game on that round; the report's `loss`
+block carries the loss rate, loss rounds, and reason. A card that draws cards equal
+to the library (Enter the Infinite) draws it all, then waits for `put_back` choices
+— cards from hand put on top — before anything else happens. The auto pilot holds
+such a card until a look-ahead, playing out the rest of the round with the policy,
+ends in a win; it puts back a self-shuffling extra-turn spell first, then a land.
+
 ### Extra turns
 
 An extra-turn spell ("take an extra turn", Time Stretch's two) queues full turns —

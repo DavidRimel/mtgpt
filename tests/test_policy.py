@@ -171,3 +171,34 @@ def test_land_shortcut_counts_an_alternative_cost():
     s = rigged(source=d, land="Prism Land", lands_in_play=4, commander_out=True,
                hand=["Big Spell", "Prism Gate", "Prism Land"], goal=goal)
     assert choose(s) == {"play_land": "Prism Land"}
+
+
+# --- Enter the Infinite: cast only when the look-ahead sees the win ----------
+
+ETI = card("Enter the Infinite", "Sorcery", "Draw cards equal to the number of cards in your "
+           "library, then put a card from your hand on top of your library. You have no maximum "
+           "hand size until your next turn.", mana_cost="{3}")
+APPROACH = card("Approach", "Sorcery", "", mana_cost="{2}")
+NEXUS = card("Nexus of Fate", "Instant", "Take an extra turn after this one.\nIf Nexus of Fate "
+             "would be put into a graveyard from anywhere, reveal Nexus of Fate and shuffle it "
+             "into its owner's library instead.", mana_cost="{1}")
+CAST_APPROACH = {"archetype": "custom", "thing": "commander", "win": {"cast": "Approach"}}
+
+
+def test_enter_the_infinite_is_held_when_it_would_not_win():
+    s = rigged(ETI, hand=["Enter the Infinite"], lands_in_play=3)  # 3 mana: nothing left after
+    s.command_zone = []
+    assert choose(s) == {"pass": True}
+
+
+def test_enter_the_infinite_is_cast_when_the_follow_up_wins():
+    s = rigged(ETI, APPROACH, hand=["Enter the Infinite"], lands_in_play=5, goal=CAST_APPROACH)
+    s.command_zone = []
+    assert choose(s) == {"cast": "Enter the Infinite"}
+
+
+def test_put_back_prefers_a_self_shuffling_extra_turn():
+    s = rigged(ETI, NEXUS, hand=["Enter the Infinite"], lands_in_play=3)
+    s.command_zone = []
+    s = apply(s, {"cast": "Enter the Infinite"})
+    assert choose(s) == {"put_back": "Nexus of Fate"}
