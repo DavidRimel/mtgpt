@@ -87,6 +87,36 @@ def test_collection_raises_unresolved_with_offending_names():
     assert "will not guess" in str(excinfo.value)
 
 
+def test_collection_strict_by_default_still_raises():
+    transport = FakeTransport({"data": [], "not_found": [{"name": "Nope"}]})
+    client = ScryfallClient(transport=transport, sleep=lambda _: None)
+    with pytest.raises(UnresolvedCards):
+        client.collection(["Nope"])
+
+
+def test_collection_non_strict_returns_missing_instead_of_raising():
+    """One unresolvable candidate must not discard the resolvable ones."""
+    transport = FakeTransport(
+        {"data": [{"name": "Sol Ring"}], "not_found": [{"name": "Nope"}]}
+    )
+    client = ScryfallClient(transport=transport, sleep=lambda _: None)
+    cards, missing = client.collection(["Sol Ring", "Nope"], strict=False)
+    assert [c["name"] for c in cards] == ["Sol Ring"]
+    assert missing == ("Nope",)
+
+
+def test_collection_non_strict_accumulates_missing_across_batches():
+    names = [f"Card {i}" for i in range(76)]
+    transport = FakeTransport(
+        {"data": [{"name": n} for n in names[:74]], "not_found": [{"name": names[74]}]},
+        {"data": [], "not_found": [{"name": names[75]}]},
+    )
+    client = ScryfallClient(transport=transport, sleep=lambda _: None)
+    cards, missing = client.collection(names, strict=False)
+    assert len(cards) == 74
+    assert missing == (names[74], names[75])
+
+
 def test_collection_batches_requests_at_the_limit():
     names = [f"Card {i}" for i in range(76)]
     first = {"data": [{"name": n} for n in names[:75]], "not_found": []}

@@ -121,3 +121,61 @@ def test_missing_sections_degrade_to_empty_rather_than_raising():
     assert edhrec.synergy_cards({}, limit=5) == ()
     assert edhrec.themes({}) == ()
     assert edhrec.bracket_distribution({}) == {}
+
+
+def test_reshaped_theme_count_is_skipped_not_raised():
+    payload = {"tag_counts": [
+        {"slug": "good", "value": "Good", "count": 5},
+        {"slug": "bad", "value": "Bad", "count": "lots"},
+    ]}
+    themes = edhrec.themes(payload)
+    assert [t["slug"] for t in themes] == ["good"]
+
+
+def test_reshaped_bracket_value_is_skipped_not_raised():
+    payload = {"bracket_counts": {"3": 10, "4": "many"}}
+    assert edhrec.bracket_distribution(payload) == {3: 10}
+
+
+def test_inclusion_rate_is_clamped_to_one():
+    """Glitch data from an unofficial source must not claim >100% inclusion."""
+    payload = {
+        "container": {"json_dict": {"cardlists": [
+            {
+                "header": "High Synergy Cards",
+                "cardviews": [
+                    {"name": "Glitched Card", "synergy": 0.5,
+                     "num_decks": 140, "potential_decks": 100},
+                ],
+            },
+        ]}}
+    }
+    cards = edhrec.synergy_cards(payload, limit=10)
+    assert cards[0]["inclusion_rate"] == 1.0
+
+
+def test_synergy_cards_attributes_duplicates_to_the_higher_priority_list():
+    """A card in two candidate lists is credited to the higher-priority one."""
+    payload = {
+        "container": {"json_dict": {"cardlists": [
+            # Payload order deliberately opposite of CANDIDATE_LISTS priority,
+            # matching the real fixture's own list order.
+            {
+                "header": "Top Cards",
+                "cardviews": [
+                    {"name": "Dual-Listed Card", "synergy": 0.1,
+                     "num_decks": 10, "potential_decks": 100},
+                ],
+            },
+            {
+                "header": "High Synergy Cards",
+                "cardviews": [
+                    {"name": "Dual-Listed Card", "synergy": 0.1,
+                     "num_decks": 10, "potential_decks": 100},
+                ],
+            },
+        ]}}
+    }
+    cards = edhrec.synergy_cards(payload, limit=10)
+    assert len(cards) == 1
+    assert cards[0]["list"] == "High Synergy Cards"

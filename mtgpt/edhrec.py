@@ -104,24 +104,32 @@ def synergy_cards(payload: dict, *, limit: int = 40) -> tuple[dict, ...]:
 
     Deduplicated by name across lists, sorted by synergy descending. A missing
     or reshaped payload yields an empty tuple rather than raising.
+
+    `CANDIDATE_LISTS` is iterated in its declared priority order rather than
+    the payload's own list order, so a card appearing in two candidate lists
+    is attributed to the higher-priority one.
     """
-    seen: dict[str, dict] = {}
+    by_header: dict[str, list[dict]] = {}
     for cardlist in _cardlists(payload):
         header = cardlist.get("header") or ""
-        if header not in CANDIDATE_LISTS:
-            continue
-        for view in cardlist.get("cardviews") or ():
+        by_header.setdefault(header, []).extend(cardlist.get("cardviews") or ())
+
+    seen: dict[str, dict] = {}
+    for header in CANDIDATE_LISTS:
+        for view in by_header.get(header, ()):
             name = view.get("name")
             if not name or name in seen:
                 continue
             num = view.get("num_decks") or 0
             potential = view.get("potential_decks") or 0
+            # Glitch data from an unofficial source must not claim >100% inclusion.
+            rate = min(1.0, num / potential) if potential else 0.0
             seen[name] = {
                 "name": name,
                 "synergy": float(view.get("synergy") or 0.0),
                 "num_decks": num,
                 "potential_decks": potential,
-                "inclusion_rate": round(num / potential, 4) if potential else 0.0,
+                "inclusion_rate": round(rate, 4),
                 "list": header,
             }
 
@@ -131,14 +139,20 @@ def synergy_cards(payload: dict, *, limit: int = 40) -> tuple[dict, ...]:
 
 def themes(payload: dict) -> tuple[dict, ...]:
     """Archetypes this commander is built as, most common first."""
-    out = [
-        {
-            "slug": tag.get("slug", ""),
-            "label": tag.get("value", ""),
-            "count": int(tag.get("count") or 0),
-        }
-        for tag in payload.get("tag_counts") or ()
-    ]
+    out = []
+    for tag in payload.get("tag_counts") or ():
+        try:
+            count = int(tag.get("count") or 0)
+        except (TypeError, ValueError):
+            # Unofficial source: a reshaped count must not crash the toolkit.
+            continue
+        out.append(
+            {
+                "slug": tag.get("slug", ""),
+                "label": tag.get("value", ""),
+                "count": count,
+            }
+        )
     return tuple(sorted(out, key=lambda t: t["count"], reverse=True))
 
 
@@ -149,8 +163,10 @@ def bracket_distribution(payload: dict) -> dict[int, int]:
     for key, value in raw.items():
         try:
             bracket = int(key)
+            count = int(value)
         except (TypeError, ValueError):
+            # Unofficial source: a reshaped count must not crash the toolkit.
             continue
         if 1 <= bracket <= 5:
-            out[bracket] = int(value)
+            out[bracket] = count
     return out

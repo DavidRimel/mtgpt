@@ -108,12 +108,18 @@ class ScryfallClient:
         return self._transport(url)
 
     def collection(
-        self, names: Sequence[str]
+        self, names: Sequence[str], *, strict: bool = True
     ) -> tuple[tuple[dict, ...], tuple[str, ...]]:
         """Resolve names in batches of 75.
 
-        Raises UnresolvedCards if Scryfall reports any name as not found. This
-        is the guard that stops invented or misspelled cards from proceeding.
+        With `strict=True` (the default) any name Scryfall reports as not found
+        raises UnresolvedCards. That is the right behavior for a user's
+        decklist: a typo must stop the run rather than be silently dropped.
+
+        With `strict=False` the unresolved names are returned alongside the
+        found ones instead of raising. That is for candidate lists from an
+        unofficial source, where one unresolvable suggestion must not discard
+        the rest.
         """
         found: list[dict] = []
         missing: list[str] = []
@@ -129,7 +135,7 @@ class ScryfallClient:
             for entry in body.get("not_found") or ():
                 missing.append(entry.get("name", "<unknown>"))
 
-        if missing:
+        if strict and missing:
             raise UnresolvedCards(missing)
 
         return tuple(found), tuple(missing)
