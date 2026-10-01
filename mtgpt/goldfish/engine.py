@@ -331,7 +331,10 @@ def apply(state: GameState, action: dict, *, in_place: bool = False) -> GameStat
     legal = legal_actions(state)
     if action not in legal:
         raise IllegalAction(action, legal)
-    s = state if in_place else copy.deepcopy(state)
+    # The card table and goal are frozen, so the copy shares them: copying a
+    # hundred CardInfos per look-ahead is most of a copy's cost.
+    s = state if in_place else copy.deepcopy(
+        state, {id(state.cards): state.cards, id(state.goal): state.goal})
     if "play_land" in action:
         _play_land(s, action["play_land"])
     elif "cast" in action:
