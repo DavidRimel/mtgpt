@@ -14,7 +14,9 @@ cards, which is what makes a before/after comparison mean something.
 from __future__ import annotations
 
 from ..goal import condition_names
-from .engine import GameState, apply, available_mana, find_card, legal_actions, win_label
+from .engine import (GameState, _alt_costs, apply, available_mana, find_card, legal_actions,
+                     win_label)
+from .mana import parse_cost
 
 RAMP, COMMANDER, ENGINE, VALUE, OTHER = range(5)
 #: Ranks below every tier: a `hold` card cast because it wins this turn.
@@ -128,7 +130,14 @@ def _anything_affordable(state: GameState) -> bool:
     """Could one more untapped mana pay for anything? A shortcut past the
     look-ahead: when no card costs that little, the tapped land is free."""
     budget = available_mana(state) + 1
-    return any(not state.cards[i].is_land and state.cards[i].mana_value + state.tax.get(i, 0) <= budget
+    alt = min((sum(1 for _ in parse_cost(c)[1]) + parse_cost(c)[0] for c in _alt_costs(state)),
+              default=None)
+
+    def cost(i):
+        printed = state.cards[i].mana_value
+        return (printed if alt is None else min(printed, alt)) + state.tax.get(i, 0)
+
+    return any(not state.cards[i].is_land and cost(i) <= budget
                for i in state.hand + state.command_zone)
 
 

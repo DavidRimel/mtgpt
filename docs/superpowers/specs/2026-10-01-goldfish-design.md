@@ -148,6 +148,11 @@ Keyed by card name; each name must be in the resolved deck. Fields:
 - Static tags: `sac_outlet`, `payoff`, `finisher`, `anthem` (power bonus per creature).
 - `priority`: `"engine"` (cast right after the commander) or `"hold"` (never cast by
   the auto policy until the `win` condition becomes reachable this turn).
+- `alt_cost`: a mana cost any spell may be paid with instead of its own while this
+  permanent is on the battlefield (Jodah, Archmage Eternal; Fist of Suns). The engine
+  pays whichever payable cost is cheaper; commander tax adds to either.
+- `mana` with `mana_colors`: mana the permanent taps for each turn, for sources whose text
+  the parser cannot count (Bloom Tender, Faeburrow Elder; Lotus Cobra as an estimate).
 
 An override replaces the parsed effect for that card: only its power, `power_bonus`, and
 land face survive, so restate anything from its text the sim should still do.

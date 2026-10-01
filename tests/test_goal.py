@@ -108,3 +108,27 @@ def test_condition_names_and_describe():
     assert [describe(c) for c in goal.win.children] == [
         "opponent_life_lost>=120", "cast:Craterhoof Behemoth",
         "assembled:Blood Artist+Viscera Seer"]
+
+
+def test_alt_cost_and_override_mana_parse():
+    goal = load({"archetype": "go_wide", "engine": {
+        "Blood Artist": {"alt_cost": "{W}{U}{B}{R}{G}"},
+        "Viscera Seer": {"mana": 3, "mana_colors": "wubrg"}}})
+    assert goal.engine_for("Blood Artist").alt_cost == "{W}{U}{B}{R}{G}"
+    seer = goal.engine_for("Viscera Seer")
+    assert (seer.mana, seer.mana_colors) == (3, frozenset("WUBRG"))
+
+
+@pytest.mark.parametrize("spec, field", [
+    ({"alt_cost": "WUBRG"}, "engine.Blood Artist.alt_cost"),
+    ({"alt_cost": "{W}{Q}"}, "engine.Blood Artist.alt_cost"),
+    ({"alt_cost": 5}, "engine.Blood Artist.alt_cost"),
+    ({"mana": -1, "mana_colors": "G"}, "engine.Blood Artist.mana"),
+    ({"mana": 2}, "engine.Blood Artist.mana_colors"),
+    ({"mana": 2, "mana_colors": "GX"}, "engine.Blood Artist.mana_colors"),
+    ({"mana": 2, "mana_colors": ["G"]}, "engine.Blood Artist.mana_colors"),
+])
+def test_alt_cost_and_override_mana_validation(spec, field):
+    with pytest.raises(GoalError) as err:
+        load({"archetype": "go_wide", "engine": {"Blood Artist": spec}})
+    assert err.value.field == field

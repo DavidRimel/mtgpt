@@ -152,3 +152,22 @@ def test_goal_named_unmodeled_mdfc_is_cast():
     s.command_zone = []
     s.land_played = True
     assert choose(s) == {"cast": "Odd Spell // Odd Land"}
+
+
+def test_land_shortcut_counts_an_alternative_cost():
+    # Jodah out with 4 lands: a 10-drop costs WUBRG, so the untapped fifth land
+    # casts it and must be played over the tapped one.
+    from mtgpt.models import ResolvedDeck
+    prism = card("Prism Land", "Land", "{T}: Add one mana of any color.", produced_mana="WUBRG",
+                 identity="WUBRG", colors="")
+    prism_gate = card("Prism Gate", "Land", "This land enters tapped.\n{T}: Add one mana of any color.",
+                      produced_mana="WUBRG", identity="WUBRG", colors="")
+    big = card("Big Spell", "Sorcery", "", mana_cost="{7}{U}{U}{U}", identity="U")
+    jodah = card("Jodah", "Legendary Creature — Human Wizard", "", mana_cost="{1}{U}{R}{W}",
+                 power=3.0, identity="WUBRG")
+    d = ResolvedDeck(commanders=(jodah,), cards=((1, big), (1, prism_gate), (97, prism)))
+    goal = {"archetype": "custom", "thing": "commander", "win": NEVER,
+            "engine": {"Jodah": {"alt_cost": "{W}{U}{B}{R}{G}"}}}
+    s = rigged(source=d, land="Prism Land", lands_in_play=4, commander_out=True,
+               hand=["Big Spell", "Prism Gate", "Prism Land"], goal=goal)
+    assert choose(s) == {"play_land": "Prism Land"}
