@@ -1,0 +1,50 @@
+{
+  "object": "list",
+  "not_found": [],
+  "data": [
+    {
+      "object": "card",
+      "name": "Sol Ring",
+      "cmc": 1.0,
+      "type_line": "Artifact",
+      "oracle_text": "{T}: Add {C}{C}.",
+      "mana_cost": "{1}",
+      "color_identity": [],
+      "colors": [],
+      "layout": "normal",
+      "produced_mana": ["C"],
+      "keywords": [],
+      "legalities": {"commander": "legal"},
+      "prices": {"usd": "1.54"}
+    },
+    {
+      "object": "card",
+      "name": "Atraxa, Praetors' Voice",
+      "cmc": 4.0,
+      "type_line": "Legendary Creature — Phyrexian Angel Horror",
+      "oracle_text": "Flying, vigilance, deathtouch, lifelink\nAt the beginning of your end step, proliferate.",
+      "mana_cost": "{3}{G}{W}{U}{B}",
+      "color_identity": ["B", "G", "U", "W"],
+      "colors": ["B", "G", "U", "W"],
+      "layout": "normal",
+      "keywords": ["Flying", "Vigilance", "Deathtouch", "Lifelink", "Proliferate"],
+      "legalities": {"commander": "legal"},
+      "prices": {"usd": "3.21"}
+    },
+    {
+      "object": "card",
+      "name": "Dockside Extortionist",
+      "cmc": 2.0,
+      "type_line": "Creature — Goblin Pirate",
+      "oracle_text": "When this creature enters, create X Treasure tokens, where X is the number of artifacts and enchantments your opponents control.",
+      "mana_cost": "{1}{R}",
+      "color_identity": ["R"],
+      "colors": ["R"],
+      "layout": "normal",
+      "produced_mana": ["B", "G", "R", "U", "W"],
+      "keywords": [],
+      "legalities": {"commander": "banned"},
+      "prices": {"usd": null}
+    }
+  ]
+}

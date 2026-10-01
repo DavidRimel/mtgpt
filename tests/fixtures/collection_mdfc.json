@@ -1,0 +1,37 @@
+{
+  "object": "list",
+  "not_found": [],
+  "data": [
+    {
+      "object": "card",
+      "name": "Agadeem's Awakening // Agadeem, the Undercrypt",
+      "cmc": 6.0,
+      "type_line": "Sorcery // Land",
+      "mana_cost": "",
+      "color_identity": ["B"],
+      "layout": "modal_dfc",
+      "produced_mana": ["B"],
+      "keywords": [],
+      "legalities": {"commander": "legal"},
+      "prices": {"usd": "12.40"},
+      "card_faces": [
+        {
+          "object": "card_face",
+          "name": "Agadeem's Awakening",
+          "type_line": "Sorcery",
+          "oracle_text": "Return from your graveyard to the battlefield any number of target creature cards that each have a different mana value X or less.",
+          "mana_cost": "{X}{B}{B}{B}",
+          "colors": ["B"]
+        },
+        {
+          "object": "card_face",
+          "name": "Agadeem, the Undercrypt",
+          "type_line": "Land",
+          "oracle_text": "As this land enters, you may pay 3 life. If you don't, it enters tapped.\n{T}: Add {B}.",
+          "mana_cost": "",
+          "colors": []
+        }
+      ]
+    }
+  ]
+}
