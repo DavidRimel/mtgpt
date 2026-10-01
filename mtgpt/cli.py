@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 from . import api
@@ -200,26 +201,41 @@ def _read_text_file(path: str, command: str) -> str | None:
         return None
 
 
+_FAILED = object()  # a reader emitted its error envelope; None is never a value
+
+
 def _read_json(path: str, command: str):
-    """Return a JSON file's parsed contents, or None after emitting a user error."""
+    """Return a JSON object from a file, or _FAILED after emitting a user error."""
     text = _read_text_file(path, command)
-    return None if text is None else _parse_json(text, command, path)
+    return _FAILED if text is None else _parse_json(text, command, path)
 
 
 def _parse_json(text: str, command: str, where: str):
     try:
-        return json.loads(text)
+        value = json.loads(text)
     except json.JSONDecodeError as exc:
         _emit(command, {"type": "JSONDecodeError", "field": where,
                         "message": f"{where} is not valid JSON: {exc}"}, ok=False)
-        return None
+        return _FAILED
+    if not isinstance(value, dict):
+        _emit(command, {"type": "JSONDecodeError", "field": where,
+                        "message": f"{where} must be a JSON object"}, ok=False)
+        return _FAILED
+    return value
 
 
 def _write_json(path: str, data, command: str) -> bool:
+    """Write atomically: a failure mid-write must not corrupt an existing file."""
+    tmp = path + ".tmp"
     try:
-        with open(path, "w", encoding="utf-8") as handle:
+        with open(tmp, "w", encoding="utf-8") as handle:
             json.dump(data, handle)
+        os.replace(tmp, path)
     except OSError as exc:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
         _emit(command, {"type": "OSError", "message": str(exc)}, ok=False)
         return False
     return True
@@ -229,8 +245,8 @@ def _goldfish(args, command: str, client) -> int:
     """The four goldfish subcommands. Returns the exit code."""
     if command == "goldfish-step":
         state = _read_json(args.state, command)
-        action = None if state is None else _parse_json(args.action, command, "--action")
-        if action is None:
+        action = _FAILED if state is _FAILED else _parse_json(args.action, command, "--action")
+        if action is _FAILED:
             return EXIT_USER_ERROR
         result = api.goldfish_step(state, action)
         if not _write_json(args.state, result["state"], command):
@@ -239,7 +255,7 @@ def _goldfish(args, command: str, client) -> int:
         return EXIT_OK
 
     goal = _read_json(args.goal, command)
-    if goal is None:
+    if goal is _FAILED:
         return EXIT_USER_ERROR
     options = {"turns": args.turns, "seed": args.seed,
                "disruption": not args.no_disruption, "client": client}

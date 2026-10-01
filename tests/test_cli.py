@@ -230,3 +230,55 @@ def test_pilot_illegal_action_is_a_user_error(monkeypatch, capsys, tmp_path):
     assert code == 2
     assert payload["error"]["legal_actions"] == [{"pass": True}]
     assert json.loads(state.read_text()) == {}, "a refused action must not touch the game"
+
+
+def _envelope_error(capsys):
+    return json.loads(capsys.readouterr().out)["error"]
+
+
+def test_goldfish_goal_file_must_be_an_object(capsys, tmp_path):
+    code = cli.main(["goldfish", "--file", str(FIXTURES / "sample_deck.txt"),
+                     "--goal", _raw(tmp_path, "null")])
+    assert code == 2
+    assert _envelope_error(capsys)["type"] == "JSONDecodeError"
+
+
+def _raw(tmp_path, text, name="raw.json"):
+    path = tmp_path / name
+    path.write_text(text)
+    return str(path)
+
+
+def test_goldfish_step_state_file_must_be_an_object(capsys, tmp_path):
+    state = _raw(tmp_path, "null", "state.json")
+    assert cli.main(["goldfish-step", "--state", state, "--action", "{}"]) == 2
+    assert _envelope_error(capsys)["type"] == "JSONDecodeError"
+
+
+def test_goldfish_step_action_must_be_an_object(capsys, tmp_path):
+    state = _raw(tmp_path, "{}", "state.json")
+    for bad in ("null", "[1]"):
+        assert cli.main(["goldfish-step", "--state", state, "--action", bad]) == 2
+        err = _envelope_error(capsys)
+        assert (err["type"], err["field"]) == ("JSONDecodeError", "--action")
+
+
+def test_goldfish_step_malformed_state_leaves_file_untouched(capsys, tmp_path):
+    state = _raw(tmp_path, "{not json", "state.json")
+    assert cli.main(["goldfish-step", "--state", state, "--action", "{}"]) == 2
+    assert _envelope_error(capsys)["type"] == "JSONDecodeError"
+    assert open(state).read() == "{not json"
+
+
+def test_write_json_failure_keeps_the_old_file(monkeypatch, capsys, tmp_path):
+    target = tmp_path / "game.json"
+    target.write_text('{"old": 1}')
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(cli.json, "dump", boom)
+    assert cli._write_json(str(target), {"new": 2}, "goldfish-new") is False
+    assert target.read_text() == '{"old": 1}'
+    assert not (tmp_path / "game.json.tmp").exists()
+    assert _envelope_error(capsys)["type"] == "OSError"
