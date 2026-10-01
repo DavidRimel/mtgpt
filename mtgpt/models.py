@@ -11,11 +11,20 @@ import re
 from dataclasses import dataclass
 
 
-#: Cards that exempt themselves from singleton, e.g. Relentless Rats ("any
-#: number") and Seven Dwarves ("up to seven").
+#: Cards that relax singleton, e.g. Relentless Rats ("any number") and Seven
+#: Dwarves ("up to seven"). The quantity is captured, not discarded: treating
+#: "up to seven" as an unlimited exemption reports a deck with 20 Seven Dwarves
+#: as legal.
 _ANY_NUMBER_RE = re.compile(
-    r"a deck can have (?:any number of|up to \w+) cards named", re.IGNORECASE
+    r"a deck can have (?:(any number of)|up to (\w+)) cards named", re.IGNORECASE
 )
+
+#: Number words that have appeared in a "up to N cards named" clause, plus
+#: headroom. An unrecognized word yields no cap rather than a wrong one.
+_NUMBER_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+}
 
 
 class Function(enum.Enum):
@@ -128,9 +137,30 @@ class Card:
         return line.startswith("Basic") and "Land" in line
 
     @property
+    def copy_limit(self) -> int | None:
+        """How many copies the card's own text allows. None means unlimited.
+
+        1 is the ordinary singleton rule. Seven Dwarves returns 7 and Nazgul
+        returns 9, so a deck running more than the stated number is still a
+        violation — the earlier `allows_any_number` flag exempted them outright.
+        A number word this does not recognize returns None: declining to cap is
+        the safe direction, since a wrong cap invents a violation.
+        """
+        match = _ANY_NUMBER_RE.search(self.oracle_text or "")
+        if match is None:
+            return 1
+        if match.group(1):
+            return None
+        return _NUMBER_WORDS.get((match.group(2) or "").lower())
+
+    @property
     def allows_any_number(self) -> bool:
-        """True when the card's own text exempts it from the singleton rule."""
-        return bool(_ANY_NUMBER_RE.search(self.oracle_text or ""))
+        """True when the card's own text relaxes singleton at all.
+
+        Says nothing about by how much; `copy_limit` is what enforcement must
+        use.
+        """
+        return self.copy_limit != 1
 
     @property
     def is_mdfc_land(self) -> bool:
@@ -155,6 +185,12 @@ class ResolvedDeck:
 
     commanders: tuple[Card, ...] = ()
     cards: tuple[tuple[int, Card], ...] = ()
+    #: False when Scryfall's Game Changers list could not be fetched, so every
+    #: `Card.is_game_changer` on this deck is False by default rather than by
+    #: verification. Last field, and defaulted, so positional construction
+    #: elsewhere is unaffected. Consumers that enforce a Game Changer allowance
+    #: must report the gap instead of returning a clean verdict.
+    game_changers_available: bool = True
 
     @property
     def total_cards(self) -> int:

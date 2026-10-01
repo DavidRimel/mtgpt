@@ -110,7 +110,29 @@ def _read_deck_text(args, command: str) -> str | None:
     """Return the decklist text, or None after emitting a user error."""
     if args.file:
         try:
-            return open(args.file, encoding="utf-8").read()
+            with open(args.file, encoding="utf-8") as handle:
+                return handle.read()
+        except UnicodeDecodeError as exc:
+            # UnicodeDecodeError is a ValueError, so the old `except OSError`
+            # let it escape as a raw traceback with exit 1 — outside the JSON
+            # envelope every other failure respects. A cp1252 export of a card
+            # name with a curly apostrophe ("Urza's") and a UTF-16 file from
+            # PowerShell 5's `> deck.txt` both land here.
+            _emit(
+                command,
+                {
+                    "type": "UnicodeDecodeError",
+                    "message": (
+                        f"{args.file} is not valid UTF-8 ({exc.reason} at byte "
+                        f"{exc.start}). Re-save it as UTF-8 — in PowerShell use "
+                        "`Out-File -Encoding utf8`, and in an editor choose "
+                        '"UTF-8" rather than "UTF-16" or "ANSI". '
+                        "Or pipe the text in with --stdin."
+                    ),
+                },
+                ok=False,
+            )
+            return None
         except OSError as exc:
             _emit(command, {"type": "OSError", "message": str(exc)}, ok=False)
             return None

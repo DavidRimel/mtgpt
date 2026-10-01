@@ -160,15 +160,29 @@ def test_commander_synergy_verifies_candidates_and_tags_them():
 
 
 def test_commander_synergy_drops_candidates_scryfall_cannot_verify():
-    """A card EDHREC lists but Scryfall cannot resolve must not reach the user."""
+    """A card EDHREC lists but Scryfall cannot resolve must not reach the user.
+
+    Asserted as equality, not `<=`. The shipped version compared against a
+    three-name allowlist that the fixture could never produce, so `names` was
+    the empty set and the subset assertion was vacuously true — it still passed
+    when the skip was mutated to substitute a different resolved card.
+
+    Scryfall here returns Cultivate (a real candidate in the fixture's Top Cards)
+    and Kodama's Reach (which the fixture does not list), so the output must be
+    exactly Cultivate: the unlisted card is not smuggled in, and the listed
+    candidates Scryfall did not return are dropped.
+    """
     edh = FakeEdhrec(json.loads((FIXTURES / "edhrec_commander.json").read_text()))
-    # Scryfall returns only Sol Ring, whatever EDHREC suggested.
-    client = client_for(load("collection_basic.json"), NO_GAME_CHANGERS)
+    client = client_for(load("search_results.json"), NO_GAME_CHANGERS)
     result = api.commander_synergy(
         "Atraxa, Praetors' Voice", limit=40, client=client, edhrec_client=edh
     )
     names = {c["name"] for c in result["cards"]}
-    assert names <= {"Sol Ring", "Atraxa, Praetors' Voice", "Dockside Extortionist"}
+    assert names == {"Cultivate"}, names
+    # Named explicitly: EDHREC lists Rhystic Study for this commander, Scryfall
+    # did not verify it here, so it must be absent from the output.
+    assert "Rhystic Study" not in names
+    assert "Kodama's Reach" not in names
 
 
 def test_commander_synergy_survives_one_unresolvable_candidate():
@@ -242,3 +256,87 @@ def test_error_payload_carries_machine_readable_detail():
     outage = api.error_payload(SourceUnavailable("EDHREC", "down"))
     assert outage["type"] == "SourceUnavailable"
     assert outage["source"] == "EDHREC"
+
+
+# --- Game Changer threading (Critical 1) ------------------------------------
+
+#: Scryfall's `is:gamechanger` search response, containing Rhystic Study only.
+GAME_CHANGERS_RESPONSE = {
+    "data": [{"object": "card", "name": "Rhystic Study"}],
+    "has_more": False,
+}
+
+_RHYSTIC_PAYLOAD = {
+    "object": "card", "name": "Rhystic Study", "cmc": 3.0,
+    "type_line": "Enchantment",
+    "oracle_text": "Whenever an opponent casts a spell, that player may pay {1}. "
+                   "If the player doesn't, you may draw a card.",
+    "mana_cost": "{2}{U}", "color_identity": ["U"], "colors": ["U"],
+    "layout": "normal", "keywords": [], "legalities": {"commander": "legal"},
+    "prices": {"usd": "30.00"},
+}
+
+
+def test_lookup_card_distinguishes_a_game_changer_from_an_ordinary_card():
+    """`mtgpt card` is what SKILL.md tells the agent to vet candidates with.
+
+    Regression: `lookup_card` called `card_from_json(payload)` with no
+    `game_changers=`, so the name was tested against an empty frozenset and
+    every card reported `is_game_changer: false`. At bracket 2, whose allowance
+    is 0, the agent read that false and certified a Game Changer as legal.
+
+    Two cards, one injected list: a `False` alone proves nothing, because the
+    broken version returned `False` for everything. The flag has to discriminate.
+    """
+    flagged = api.lookup_card(
+        "Rhystic Study",
+        client=client_for({"data": [_RHYSTIC_PAYLOAD]}, GAME_CHANGERS_RESPONSE),
+    )
+    assert flagged["is_game_changer"] is True, flagged
+
+    ordinary = api.lookup_card(
+        "Sol Ring",
+        client=client_for(load("collection_basic.json"), GAME_CHANGERS_RESPONSE),
+    )
+    assert ordinary["is_game_changer"] is False, ordinary
+
+
+def test_search_cards_carries_the_game_changer_flag():
+    """Regression: `search_cards` omitted `game_changers=` too, so a candidate
+    found by `mtgpt search` never reported as a Game Changer."""
+    client = client_for({"data": [_RHYSTIC_PAYLOAD], "has_more": False},
+                        GAME_CHANGERS_RESPONSE)
+    result = api.search_cards("is:gamechanger", client=client)
+    assert [c["is_game_changer"] for c in result["cards"]] == [True]
+
+
+def test_lookup_card_degrades_rather_than_failing_on_a_game_changers_outage():
+    """The card data is still worth returning; only the flag is unverified."""
+    from mtgpt.errors import SourceUnavailable
+
+    class Outage:
+        def __init__(self):
+            self.inner = client_for({"data": [_RHYSTIC_PAYLOAD]})
+
+        def collection(self, names, **kw):
+            return self.inner.collection(names, **kw)
+
+        def game_changers(self):
+            raise SourceUnavailable("Scryfall Game Changers", "404")
+
+    result = api.lookup_card("Rhystic Study", client=Outage())
+    assert result["name"] == "Rhystic Study"
+    assert result["is_game_changer"] is False
+
+
+def test_card_from_json_requires_game_changers_to_be_passed():
+    """The structural half of the fix.
+
+    A default of `frozenset()` made every omission a silent `False`. Requiring
+    the argument turns the same mistake into a TypeError at the call site, which
+    is what converts this bug class into an import/test-time failure.
+    """
+    from mtgpt.scryfall import card_from_json
+
+    with pytest.raises(TypeError):
+        card_from_json(_RHYSTIC_PAYLOAD)

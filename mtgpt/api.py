@@ -26,6 +26,22 @@ def _client(client: ScryfallClient | None) -> ScryfallClient:
     return client or ScryfallClient()
 
 
+def _game_changers(client: ScryfallClient) -> frozenset[str]:
+    """Fetch the Game Changers list, degrading to empty on an outage.
+
+    Every call site that builds a Card must pass this: `card_from_json` requires
+    `game_changers=` precisely so omitting it cannot silently report
+    `is_game_changer=False` for a card on the live list. Callers that then
+    enforce a bracket allowance are responsible for saying the list was
+    unavailable — `scryfall.resolve` records it on the deck, and
+    `commander_synergy` returns `game_changers_available`.
+    """
+    try:
+        return client.game_changers()
+    except SourceUnavailable:
+        return frozenset()
+
+
 def _card_dict(card: Card, functions: frozenset[Function]) -> dict:
     return {
         "name": card.name,
@@ -129,7 +145,8 @@ def lookup_card(name: str, *, client: ScryfallClient | None = None) -> dict:
     under its full "A // B" name even when requested as "A", and relying on
     position would silently return the wrong card.
     """
-    payloads, _ = _client(client).collection([name])
+    scry = _client(client)
+    payloads, _ = scry.collection([name])
     wanted = name.casefold()
     for payload in payloads:
         candidate = payload.get("name", "")
@@ -139,7 +156,9 @@ def lookup_card(name: str, *, client: ScryfallClient | None = None) -> dict:
         if faces:
             aliases.add((faces[0].get("name") or "").strip().casefold())
         if wanted in aliases:
-            card = card_from_json(payload)
+            # Fetched only once the card is known to exist, so an invented name
+            # costs one request rather than two.
+            card = card_from_json(payload, game_changers=_game_changers(scry))
             return _card_dict(card, classify(card))
     raise UnresolvedCards([name])
 
@@ -148,8 +167,10 @@ def search_cards(
     query: str, *, limit: int = 25, client: ScryfallClient | None = None
 ) -> dict:
     """Find candidate cards with a Scryfall query, pre-tagged by function."""
-    payloads = _client(client).search(query, limit=limit)
-    cards = [card_from_json(p) for p in payloads]
+    scry = _client(client)
+    payloads = scry.search(query, limit=limit)
+    game_changers = _game_changers(scry)
+    cards = [card_from_json(p, game_changers=game_changers) for p in payloads]
     return {
         "query": query,
         "count": len(cards),
@@ -161,10 +182,12 @@ def classify_cards(
     names: list[str], *, client: ScryfallClient | None = None
 ) -> dict[str, list[str]]:
     """Tag several cards by function, keyed by name."""
-    cards, _ = _client(client).collection(names)
+    scry = _client(client)
+    cards, _ = scry.collection(names)
+    game_changers = _game_changers(scry)
     out: dict[str, list[str]] = {}
     for payload in cards:
-        card = card_from_json(payload)
+        card = card_from_json(payload, game_changers=game_changers)
         out[card.name] = sorted(f.value for f in classify(card))
     return out
 
@@ -474,7 +497,13 @@ def suggest_additions(
 
     rule = RULES[target]
     gc_allowance = rule.game_changers_max
-    gc_in_deck = sum(1 for _, c in deck.cards if c.is_game_changer)
+    # The command zone counts, exactly as brackets.check counts it: Tergrid,
+    # Grand Arbiter Augustin IV and Braids, Cabal Minion are all Game Changers
+    # and all legal commanders. Counting only the 99 computed a budget one too
+    # large, so suggest offered a card that `bracket` then called non-compliant.
+    gc_in_deck = sum(1 for _, c in deck.cards if c.is_game_changer) + sum(
+        1 for c in deck.commanders if c.is_game_changer
+    )
     gc_budget = None if gc_allowance is None else gc_allowance - gc_in_deck
 
     suggestions = []

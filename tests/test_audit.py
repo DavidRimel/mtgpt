@@ -234,3 +234,71 @@ def test_a_card_that_is_both_ramp_and_an_mdfc_back_counts_once():
     assert report.mdfc_land_count == 1
     # 36 lands + 1 ramp + 1 MDFC back, minus the 1 overlap = 37, not 38.
     assert report.mana_sources == 37
+
+
+# --- Claims the references make that nothing proved (Important 12) -----------
+
+#: Scryfall's shape for a modal DFC whose back face is a land. The front face is
+#: a spell, so `is_land` is False and `is_mdfc_land` is True.
+AGADEEM = card(
+    "Agadeem's Awakening // Agadeem, the Undercrypt", "Sorcery // Land",
+    "Return from your graveyard to the battlefield any number of target creature "
+    "cards that each have a different mana value X or less.",
+    mv=6.0, cost="{X}{B}{B}{B}", produced="B", identity="B",
+)
+
+
+def test_mdfc_backs_count_toward_mana_sources():
+    """`references/deckbuilding-hygiene.md` asserts MDFC land backs count as
+    flex mana sources. The shipped `test_mana_sources_include_lands_ramp_and_mdfc`
+    had no MDFC in its deck at all — 36 Forest plus Sol Ring — so the claim in
+    its own name went unproven.
+
+    Stated as a difference, not a total: the same deck with and without the MDFC
+    must differ by exactly the MDFC count.
+    """
+    without = audit(build([(35, FOREST), (1, SOL_RING)]))
+    with_mdfc = audit(build([(35, FOREST), (1, SOL_RING), (3, AGADEEM)]))
+
+    assert without.mdfc_land_count == 0
+    assert with_mdfc.mdfc_land_count == 3
+    # The MDFC is not a land...
+    assert with_mdfc.land_count == without.land_count == 35
+    # ...but it is a mana source, once per copy.
+    assert with_mdfc.mana_sources == without.mana_sources + 3
+
+
+def test_ramp_contributes_to_pip_sources():
+    """`_sources_for` counts lands, MDFC land backs AND ramp. Nothing proved the
+    ramp half: a deck short on lands for a colour can still be fine if its ramp
+    produces that colour, which is the whole reason the audit looks past lands.
+
+    Birds of Paradise is not a land and not an MDFC, so if it registers as a
+    source for {W} it can only be via its ramp tag.
+    """
+    birds = card(
+        "Birds of Paradise", "Creature — Bird", "Flying\n{T}: Add one mana of any color.",
+        mv=1.0, cost="{G}", produced="WUBRG", identity="G",
+    )
+    white_card = card("White Spell", "Instant", "", mv=1.0, cost="{W}", identity="W")
+
+    without = audit(build([(20, FOREST), (1, white_card)]))
+    with_ramp = audit(build([(20, FOREST), (1, white_card), (10, birds)]))
+
+    white_before = next(p for p in without.pips if p.color == "W")
+    white_after = next(p for p in with_ramp.pips if p.color == "W")
+    # Forest does not produce {W}, so the baseline has no white sources at all.
+    assert white_before.sources == 0
+    assert white_after.sources == 10
+    assert not birds.is_land and not birds.is_mdfc_land
+
+
+def test_ramp_that_does_not_produce_the_colour_is_not_a_source():
+    """The converse, so the test above cannot pass by counting all ramp."""
+    deck = build([
+        (20, FOREST),
+        (1, card("White Spell", "Instant", "", mv=1.0, cost="{W}", identity="W")),
+        (1, SOL_RING),
+    ])
+    white = next(p for p in audit(deck).pips if p.color == "W")
+    assert white.sources == 0

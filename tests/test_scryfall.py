@@ -40,7 +40,7 @@ def test_batch_size_is_scryfall_limit():
 
 def test_card_from_json_maps_basic_fields():
     payload = load("collection_basic.json")["data"][0]
-    card = card_from_json(payload)
+    card = card_from_json(payload, game_changers=frozenset())
     assert card.name == "Sol Ring"
     assert card.mana_value == 1.0
     assert card.type_line == "Artifact"
@@ -53,7 +53,7 @@ def test_card_from_json_maps_basic_fields():
 
 def test_card_from_json_handles_null_price():
     payload = load("collection_basic.json")["data"][2]
-    card = card_from_json(payload)
+    card = card_from_json(payload, game_changers=frozenset())
     assert card.usd is None
     assert card.is_banned is True
 
@@ -66,7 +66,7 @@ def test_card_from_json_flags_game_changers():
 
 def test_card_from_json_uses_front_face_for_mdfc():
     payload = load("collection_mdfc.json")["data"][0]
-    card = card_from_json(payload)
+    card = card_from_json(payload, game_changers=frozenset())
     # Front face supplies cost, colors, and text; top level supplies type_line.
     assert card.mana_cost == "{X}{B}{B}{B}"
     assert card.colors == frozenset({"B"})
@@ -277,3 +277,109 @@ def test_search_stops_at_the_page_cap():
     client = ScryfallClient(transport=transport, sleep=lambda _: None)
     with pytest.raises(SourceUnavailable):
         client.search("c:g", limit=10)
+
+
+# --- Reshaped numeric fields do not raise (Important 5) ----------------------
+
+
+def test_card_from_json_tolerates_reshaped_numeric_fields():
+    """The same pattern edhrec.py guards: a `float()` on a field from upstream
+    must not turn a card lookup into a traceback."""
+    payload = {
+        "name": "Weird Card", "cmc": "not a number", "type_line": "Instant",
+        "oracle_text": "", "mana_cost": "{1}", "color_identity": [], "colors": [],
+        "legalities": {"commander": "legal"}, "layout": "normal", "keywords": [],
+        "prices": {"usd": "free"},
+    }
+    card = card_from_json(payload, game_changers=frozenset())
+    assert card.mana_value == 0.0
+    assert card.usd is None
+
+
+def test_card_from_json_still_reads_well_formed_numbers():
+    payload = {
+        "name": "Normal Card", "cmc": "3", "type_line": "Instant", "oracle_text": "",
+        "mana_cost": "{3}", "color_identity": [], "colors": [],
+        "legalities": {"commander": "legal"}, "layout": "normal", "keywords": [],
+        "prices": {"usd": "1.25"},
+    }
+    card = card_from_json(payload, game_changers=frozenset())
+    assert card.mana_value == 3.0
+    assert card.usd == 1.25
+
+
+# --- Split / Room / DFC names resolve (Important 6) --------------------------
+
+
+def test_collection_sends_the_front_half_of_a_split_name():
+    """Scryfall's /cards/collection rejects every full "A // B" name as an
+    identifier: Fire // Ice, Dusk // Dawn, Bottomless Pool // Locker Room and the
+    Zendikar MDFC lands all land in `not_found`, while the front half resolves.
+
+    A Moxfield export carries the full name, so sending it verbatim told the user
+    a real, correctly-spelled card was misspelled and SKILL.md then had the agent
+    stop and ask.
+    """
+    sent = {}
+
+    def transport(url, payload=None):
+        sent["identifiers"] = payload["identifiers"]
+        return {"data": [{"object": "card", "name": "Fire // Ice"}], "not_found": []}
+
+    client = ScryfallClient(transport=transport, sleep=lambda _: None)
+    found, missing = client.collection(["Fire // Ice", "Sol Ring"])
+    assert sent["identifiers"] == [{"name": "Fire"}, {"name": "Sol Ring"}]
+    assert missing == ()
+    assert found[0]["name"] == "Fire // Ice"
+
+
+def test_a_split_card_resolves_through_a_whole_decklist():
+    """End to end: the parser keeps the full name, resolve maps the response back
+    onto it via `_index_by_name`, and no UnresolvedCards is raised."""
+    from mtgpt.deckparse import parse
+
+    fire_ice = {
+        "object": "card", "name": "Fire // Ice", "cmc": 2.0,
+        "type_line": "Instant // Instant", "layout": "split",
+        "card_faces": [
+            {"name": "Fire", "mana_cost": "{1}{R}", "type_line": "Instant",
+             "oracle_text": "Fire deals 2 damage divided as you choose among one or "
+                            "two targets.", "colors": ["R"]},
+            {"name": "Ice", "mana_cost": "{1}{U}", "type_line": "Instant",
+             "oracle_text": "Tap target permanent.\nDraw a card.", "colors": ["U"]},
+        ],
+        "color_identity": ["R", "U"], "colors": ["R", "U"],
+        "legalities": {"commander": "legal"}, "keywords": [], "prices": {"usd": "0.50"},
+    }
+    niv = {
+        "object": "card", "name": "Niv-Mizzet, Parun", "cmc": 6.0,
+        "type_line": "Legendary Creature — Dragon Wizard",
+        "oracle_text": "This spell can't be countered.", "mana_cost": "{3}{U}{U}{R}{R}",
+        "color_identity": ["R", "U"], "colors": ["R", "U"], "layout": "normal",
+        "legalities": {"commander": "legal"}, "keywords": ["Flying"],
+        "prices": {"usd": "2.00"},
+    }
+    client = ScryfallClient(
+        transport=FakeTransport(
+            {"data": [niv, fire_ice], "not_found": []}, {"data": [], "has_more": False},
+        ),
+        sleep=lambda _: None,
+    )
+    deck = resolve(parse("Commander\n1 Niv-Mizzet, Parun\n\nDeck\n1 Fire // Ice\n"),
+                   client=client)
+    assert [c.name for _, c in deck.cards] == ["Fire // Ice"]
+
+
+def test_an_invented_name_still_raises_even_with_a_slash():
+    """The front-half rewrite must not swallow a genuine typo. Scryfall reports
+    `not_found` under the front half it was sent, and that is mapped back to what
+    the user actually wrote so the error names their line."""
+    client = ScryfallClient(
+        transport=FakeTransport(
+            {"data": [], "not_found": [{"name": "Blatantly Fake"}]},
+        ),
+        sleep=lambda _: None,
+    )
+    with pytest.raises(UnresolvedCards) as excinfo:
+        client.collection(["Blatantly Fake // Not A Card"])
+    assert excinfo.value.names == ("Blatantly Fake // Not A Card",)

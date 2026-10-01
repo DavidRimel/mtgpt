@@ -7,6 +7,10 @@ Two-card infinite combo detection needs Commander Spellbook data, supplied via
 the optional `combos` argument to `check`. When it is not supplied, the report
 states that gap in `deferred_checks`, because a bracket verdict that silently
 skips a rule is worse than no verdict.
+
+The same rule covers a degraded input: when `ResolvedDeck.game_changers_available`
+is False the Game Changer allowance was not actually checked, and
+`deferred_checks` says so rather than letting zero-found read as compliant.
 """
 
 from __future__ import annotations
@@ -59,6 +63,14 @@ COMBO_DEFERRED = (
 EXTRA_TURN_APPROXIMATION = (
     "Chained extra turns are approximated by counting extra-turn spells, not by "
     "detecting repeatability."
+)
+#: Named when `ResolvedDeck.game_changers_available` is False. Without this the
+#: degraded result is a false clean bill of health: a Game Changers outage makes
+#: every card report `is_game_changer=False`, so the allowance check finds
+#: nothing and `compliant` flips from False to True with no note saying why.
+GAME_CHANGERS_DEFERRED = (
+    "Scryfall Game Changers list unavailable, so the Game Changer allowance was "
+    "not checked."
 )
 
 
@@ -205,11 +217,12 @@ def check(
                 )
             )
 
-    deferred = (
-        (EXTRA_TURN_APPROXIMATION,)
-        if combos is not None
-        else (COMBO_DEFERRED, EXTRA_TURN_APPROXIMATION)
-    )
+    deferred_notes = [EXTRA_TURN_APPROXIMATION]
+    if combos is None:
+        deferred_notes.insert(0, COMBO_DEFERRED)
+    if not deck.game_changers_available:
+        deferred_notes.insert(0, GAME_CHANGERS_DEFERRED)
+    deferred = tuple(deferred_notes)
 
     return BracketReport(
         target=rule.number,

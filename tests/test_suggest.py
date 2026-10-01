@@ -32,6 +32,57 @@ class FakeEdhrec:
         return self.payload
 
 
+#: A candidate pool the shipped tests did not have. `collection_basic.json` held
+#: only Sol Ring and Atraxa, so all 35 EDHREC candidates but Sol Ring dropped as
+#: unresolvable, Sol Ring was already in the deck, and `suggestions` came back
+#: empty — which made every `for s in result["suggestions"]` assertion vacuous.
+#: This fixture resolves eight real EDHREC candidates for Atraxa plus two cards
+#: EDHREC does not list (Lightning Bolt, Black Lotus) for tests that inject them.
+CANDIDATES = "collection_suggest_candidates.json"
+
+#: The candidates in CANDIDATES that survive every filter, and the gap each one
+#: fills. Asserted by name so a filter that stops working is a failure, not a
+#: silently shorter list.
+EXPECTED_SUGGESTIONS = {
+    "Farseek": "ramp",
+    "Tezzeret's Gambit": "draw",
+    "Path to Exile": "spot_removal",
+    "Farewell": "sweeper",
+    "Teferi's Protection": "protection",
+}
+
+
+def suggest_client(*, game_changers=None):
+    """A client for one `suggest_additions` call over the sample deck.
+
+    Four requests, in order: resolve the deck, fetch Game Changers for the deck,
+    resolve the EDHREC candidates, fetch Game Changers for the candidates.
+    """
+    gc = game_changers if game_changers is not None else {"data": [], "has_more": False}
+    return ScryfallClient(
+        transport=FakeTransport(
+            load("collection_sample_deck.json"), gc, load(CANDIDATES), gc,
+        ),
+        sleep=lambda _: None,
+    )
+
+
+def with_extra_candidates(payload, *cardviews):
+    """A copy of an EDHREC payload with extra candidates appended.
+
+    EDHREC only recommends on-colour, legal cards, so a filter for the opposite
+    cannot be exercised by the recorded fixture alone. Injecting deliberately is
+    what makes deleting the filter a test failure.
+    """
+    import copy
+
+    out = copy.deepcopy(payload)
+    out["container"]["json_dict"]["cardlists"].append(
+        {"header": "High Synergy Cards", "cardviews": list(cardviews)}
+    )
+    return out
+
+
 def test_suggest_reports_the_gaps_it_is_filling():
     """A deck short on ramp must be told so, with the target band."""
     text = (FIXTURES / "sample_deck.txt").read_text()
@@ -53,18 +104,30 @@ def test_suggest_reports_the_gaps_it_is_filling():
 
 
 def test_every_suggestion_is_legal_in_the_commanders_identity():
+    """Two candidates are injected that must each be rejected by exactly one
+    filter, so deleting either filter fails this test rather than shortening a
+    list nobody asserts on:
+
+    * Lightning Bolt is legal but red, and Atraxa's identity is {W}{U}{B}{G}.
+      It fills the spot-removal gap, so only the colour filter stops it.
+    * Black Lotus is banned but colourless, so its identity is inside every
+      commander's. It fills the ramp gap, so only the legality filter stops it.
+    """
     text = (FIXTURES / "sample_deck.txt").read_text()
-    client = ScryfallClient(
-        transport=FakeTransport(
-            load("collection_sample_deck.json"), {"data": [], "has_more": False},
-            load("collection_basic.json"), {"data": [], "has_more": False},
-        ),
-        sleep=lambda _: None,
+    payload = with_extra_candidates(
+        load("edhrec_commander.json"),
+        {"name": "Lightning Bolt", "synergy": 0.95, "num_decks": 90, "potential_decks": 100},
+        {"name": "Black Lotus", "synergy": 0.94, "num_decks": 90, "potential_decks": 100},
     )
     result = api.suggest_additions(
-        text, target=3, limit=10, client=client,
-        edhrec_client=FakeEdhrec(load("edhrec_commander.json")),
+        text, target=3, limit=20, client=suggest_client(),
+        edhrec_client=FakeEdhrec(payload),
     )
+    names = [s["name"] for s in result["suggestions"]]
+    assert names, "the candidate pool must not be empty, or this test asserts nothing"
+    assert "Lightning Bolt" not in names, "off-colour candidate was suggested"
+    assert "Black Lotus" not in names, "banned candidate was suggested"
+
     allowed = set(result["color_identity"])
     for s in result["suggestions"]:
         assert set(s["color_identity"]) <= allowed, s["name"]
@@ -72,37 +135,42 @@ def test_every_suggestion_is_legal_in_the_commanders_identity():
 
 
 def test_suggestions_never_include_a_card_already_in_the_deck():
+    """Cultivate and Swords to Plowshares are both in the sample deck AND in the
+    EDHREC fixture's Top Cards list, and both resolve through the candidate
+    fixture. They are the cards the already-in-deck filter has to catch; without
+    them in the pool, deleting the filter changed nothing.
+    """
     text = (FIXTURES / "sample_deck.txt").read_text()
-    client = ScryfallClient(
-        transport=FakeTransport(
-            load("collection_sample_deck.json"), {"data": [], "has_more": False},
-            load("collection_basic.json"), {"data": [], "has_more": False},
-        ),
-        sleep=lambda _: None,
-    )
     result = api.suggest_additions(
-        text, target=3, limit=10, client=client,
+        text, target=3, limit=20, client=suggest_client(),
         edhrec_client=FakeEdhrec(load("edhrec_commander.json")),
     )
+    names = {s["name"] for s in result["suggestions"]}
+    assert names, "the candidate pool must not be empty, or this test asserts nothing"
     present = {"Sol Ring", "Cultivate", "Swords to Plowshares", "Wrath of God", "Forest"}
-    assert not ({s["name"] for s in result["suggestions"]} & present)
+    assert not (names & present), sorted(names & present)
+    assert names == set(EXPECTED_SUGGESTIONS), sorted(names)
 
 
 def test_each_suggestion_states_the_gap_it_fills_and_its_evidence():
+    """Counterspell is in the EDHREC fixture's Top Cards, resolves, is on-colour
+    and is legal — and counterspells are not one of the audit's target bands, so
+    it fills no gap. It is the card the fills-a-gap filter has to drop.
+
+    `limit` is deliberately above the surviving-candidate count: a suggestion
+    with no `fills` sorts last, so a tight limit would truncate it away and hide
+    the filter's removal rather than failing.
+    """
     text = (FIXTURES / "sample_deck.txt").read_text()
-    client = ScryfallClient(
-        transport=FakeTransport(
-            load("collection_sample_deck.json"), {"data": [], "has_more": False},
-            load("collection_basic.json"), {"data": [], "has_more": False},
-        ),
-        sleep=lambda _: None,
-    )
     result = api.suggest_additions(
-        text, target=3, limit=5, client=client,
+        text, target=3, limit=20, client=suggest_client(),
         edhrec_client=FakeEdhrec(load("edhrec_commander.json")),
     )
+    assert result["suggestions"], "the pool must not be empty, or this asserts nothing"
+    assert "Counterspell" not in [s["name"] for s in result["suggestions"]]
     for s in result["suggestions"]:
-        assert s["fills"], "every suggestion must name the gap it fills"
+        assert s["fills"], f"{s['name']} names no gap"
+        assert EXPECTED_SUGGESTIONS[s["name"]] in s["fills"], s
         assert "reason" in s and s["reason"]
         assert "synergy" in s or "inclusion_rate" in s
 
@@ -314,3 +382,147 @@ def test_suggest_degrades_when_edhrec_is_unavailable():
     assert result["gaps"], "gap analysis must survive an EDHREC outage"
     assert result["suggestions"] == []
     assert "EDHREC" in result["degraded"]
+
+
+# --- A Game Changer commander counts against the allowance (Critical 3) ------
+
+_TERGRID_DECK = """Commander
+1 Tergrid, God of Fright
+
+Deck
+1 Rhystic Study
+1 Smothering Tithe
+1 Sol Ring
+36 Swamp
+"""
+
+_TERGRID = _card_json(
+    "Tergrid, God of Fright", cmc=5.0, mana_cost="{3}{B}{B}", color_identity=["B"],
+    type_line="Legendary Creature — God",
+    oracle_text=(
+        "Menace\nWhenever an opponent sacrifices a nontoken permanent or discards "
+        "a permanent card, you may put that card onto the battlefield under your "
+        "control."
+    ),
+)
+_SMOTHERING_TITHE = _card_json(
+    "Smothering Tithe", cmc=4.0, mana_cost="{3}{W}", color_identity=["W"],
+    type_line="Enchantment",
+    oracle_text=(
+        "Whenever an opponent draws a card, that player may pay {2}. If the player "
+        "doesn't, you create a Treasure token."
+    ),
+)
+_SOL_RING = _card_json(
+    "Sol Ring", cmc=1.0, mana_cost="{1}", color_identity=[], type_line="Artifact",
+    oracle_text="{T}: Add {C}{C}.",
+)
+_SWAMP = _card_json(
+    "Swamp", cmc=0.0, mana_cost="", color_identity=["B"],
+    type_line="Basic Land — Swamp", oracle_text="({T}: Add {B}.)",
+)
+#: A mono-black Game Changer that fills one of this deck's gaps. The candidate
+#: has to be BOTH flagged and gap-filling, or the fills-a-gap filter drops it
+#: first and the Game Changer budget is never consulted — a tutor would not do,
+#: because tutors are not one of the audit's target bands.
+_ORCISH_BOWMASTERS = _card_json(
+    "Orcish Bowmasters", cmc=2.0, mana_cost="{1}{B}", color_identity=["B"],
+    type_line="Creature — Orc Archer",
+    oracle_text=(
+        "Flash\nWhen Orcish Bowmasters enters and whenever an opponent draws a card "
+        "except the first one they draw in each of their draw steps, Orcish Bowmasters "
+        "deals 1 damage to any target. Then amass Orcs 1."
+    ),
+)
+_NIGHT_S_WHISPER = _card_json(
+    "Night's Whisper", cmc=2.0, mana_cost="{1}{B}", color_identity=["B"],
+    type_line="Sorcery", oracle_text="You draw two cards and you lose 2 life.",
+)
+
+
+def test_a_game_changer_commander_counts_against_the_allowance():
+    """Three Commander-legal cards are on the live Game Changers list: Tergrid,
+    God of Fright, Grand Arbiter Augustin IV, and Braids, Cabal Minion.
+
+    Regression: `gc_in_deck` summed `deck.cards` only, while `brackets.check`
+    scans `deck.cards + commanders`. With a Game Changer commander plus two in
+    the 99 at bracket 3 (allowance 3), the true count is already 3 but suggest
+    computed a budget of 3 - 2 = 1 and offered a fourth — which `bracket` then
+    declared non-compliant. The tool contradicted itself.
+
+    Night's Whisper fills the draw gap and is not flagged, so it is still offered:
+    the fix must spend the budget correctly, not stop suggesting.
+    """
+    gc_response = {
+        "data": [
+            {"object": "card", "name": "Tergrid, God of Fright"},
+            {"object": "card", "name": "Rhystic Study"},
+            {"object": "card", "name": "Smothering Tithe"},
+            {"object": "card", "name": "Orcish Bowmasters"},
+        ],
+        "has_more": False,
+    }
+    deck_payloads = {
+        "data": [_TERGRID, _RHYSTIC_STUDY, _SMOTHERING_TITHE, _SOL_RING, _SWAMP],
+        "not_found": [],
+    }
+    payload = _edhrec_payload(
+        {"name": "Orcish Bowmasters", "synergy": 0.9, "num_decks": 90, "potential_decks": 100},
+        {"name": "Night's Whisper", "synergy": 0.5, "num_decks": 50, "potential_decks": 100},
+    )
+    client = ScryfallClient(
+        transport=FakeTransport(
+            deck_payloads, gc_response,
+            {"data": [_ORCISH_BOWMASTERS, _NIGHT_S_WHISPER], "not_found": []}, gc_response,
+        ),
+        sleep=lambda _: None,
+    )
+    result = api.suggest_additions(
+        _TERGRID_DECK, target=3, limit=20, client=client,
+        edhrec_client=FakeEdhrec(payload),
+    )
+    names = [s["name"] for s in result["suggestions"]]
+    assert "Orcish Bowmasters" not in names, (
+        "the allowance of 3 is already met by Tergrid + Rhystic Study + Smothering "
+        f"Tithe, so no Game Changer may be suggested; got {names}"
+    )
+    assert not [s for s in result["suggestions"] if s["is_game_changer"]]
+    # The non-flagged candidate still comes through.
+    assert "Night's Whisper" in names, names
+
+
+def test_suggest_and_bracket_agree_after_a_game_changer_suggestion():
+    """The contradiction stated as an invariant: whatever suggest proposes, the
+    deck plus that card must still satisfy the bracket it was asked about."""
+    from mtgpt.brackets import RULES
+
+    gc_response = {
+        "data": [
+            {"object": "card", "name": "Tergrid, God of Fright"},
+            {"object": "card", "name": "Rhystic Study"},
+            {"object": "card", "name": "Smothering Tithe"},
+            {"object": "card", "name": "Orcish Bowmasters"},
+        ],
+        "has_more": False,
+    }
+    deck_payloads = {
+        "data": [_TERGRID, _RHYSTIC_STUDY, _SMOTHERING_TITHE, _SOL_RING, _SWAMP],
+        "not_found": [],
+    }
+    payload = _edhrec_payload(
+        {"name": "Orcish Bowmasters", "synergy": 0.9, "num_decks": 90, "potential_decks": 100},
+    )
+    client = ScryfallClient(
+        transport=FakeTransport(
+            deck_payloads, gc_response,
+            {"data": [_ORCISH_BOWMASTERS], "not_found": []}, gc_response,
+        ),
+        sleep=lambda _: None,
+    )
+    result = api.suggest_additions(
+        _TERGRID_DECK, target=3, limit=20, client=client,
+        edhrec_client=FakeEdhrec(payload),
+    )
+    already = 3  # Tergrid (command zone) + Rhystic Study + Smothering Tithe
+    proposed = sum(1 for s in result["suggestions"] if s["is_game_changer"])
+    assert already + proposed <= RULES[3].game_changers_max

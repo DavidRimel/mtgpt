@@ -54,19 +54,63 @@ def _http_transport(url: str, payload: dict | None = None) -> dict:
         raise SourceUnavailable("Scryfall", f"malformed response: {exc}") from exc
 
 
+def collection_identifier(name: str) -> str:
+    """The name to send to /cards/collection for a possibly-split card name.
+
+    Scryfall's /cards/collection rejects every full "A // B" name as an
+    identifier: `Fire // Ice`, `Dusk // Dawn`, `Bottomless Pool // Locker Room`
+    and the Zendikar MDFC lands all land in `not_found`, while the front half
+    resolves to the same card. A Moxfield export carries the full name, so
+    sending it verbatim tells the user a correctly-spelled card is misspelled.
+
+    Done here rather than as a retry of `not_found`, so there is one code path:
+    a retry would leave the first request still able to report a real card as
+    missing if the retry itself failed.
+    """
+    front, separator, _ = name.partition("//")
+    return front.strip() if separator else name
+
+
 def _front_face(payload: dict) -> dict:
     """The face whose cost you pay. Falls back to the card itself."""
     faces = payload.get("card_faces")
     return faces[0] if faces else payload
 
 
-def card_from_json(payload: dict, *, game_changers: frozenset[str] = frozenset()) -> Card:
+def _number(value, default: float | None = None) -> float | None:
+    """Coerce a Scryfall numeric field, falling back rather than raising.
+
+    Scryfall is well-behaved today, but a reshaped or null field must not turn a
+    card lookup into a traceback — the same rule edhrec.py applies to its counts.
+
+    Unlike `edhrec._number`, this substitutes the default instead of signalling
+    "skip". The difference is deliberate: an EDHREC cardview with a broken count
+    is one suggestion among many and is better dropped, whereas a Scryfall card
+    is the thing the caller asked for. Its name, text and legality are still
+    correct, so returning it with an unknown price is better than returning
+    nothing.
+    """
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def card_from_json(payload: dict, *, game_changers: frozenset[str]) -> Card:
     """Map a Scryfall card payload onto a Card.
 
     For multi-face cards, cost/colors/text come from the front face while
     `type_line` stays at the top level (so it reads "Sorcery // Land" and
     `is_mdfc_land` can do its job). Using only the front face's text is
     deliberate: a land back face would otherwise register as ramp.
+
+    `game_changers` is required, not defaulted. A default of `frozenset()`
+    silently reports `is_game_changer=False` for every card, which reads as a
+    clean bill of health at a bracket that allows none; omitting it is now a
+    TypeError at the call site instead. Pass `frozenset()` explicitly only
+    where the caller has already recorded the list as unavailable.
     """
     front = _front_face(payload)
     name = payload.get("name", "")
@@ -74,7 +118,7 @@ def card_from_json(payload: dict, *, game_changers: frozenset[str] = frozenset()
 
     return Card(
         name=name,
-        mana_value=float(payload.get("cmc") or 0.0),
+        mana_value=_number(payload.get("cmc"), 0.0),
         type_line=payload.get("type_line") or front.get("type_line", ""),
         oracle_text=front.get("oracle_text") or payload.get("oracle_text") or "",
         mana_cost=front.get("mana_cost") or payload.get("mana_cost") or "",
@@ -84,7 +128,7 @@ def card_from_json(payload: dict, *, game_changers: frozenset[str] = frozenset()
         produced_mana=frozenset(payload.get("produced_mana") or ()),
         layout=payload.get("layout", "normal"),
         is_game_changer=name.casefold() in game_changers,
-        usd=float(price) if price is not None else None,
+        usd=_number(price),
         keywords=tuple(payload.get("keywords") or ()),
     )
 
@@ -129,14 +173,21 @@ class ScryfallClient:
 
         for index in range(0, len(names), COLLECTION_BATCH_SIZE):
             batch = names[index : index + COLLECTION_BATCH_SIZE]
-            payload = {"identifiers": [{"name": n} for n in batch]}
+            # Split/Room/aftermath/MDFC names go up as their front half; keep a
+            # map back so an unresolved name is reported as the user wrote it.
+            sent = [collection_identifier(n) for n in batch]
+            as_written: dict[str, str] = {}
+            for original, identifier in zip(batch, sent):
+                as_written.setdefault(identifier.casefold(), original)
+            payload = {"identifiers": [{"name": n} for n in sent]}
             try:
                 body = self._request(f"{API}/cards/collection", payload)
             except (urllib.error.URLError, OSError) as exc:
                 raise SourceUnavailable("Scryfall", str(exc)) from exc
             found.extend(body.get("data") or ())
             for entry in body.get("not_found") or ():
-                missing.append(entry.get("name", "<unknown>"))
+                reported = entry.get("name", "<unknown>")
+                missing.append(as_written.get(reported.casefold(), reported))
 
         if strict and missing:
             raise UnresolvedCards(missing)
@@ -215,8 +266,11 @@ def resolve(deck: ParsedDeck, *, client: ScryfallClient | None = None) -> Resolv
     """Turn a ParsedDeck of unverified names into a ResolvedDeck of real cards.
 
     Raises UnresolvedCards when any name fails to resolve. A Game Changers
-    outage degrades instead: the audit proceeds with every card unflagged, and
-    the caller is expected to say so in its report.
+    outage degrades instead: the audit proceeds with every card unflagged and
+    `game_changers_available` is set False, which `brackets.check` turns into a
+    deferred-check note. The flag exists because the degraded result is
+    indistinguishable from a clean one: zero Game Changers found reads as
+    compliant at every bracket.
     """
     client = client or ScryfallClient()
     all_entries = list(deck.commanders) + list(deck.entries)
@@ -224,10 +278,12 @@ def resolve(deck: ParsedDeck, *, client: ScryfallClient | None = None) -> Resolv
 
     payloads, _ = client.collection(names)
 
+    game_changers_available = True
     try:
         game_changers = client.game_changers()
     except SourceUnavailable:
         game_changers = frozenset()
+        game_changers_available = False
 
     index = _index_by_name(payloads)
     cards: dict[str, Card] = {}
@@ -246,4 +302,5 @@ def resolve(deck: ParsedDeck, *, client: ScryfallClient | None = None) -> Resolv
     return ResolvedDeck(
         commanders=tuple(cards[e.name] for e in deck.commanders),
         cards=tuple((e.qty, cards[e.name]) for e in deck.entries),
+        game_changers_available=game_changers_available,
     )

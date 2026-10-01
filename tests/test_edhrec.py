@@ -179,3 +179,70 @@ def test_synergy_cards_attributes_duplicates_to_the_higher_priority_list():
     cards = edhrec.synergy_cards(payload, limit=10)
     assert len(cards) == 1
     assert cards[0]["list"] == "High Synergy Cards"
+
+
+# --- Reshaped counts are skipped, not raised (Important 5) -------------------
+
+
+def _cardviews(*views, header="High Synergy Cards"):
+    return {"container": {"json_dict": {"cardlists": [
+        {"header": header, "cardviews": list(views)},
+    ]}}}
+
+
+def test_a_reshaped_cardview_is_skipped_while_its_sibling_survives():
+    """`themes` and `bracket_distribution` each carried an explicit
+    `try/except (TypeError, ValueError)`; `synergy_cards` — the function on the
+    critical path for both `synergy` and `suggest` — had none, so
+    `min(1.0, num / potential)` on a string count raised TypeError out of the
+    whole operation.
+    """
+    payload = _cardviews(
+        {"name": "Good Card", "synergy": 0.5, "num_decks": 50, "potential_decks": 100},
+        {"name": "String Counts", "synergy": 0.9, "num_decks": "50", "potential_decks": "100"},
+        {"name": "Garbage Counts", "synergy": 0.9, "num_decks": "lots",
+         "potential_decks": "many"},
+        {"name": "Garbage Synergy", "synergy": "very high", "num_decks": 50,
+         "potential_decks": 100},
+    )
+    cards = edhrec.synergy_cards(payload, limit=10)
+    names = [c["name"] for c in cards]
+    assert "Good Card" in names
+    # Numeric strings are a coercible shape, so they are kept.
+    assert "String Counts" in names
+    # Uncoercible ones are skipped rather than crashing or claiming a 0% rate.
+    assert "Garbage Counts" not in names
+    assert "Garbage Synergy" not in names
+
+
+def test_a_non_list_cardviews_field_does_not_raise():
+    """`cardviews` arriving as something other than a list used to raise
+    AttributeError, which is neither TypeError nor ValueError."""
+    assert edhrec.synergy_cards(_cardviews(), limit=5) == ()
+    assert edhrec.synergy_cards(
+        {"container": {"json_dict": {"cardlists": [
+            {"header": "High Synergy Cards", "cardviews": "not a list"},
+        ]}}}, limit=5,
+    ) == ()
+    assert edhrec.synergy_cards(
+        {"container": {"json_dict": {"cardlists": "not a list"}}}, limit=5
+    ) == ()
+    assert edhrec.synergy_cards({"container": "not a dict"}, limit=5) == ()
+
+
+def test_a_non_dict_cardview_is_skipped():
+    payload = {"container": {"json_dict": {"cardlists": [
+        {"header": "High Synergy Cards", "cardviews": [
+            "just a string",
+            {"name": "Real Card", "synergy": 0.5, "num_decks": 5, "potential_decks": 10},
+        ]},
+    ]}}}
+    assert [c["name"] for c in edhrec.synergy_cards(payload, limit=5)] == ["Real Card"]
+
+
+def test_reshaped_theme_and_bracket_containers_do_not_raise():
+    """The same AttributeError gap the counts had, one level up."""
+    assert edhrec.themes({"tag_counts": "not a list"}) == ()
+    assert edhrec.themes({"tag_counts": ["not a dict"]}) == ()
+    assert edhrec.bracket_distribution({"bracket_counts": "not a dict"}) == {}
+    assert edhrec.bracket_distribution({"bracket_counts": [1, 2, 3]}) == {}

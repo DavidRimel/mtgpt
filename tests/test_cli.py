@@ -113,3 +113,43 @@ def test_unparseable_deck_is_reported_as_data(capsys, tmp_path):
     assert cli.main(["read", "--file", str(path)]) == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload["error"]["type"] == "DeckStructureError"
+
+
+# --- Non-UTF-8 decklists stay inside the JSON envelope (Important 4) ---------
+
+
+def test_a_cp1252_decklist_is_a_user_error_not_a_traceback(capsys, tmp_path):
+    """A Windows editor's "ANSI" encoding turns Urza's curly apostrophe into a
+    byte that is not valid UTF-8. `UnicodeDecodeError` is a `ValueError`, so the
+    old `except OSError` let it escape as a raw traceback with exit 1 — outside
+    the envelope every other failure respects. Card names are full of apostrophes.
+    """
+    path = tmp_path / "deck.txt"
+    path.write_bytes("Deck\n1 Urza’s Tower\n".encode("cp1252"))
+    assert cli.main(["read", "--file", str(path)]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error"]["type"] == "UnicodeDecodeError"
+    # The message has to tell the user what to do about it.
+    assert "UTF-8" in payload["error"]["message"]
+
+
+def test_a_utf16_decklist_is_a_user_error_not_a_traceback(capsys, tmp_path):
+    """UTF-16 is what Windows PowerShell 5 produces from `... > deck.txt`."""
+    path = tmp_path / "deck.txt"
+    path.write_bytes("Deck\n1 Sol Ring\n".encode("utf-16"))
+    assert cli.main(["read", "--file", str(path)]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error"]["type"] == "UnicodeDecodeError"
+
+
+def test_a_utf8_bom_decklist_still_parses(capsys, tmp_path):
+    """A UTF-8 BOM is valid UTF-8, so it must not be caught by the above:
+    deckparse already strips it."""
+    path = tmp_path / "deck.txt"
+    path.write_bytes("﻿Deck\n1 Sol Ring\n36 Forest\n".encode("utf-8"))
+    assert cli.main(["read", "--file", str(path)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["data"]["total_cards"] == 37

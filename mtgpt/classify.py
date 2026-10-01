@@ -75,7 +75,12 @@ _SWEEPER = re.compile(
     r"each player sacrifices[^.]{0,40}?"
     r"\b(?:creature|permanent|artifact|enchantment|planeswalker|token|battle)s?\b|"
     r"deals \S+ damage to each (?:creature|other creature)|"
-    r"all creatures get -",
+    r"all creatures get -|"
+    # Mass bounce is a pseudo-wrath: Evacuation outright, and Cyclonic Rift once
+    # overload has substituted "each" for "target".
+    r"return (?:all|each|every)\s+[^.]{0,40}?"
+    r"\b(?:creature|permanent|artifact|enchantment|planeswalker|token)s?\b"
+    r"[^.]{0,40}?to (?:its|their) owner",
     re.IGNORECASE,
 )
 #: Mass land denial, including the sacrifice form (Bust).
@@ -88,14 +93,45 @@ _MASS_LAND_DENIAL = re.compile(
 #: "Counter target enchantment, instant, or sorcery spell", Dovin's Veto says
 #: "noncreature spell". A window between "target" and "spell" catches them.
 _COUNTERSPELL = re.compile(r"counter target\b.{0,60}?\b(?:spell|ability)\b", re.IGNORECASE)
+#: Protection means protection GRANTED, not protection possessed.
+#:
+#: Scryfall's `keywords` is populated for self-granted keywords, and the oracle
+#: text spells them out the same way, so a bare "Hexproof" or "<name> is
+#: indestructible" used to tag Blightsteel Colossus, Carnage Tyrant and Toski as
+#: the deck's protection package. The band is 3-5, so three such fatties filled
+#: it and the user was told to add no protection — then lost the commander to the
+#: next Swords to Plowshares. Hence the grant verb: "creatures you control gain
+#: hexproof", "target creature gains indestructible", "your permanents have
+#: hexproof". A keyword a card merely has is not a protection effect.
 _PROTECTION = re.compile(
-    r"\bhexproof\b|\bindestructible\b|protection from|\bphases? out\b|"
-    r"\bshroud\b|can't be countered|sacrifice .{0,30}\binstead\b",
+    r"protection from|"
+    r"\b(?:gain|gains|have|has)\b[^.]{0,40}?"
+    r"\b(?:hexproof|indestructible|shroud|ward)\b|"
+    r"\bphases? out\b|can't be countered|sacrifice .{0,30}\binstead\b",
     re.IGNORECASE,
 )
-#: A counterspell saying it can't be countered tells us nothing about the
-#: deck's resilience package. Masked before _PROTECTION runs.
-_SELF_UNCOUNTERABLE = re.compile(r"this spell can't be countered", re.IGNORECASE)
+#: A counterspell or creature saying it can't be countered tells us nothing about
+#: the deck's resilience package. Masked before _PROTECTION runs.
+_SELF_UNCOUNTERABLE = re.compile(
+    r"\bthis (?:spell|card|creature|permanent) can't be countered", re.IGNORECASE
+)
+#: Verbs that make the preceding noun the clause's SUBJECT. Combined with the
+#: card's own name, these find the clauses a card applies only to itself:
+#: "Blightsteel Colossus is indestructible", "Tromokratis has hexproof unless
+#: it's attacking", "Carnage Tyrant can't be countered".
+#:
+#: Only the clause is dropped, never the whole line. An oracle line can name the
+#: card as a COST and still grant to others — "Sacrifice Zack Fair: Target
+#: creature you control gains indestructible" — and blanking the line would also
+#: lose Archangel Avacyn's board-wide indestructible and Spectacular Spider-Man's.
+#: Measured against 400 real Commander-legal cards that grant hexproof or
+#: indestructible; blanking whole lines dropped four of them.
+_SELF_SUBJECT_VERBS = r"(?:is|are|has|have|gains?|becomes?|can't be countered)"
+#: Overload replaces every "target" with "each", turning a spot-removal spell
+#: into a pseudo-wrath. Cyclonic Rift and Vandalblast are the format's two
+#: most-played sweepers and were tagged `spot_removal` only; the Sweeper band is
+#: 2-3, so missing one is a third of the band.
+_OVERLOAD_KEYWORD = "Overload"
 #: "takes an extra turn", but also Time Stretch's "takes two extra turns".
 _EXTRA_TURNS = re.compile(r"takes?\s+\w+\s+extra\s+turns?", re.IGNORECASE)
 #: "you lose the game" is a drawback (Demonic Pact, Pact of Negation), not a
@@ -140,8 +176,13 @@ def classify(card: Card) -> frozenset[Function]:
     if _SELF_BLINK.search(text):
         tags.add(F.PROTECTION)
         tags.discard(F.SPOT_REMOVAL)
-    if _PROTECTION.search(_SELF_UNCOUNTERABLE.sub(" ", text)) or _has_protection_keyword(card):
+    if _PROTECTION.search(_without_self_clauses(card, text)):
         tags.add(F.PROTECTION)
+    if _is_overload_sweeper(card, text):
+        # Added after the spot-removal decision, not before: an overload card is
+        # genuinely both modes, and the `F.SWEEPER not in tags` guard above would
+        # otherwise strip the targeted mode it still has.
+        tags.add(F.SWEEPER)
     if _EXTRA_TURNS.search(text):
         tags.add(F.EXTRA_TURNS)
     if _WINCON.search(text):
@@ -165,9 +206,36 @@ def _is_ramp(card: Card, text: str) -> bool:
     return True
 
 
-def _has_protection_keyword(card: Card) -> bool:
-    protective = {"Hexproof", "Indestructible", "Shroud", "Ward"}
-    return bool(protective & set(card.keywords))
+def _without_self_clauses(card: Card, text: str) -> str:
+    """Drop the clauses in which the card itself is the subject.
+
+    What is left is what the card does for the rest of the deck, which is what
+    PROTECTION is meant to measure. Scryfall writes self-reference by the card's
+    own name, so the name plus a linking verb is the span to remove — and only
+    that span, because the same line may name the card as a cost and then grant
+    a keyword to other permanents.
+    """
+    masked = _SELF_UNCOUNTERABLE.sub(" ", text)
+    front = card.name.partition("//")[0].strip()
+    if not front:
+        return masked
+    self_clause = re.compile(
+        re.escape(front) + r"\s+" + _SELF_SUBJECT_VERBS + r"\b[^.\n]{0,80}",
+        re.IGNORECASE,
+    )
+    return self_clause.sub(" ", masked)
+
+
+def _is_overload_sweeper(card: Card, text: str) -> bool:
+    """True when overloading this spell turns it into a sweeper.
+
+    The oracle reminder text states the substitution verbatim — 'change "target"
+    in its text to "each"' — so applying it and re-running the sweeper test is
+    reading the card rather than guessing at it.
+    """
+    if _OVERLOAD_KEYWORD not in card.keywords:
+        return False
+    return bool(_SWEEPER.search(text.replace("target", "each")))
 
 
 def classify_deck(deck: ResolvedDeck) -> dict[str, frozenset[Function]]:

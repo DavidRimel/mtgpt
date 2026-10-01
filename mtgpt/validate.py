@@ -125,19 +125,32 @@ def _check_command_zone_duplicates(deck: ResolvedDeck) -> list[Violation]:
 
 
 def _check_singleton(deck: ResolvedDeck) -> list[Violation]:
+    """Enforce singleton, honoring a card's own copy limit as a cap.
+
+    Seven Dwarves and Nazgul say "a deck can have up to seven/nine cards named
+    ...". That is a raised ceiling, not an exemption: 20 Seven Dwarves is
+    illegal, and `Card.copy_limit` is what distinguishes the two.
+    """
     findings: list[Violation] = []
     for qty, card in deck.cards:
-        if qty > 1 and not card.is_basic_land and not card.allows_any_number:
-            findings.append(
-                Violation(
-                    severity=Severity.ERROR,
-                    code="singleton",
-                    message=(
-                        f"{card.name} appears {qty} times. Commander is singleton; "
-                        "only basic lands may repeat."
-                    ),
-                )
+        if qty <= 1 or card.is_basic_land:
+            continue
+        limit = card.copy_limit
+        if limit is None or qty <= limit:
+            continue
+        if limit == 1:
+            message = (
+                f"{card.name} appears {qty} times. Commander is singleton; "
+                "only basic lands may repeat."
             )
+        else:
+            message = (
+                f"{card.name} appears {qty} times, but its own text allows a deck "
+                f"at most {limit}."
+            )
+        findings.append(
+            Violation(severity=Severity.ERROR, code="singleton", message=message)
+        )
     return findings
 
 

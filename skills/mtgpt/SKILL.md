@@ -49,7 +49,9 @@ and were run against this toolkit.
 ### Audit a deck
 
 1. Get the list: ask the user to open Moxfield, click **Export**, and paste
-   the text, or point at a saved file.
+   the text, or point at a saved file. A `--file` must be UTF-8; if mtgpt
+   reports a `UnicodeDecodeError`, have the user re-save as UTF-8 or pipe the
+   text in with `--stdin`.
 2. Get the whole picture at once:
 
    ```bash
@@ -150,6 +152,10 @@ Do not improvise these by hand:
 
 - **No Moxfield URL fetching.** Moxfield serves scripted requests a
   Cloudflare challenge; the user must paste the Export text or a saved file.
+  The blockage is reversible, so say so if the user asks: fetching needs a
+  real browser, and Chromium cannot launch here without four system libraries
+  that require root to install (`libnspr4`, `libnss3`, `libnssutil3`,
+  `libasound2`) — see the README's "Moxfield URL fetching" section.
 - **No goldfish simulation.**
 - **No deck-from-scratch generation** — `synergy`/`themes` inform a build,
   but nothing assembles a full 99 automatically.

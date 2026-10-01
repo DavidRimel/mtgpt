@@ -217,3 +217,59 @@ def test_a_legal_deck_has_no_command_zone_duplicate_violation():
 def test_no_duplicate_violation_when_there_is_no_commander():
     deck = ResolvedDeck(commanders=(), cards=((1, card("Sol Ring")),))
     assert "duplicate_in_command_zone" not in [v.code for v in validate(deck)]
+
+
+# --- "up to N" is a cap, not an exemption ------------------------------------
+
+DWARVES = "A deck can have up to seven cards named Seven Dwarves."
+NAZGUL = "A deck can have up to nine cards named Nazgûl."
+RATS = "A deck can have any number of cards named Relentless Rats."
+
+
+def test_eight_seven_dwarves_is_not_legal():
+    """`allows_any_number` exempted "up to seven" cards from singleton entirely
+    rather than capping them, so a deck with 20 Seven Dwarves reported legal.
+    Seven is the ceiling the card states; eight is over it.
+    """
+    deck = legal_deck(extra=((8, card("Seven Dwarves", oracle_text=DWARVES)),))
+    violations = [v for v in validate(deck) if v.code == "singleton"]
+    assert violations, "8 copies exceeds the stated limit of 7"
+    assert "Seven Dwarves" in violations[0].message
+    assert "7" in violations[0].message
+    assert violations[0].severity is Severity.ERROR
+
+
+def test_twenty_seven_dwarves_is_not_legal():
+    """The reviewer's case verbatim."""
+    deck = legal_deck(extra=((20, card("Seven Dwarves", oracle_text=DWARVES)),))
+    assert "singleton" in codes(validate(deck))
+
+
+def test_nine_nazgul_is_legal_and_ten_is_not():
+    """A different number word, to prove the cap is parsed and not hardcoded."""
+    nine = legal_deck(extra=((9, card("Nazgûl", oracle_text=NAZGUL)),))
+    assert "singleton" not in codes(validate(nine))
+    ten = legal_deck(extra=((10, card("Nazgûl", oracle_text=NAZGUL)),))
+    assert "singleton" in codes(validate(ten))
+
+
+def test_any_number_cards_remain_uncapped():
+    """Relentless Rats must not acquire a cap as a side effect."""
+    deck = legal_deck(extra=((60, card("Relentless Rats", oracle_text=RATS)),))
+    assert "singleton" not in codes(validate(deck))
+
+
+def test_copy_limit_reads_the_stated_number():
+    assert card("Seven Dwarves", oracle_text=DWARVES).copy_limit == 7
+    assert card("Nazgûl", oracle_text=NAZGUL).copy_limit == 9
+    assert card("Relentless Rats", oracle_text=RATS).copy_limit is None
+    assert card("Sol Ring").copy_limit == 1
+
+
+def test_an_unparsable_quantity_declines_to_cap_rather_than_inventing_one():
+    """A number word the table does not know must not produce a wrong cap: a
+    false violation on a real card is worse than a missed one."""
+    odd = card("Odd Card", oracle_text="A deck can have up to seventeen cards named Odd Card.")
+    assert odd.copy_limit is None
+    deck = legal_deck(extra=((5, odd),))
+    assert "singleton" not in codes(validate(deck))

@@ -93,17 +93,64 @@ class EdhrecClient:
             raise SourceUnavailable("EDHREC", f"{url}: {exc}") from exc
 
 
+def _mapping(value) -> dict:
+    """`value` if it is a dict, else an empty dict.
+
+    Every traversal of an EDHREC payload goes through this. `payload.get(...)`
+    on a reshaped response raises AttributeError, which is neither TypeError nor
+    ValueError and so escaped the guards the rest of this module already had.
+    """
+    return value if isinstance(value, dict) else {}
+
+
+def _sequence(value) -> list:
+    """`value` if it is a list or tuple, else an empty list.
+
+    A str is deliberately excluded: iterating it yields characters, which would
+    turn a reshaped field into a long run of nonsense rather than a skip.
+    """
+    return list(value) if isinstance(value, (list, tuple)) else []
+
+
+#: Returned by `_number` when a field is present but is not a number. Distinct
+#: from a default, so a caller skips the entry instead of substituting a count it
+#: invented — a silent 0 would misreport inclusion rate as 0% rather than
+#: declining to claim one.
+UNCOERCIBLE = object()
+
+
+def _number(value, default: float = 0.0):
+    """Coerce an EDHREC count. Missing or null yields `default`.
+
+    A value that is present but not a number yields `UNCOERCIBLE`, which every
+    caller treats as "skip this entry". Counts have arrived as strings, and
+    `min(1.0, num / potential)` on a string raises TypeError straight out of
+    synergy_cards — the function on the critical path for both `synergy` and
+    `suggest`, and the only one here that had no guard.
+    """
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return UNCOERCIBLE
+
+
 def _cardlists(payload: dict) -> list[dict]:
-    container = payload.get("container") or {}
-    json_dict = container.get("json_dict") or {}
-    return json_dict.get("cardlists") or []
+    """The payload's cardlists, or an empty list for any other shape."""
+    container = _mapping(_mapping(payload).get("container"))
+    json_dict = _mapping(container.get("json_dict"))
+    return [c for c in _sequence(json_dict.get("cardlists")) if isinstance(c, dict)]
 
 
 def synergy_cards(payload: dict, *, limit: int = 40) -> tuple[dict, ...]:
     """Candidate cards with their synergy score and inclusion evidence.
 
     Deduplicated by name across lists, sorted by synergy descending. A missing
-    or reshaped payload yields an empty tuple rather than raising.
+    or reshaped payload yields an empty tuple rather than raising, and a single
+    reshaped cardview is skipped while its well-formed siblings survive: this is
+    the critical path for both `synergy` and `suggest`, so one bad count from an
+    unofficial source must not take the operation down.
 
     `CANDIDATE_LISTS` is iterated in its declared priority order rather than
     the payload's own list order, so a card appearing in two candidate lists
@@ -112,23 +159,30 @@ def synergy_cards(payload: dict, *, limit: int = 40) -> tuple[dict, ...]:
     by_header: dict[str, list[dict]] = {}
     for cardlist in _cardlists(payload):
         header = cardlist.get("header") or ""
-        by_header.setdefault(header, []).extend(cardlist.get("cardviews") or ())
+        if not isinstance(header, str):
+            continue
+        views = [v for v in _sequence(cardlist.get("cardviews")) if isinstance(v, dict)]
+        by_header.setdefault(header, []).extend(views)
 
     seen: dict[str, dict] = {}
     for header in CANDIDATE_LISTS:
         for view in by_header.get(header, ()):
             name = view.get("name")
-            if not name or name in seen:
+            if not name or not isinstance(name, str) or name in seen:
                 continue
-            num = view.get("num_decks") or 0
-            potential = view.get("potential_decks") or 0
+            num = _number(view.get("num_decks"))
+            potential = _number(view.get("potential_decks"))
+            synergy = _number(view.get("synergy"))
+            if UNCOERCIBLE in (num, potential, synergy):
+                # Skip the offending cardview, keep its well-formed siblings.
+                continue
             # Glitch data from an unofficial source must not claim >100% inclusion.
-            rate = min(1.0, num / potential) if potential else 0.0
+            rate = min(1.0, num / potential) if potential > 0 else 0.0
             seen[name] = {
                 "name": name,
-                "synergy": float(view.get("synergy") or 0.0),
-                "num_decks": num,
-                "potential_decks": potential,
+                "synergy": synergy,
+                "num_decks": int(num),
+                "potential_decks": int(potential),
                 "inclusion_rate": round(rate, 4),
                 "list": header,
             }
@@ -140,17 +194,18 @@ def synergy_cards(payload: dict, *, limit: int = 40) -> tuple[dict, ...]:
 def themes(payload: dict) -> tuple[dict, ...]:
     """Archetypes this commander is built as, most common first."""
     out = []
-    for tag in payload.get("tag_counts") or ():
-        try:
-            count = int(tag.get("count") or 0)
-        except (TypeError, ValueError):
-            # Unofficial source: a reshaped count must not crash the toolkit.
+    for tag in _sequence(_mapping(payload).get("tag_counts")):
+        if not isinstance(tag, dict):
+            # Unofficial source: a reshaped entry must not crash the toolkit.
+            continue
+        count = _number(tag.get("count"))
+        if count is UNCOERCIBLE:
             continue
         out.append(
             {
-                "slug": tag.get("slug", ""),
-                "label": tag.get("value", ""),
-                "count": count,
+                "slug": str(tag.get("slug") or ""),
+                "label": str(tag.get("value") or ""),
+                "count": int(count),
             }
         )
     return tuple(sorted(out, key=lambda t: t["count"], reverse=True))
@@ -158,15 +213,17 @@ def themes(payload: dict) -> tuple[dict, ...]:
 
 def bracket_distribution(payload: dict) -> dict[int, int]:
     """How many recorded decks sit in each bracket, keyed 1-5."""
-    raw = payload.get("bracket_counts") or {}
+    raw = _mapping(_mapping(payload).get("bracket_counts"))
     out: dict[int, int] = {}
     for key, value in raw.items():
         try:
             bracket = int(key)
-            count = int(value)
         except (TypeError, ValueError):
-            # Unofficial source: a reshaped count must not crash the toolkit.
+            # Unofficial source: a reshaped key must not crash the toolkit.
+            continue
+        count = _number(value)
+        if count is UNCOERCIBLE:
             continue
         if 1 <= bracket <= 5:
-            out[bracket] = count
+            out[bracket] = int(count)
     return out

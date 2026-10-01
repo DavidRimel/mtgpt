@@ -235,3 +235,74 @@ def test_three_card_combo_is_not_flagged_as_a_two_card_combo():
     combos = [{"card_count": 3, "cards": ("A", "B", "C")}]
     report = check(deck_of([card("Bear")]), target=2, combos=combos)
     assert "two_card_combo" not in [f.code for f in report.findings]
+
+
+# --- A Game Changers outage must not read as compliant (Critical 2) ----------
+
+
+def _gc_deck(*, available: bool):
+    """The same deck twice, differing only in whether the list was fetched.
+
+    When the fetch failed, `scryfall.resolve` has already degraded every
+    `is_game_changer` to False, so the two decks are identical except for the
+    flag — which is exactly why the flag has to exist.
+    """
+    commander = card("Atraxa, Praetors' Voice", "Legendary Creature — Angel")
+    flagged = available
+    return ResolvedDeck(
+        commanders=(commander,),
+        cards=(
+            (1, card("Rhystic Study", "Enchantment", game_changer=flagged)),
+            (1, card("Smothering Tithe", "Enchantment", game_changer=flagged)),
+            (1, card("Cyclonic Rift", "Instant", game_changer=flagged)),
+            (1, card("Mystic Remora", "Enchantment", game_changer=flagged)),
+        ),
+        game_changers_available=available,
+    )
+
+
+def test_game_changer_allowance_fires_when_the_list_is_available():
+    """The healthy half. A test that only checks this is what let the bug
+    through: the degraded path produces the opposite verdict."""
+    report = check(_gc_deck(available=True), target=3)
+    assert len(report.game_changers) == 4
+    assert "game_changers" in [f.code for f in report.findings]
+    assert report.compliant is False
+
+
+def test_a_game_changers_outage_is_named_in_deferred_checks():
+    """Scryfall returns 404 for a search matching nothing, so a tag rename
+    produces exactly this: every `is_game_changer` False, zero Game Changers
+    found, and `compliant` flipping False -> True with no note saying why.
+
+    The spec's rule is that no script returns empty results in a way that reads
+    as a clean bill of health, and SKILL.md tells the agent `deferred_checks` is
+    the complete list of skipped rules. So the verdict may come back compliant,
+    but the outage must be named.
+    """
+    report = check(_gc_deck(available=False), target=3)
+    # Degraded exactly as described: nothing found, so nothing to flag.
+    assert report.game_changers == ()
+    assert "game_changers" not in [f.code for f in report.findings]
+    # ...and that silence is accounted for.
+    assert any("Game Changers list unavailable" in note for note in report.deferred_checks), (
+        report.deferred_checks
+    )
+    # The pre-existing notes are not displaced.
+    assert len(report.deferred_checks) == 3
+
+
+def test_an_available_list_adds_no_outage_note():
+    """The healthy path must not cry wolf."""
+    report = check(_gc_deck(available=True), target=3)
+    assert not any("unavailable" in note for note in report.deferred_checks)
+
+
+def test_the_outage_note_reaches_the_api_payload():
+    """`_bracket_dict` passes `deferred_checks` straight through, so the agent
+    reading JSON sees the gap without any extra plumbing."""
+    from mtgpt.api import _bracket_dict
+
+    payload = _bracket_dict(check(_gc_deck(available=False), target=3))
+    assert payload["compliant"] is True
+    assert any("Game Changers list unavailable" in n for n in payload["deferred_checks"])

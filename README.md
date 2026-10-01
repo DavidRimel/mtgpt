@@ -58,7 +58,13 @@ failure, with exit code 0 or 2 respectively. See
 
 Export your list from Moxfield with the **Export** button and paste it into a
 file. Moxfield serves scripted requests a Cloudflare challenge, so automated
-fetching is not available.
+fetching is not available — see
+[Moxfield URL fetching](#moxfield-url-fetching) for what it would take.
+
+Decklist files must be UTF-8. A Windows editor's "ANSI" (cp1252) or
+PowerShell 5's `… > deck.txt` (UTF-16) will be rejected with an explanatory
+error rather than parsed into mangled card names; re-save as UTF-8, or pipe the
+text in with `--stdin`.
 
 ## What it reports
 
@@ -79,8 +85,18 @@ ratio and curve audit, bracket checks, EDHREC synergy and themes, Commander
 Spellbook combo detection, and gap-driven suggestions.
 
 Not built yet, and deliberately not improvised by the skill: Moxfield URL
-fetching (see the note above), goldfish simulation, and building a full deck
-from scratch given only a commander.
+fetching (see below), goldfish simulation, and building a full deck from
+scratch given only a commander.
+
+### Moxfield URL fetching
+
+Not available. Moxfield serves scripted requests a Cloudflare challenge, so
+automated fetching needs a real browser — and Chromium cannot launch in this
+environment without system libraries that require root to install
+(`libnspr4`, `libnss3`, `libnssutil3`, `libasound2`). Verified 2026-10-01.
+
+Use Moxfield's **Export** button and pass the text to `--file` or `--stdin`.
+Every deck operation accepts both.
 
 ## Data sources
 
