@@ -213,6 +213,66 @@ def full_report(
     }
 
 
+# --- EDHREC operations ------------------------------------------------------
+
+
+def commander_synergy(
+    name: str,
+    *,
+    variant: str | None = None,
+    limit: int = 40,
+    client: ScryfallClient | None = None,
+    edhrec_client=None,
+) -> dict:
+    """Candidate cards for a commander, with synergy and inclusion evidence.
+
+    Each candidate is resolved against Scryfall and tagged by function, so the
+    agent can see what role it would fill before proposing it — and so a card
+    EDHREC lists but Scryfall cannot resolve never reaches the user.
+    """
+    from .edhrec import EdhrecClient, synergy_cards
+
+    source = edhrec_client or EdhrecClient()
+    payload = source.commander(name, variant=variant)
+    candidates = synergy_cards(payload, limit=limit)
+    if not candidates:
+        return {"commander": name, "variant": variant, "count": 0, "cards": []}
+
+    verified, _ = _client(client).collection([c["name"] for c in candidates])
+    by_name = {}
+    for p in verified:
+        card = card_from_json(p)
+        by_name[card.name.casefold()] = card
+        front, _, _ = card.name.partition("//")
+        by_name.setdefault(front.strip().casefold(), card)
+
+    out = []
+    for candidate in candidates:
+        card = by_name.get(candidate["name"].casefold())
+        if card is None:
+            continue
+        entry = _card_dict(card, classify(card))
+        entry["synergy"] = candidate["synergy"]
+        entry["inclusion_rate"] = candidate["inclusion_rate"]
+        entry["edhrec_list"] = candidate["list"]
+        out.append(entry)
+
+    return {"commander": name, "variant": variant, "count": len(out), "cards": out}
+
+
+def commander_themes(name: str, *, edhrec_client=None) -> dict:
+    """Archetypes this commander is usually built as, plus bracket spread."""
+    from .edhrec import EdhrecClient, bracket_distribution, themes
+
+    source = edhrec_client or EdhrecClient()
+    payload = source.commander(name)
+    return {
+        "commander": name,
+        "themes": [dict(t) for t in themes(payload)],
+        "bracket_distribution": {str(k): v for k, v in bracket_distribution(payload).items()},
+    }
+
+
 _STATUS_MARK = {"ok": "ok", "low": "LOW", "high": "HIGH"}
 
 

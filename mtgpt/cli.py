@@ -68,6 +68,14 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("--bracket", type=int, default=3, choices=[1, 2, 3, 4, 5])
             cmd.add_argument("--text", action="store_true", help="Human-readable output")
 
+    synergy = sub.add_parser("synergy", help="EDHREC candidate cards for a commander")
+    synergy.add_argument("commander")
+    synergy.add_argument("--variant", choices=["budget", "expensive", "upgraded", "cedh"])
+    synergy.add_argument("--limit", type=int, default=40)
+
+    themes_cmd = sub.add_parser("themes", help="How a commander is usually built")
+    themes_cmd.add_argument("commander")
+
     return parser
 
 
@@ -120,6 +128,11 @@ def main(argv: list[str] | None = None, client: ScryfallClient | None = None) ->
             _emit(command, api.search_cards(args.query, limit=args.limit, client=client))
         elif command == "classify":
             _emit(command, api.classify_cards(args.names, client=client))
+        elif command == "synergy":
+            _emit(command, api.commander_synergy(
+                args.commander, variant=args.variant, limit=args.limit, client=client))
+        elif command == "themes":
+            _emit(command, api.commander_themes(args.commander))
         else:
             text = _read_deck_text(args, command)
             if text is None:

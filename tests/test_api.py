@@ -133,3 +133,56 @@ def test_render_report_surfaces_per_card_tags():
 def test_operations_are_independent():
     """bracket_check must work without audit_deck ever being called."""
     assert api.bracket_check(deck_text(), client=deck_client())["target"] == 3
+
+
+class FakeEdhrec:
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = []
+
+    def commander(self, name, *, variant=None):
+        self.calls.append((name, variant))
+        return self.payload
+
+
+def test_commander_synergy_verifies_candidates_and_tags_them():
+    edh = FakeEdhrec(json.loads((FIXTURES / "edhrec_commander.json").read_text()))
+    client = client_for(load("collection_basic.json"), NO_GAME_CHANGERS)
+    result = api.commander_synergy(
+        "Atraxa, Praetors' Voice", limit=3, client=client, edhrec_client=edh
+    )
+    assert result["commander"] == "Atraxa, Praetors' Voice"
+    for card in result["cards"]:
+        # Evidence travels with the candidate.
+        assert "synergy" in card and "inclusion_rate" in card
+        # And it is a verified card with function tags.
+        assert "functions" in card and card["legal_commander"]
+
+
+def test_commander_synergy_drops_candidates_scryfall_cannot_verify():
+    """A card EDHREC lists but Scryfall cannot resolve must not reach the user."""
+    edh = FakeEdhrec(json.loads((FIXTURES / "edhrec_commander.json").read_text()))
+    # Scryfall returns only Sol Ring, whatever EDHREC suggested.
+    client = client_for(load("collection_basic.json"), NO_GAME_CHANGERS)
+    result = api.commander_synergy(
+        "Atraxa, Praetors' Voice", limit=40, client=client, edhrec_client=edh
+    )
+    names = {c["name"] for c in result["cards"]}
+    assert names <= {"Sol Ring", "Atraxa, Praetors' Voice", "Dockside Extortionist"}
+
+
+def test_commander_synergy_passes_the_variant_through():
+    edh = FakeEdhrec(json.loads((FIXTURES / "edhrec_commander.json").read_text()))
+    client = client_for(load("collection_basic.json"), NO_GAME_CHANGERS)
+    api.commander_synergy(
+        "Atraxa, Praetors' Voice", variant="upgraded", limit=1,
+        client=client, edhrec_client=edh,
+    )
+    assert edh.calls == [("Atraxa, Praetors' Voice", "upgraded")]
+
+
+def test_commander_themes_returns_themes_and_bracket_spread():
+    edh = FakeEdhrec(json.loads((FIXTURES / "edhrec_commander.json").read_text()))
+    result = api.commander_themes("Atraxa, Praetors' Voice", edhrec_client=edh)
+    assert result["themes"] and "label" in result["themes"][0]
+    assert result["bracket_distribution"]
