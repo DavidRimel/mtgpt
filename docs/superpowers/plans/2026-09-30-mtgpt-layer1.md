@@ -4149,6 +4149,21 @@ worse than no claim.
 
 - [ ] **Step 4: Write `README.md`**
 
+The README must include this subsection under `## Status`, recording Task 10's verified outcome:
+
+```markdown
+### Moxfield URL fetching
+
+Not available. Moxfield serves scripted requests a Cloudflare challenge, so automated
+fetching needs a real browser — and Chromium cannot launch in this environment without
+system libraries that require root to install (`libnspr4`, `libnss3`, `libnssutil3`,
+`libasound2`). Verified 2026-09-30.
+
+Use Moxfield's **Export** button and pass the text to `--file` or `--stdin`. Every deck
+operation accepts both.
+```
+
+
 ```markdown
 # mtgpt
 
@@ -4261,7 +4276,31 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 10: Moxfield browser fetch (verify first, defer if blocked)
+## Task 10: Moxfield browser fetch — RESOLVED AS DEFERRED (verified 2026-09-30)
+
+> **Outcome: deferred, not built.** Step 1's verification was run and failed. Evidence:
+>
+> ```
+> $ python3 -m pip install --user playwright          # OK, no sudo needed
+> $ python3 -m playwright install chromium            # OK, 114 MB downloaded
+> $ chrome-headless-shell --headless --dump-dom ...
+> error while loading shared libraries: libnspr4.so: cannot open shared object file
+>   libnspr4.so, libnss3.so, libnssutil3.so, libasound.so.2 => not found
+> $ python3 -m playwright install-deps --dry-run chromium
+> Missing system dependencies (37)
+> ```
+>
+> Those libraries install via `apt-get` as root, and `sudo` requires a password in this
+> environment. Per Step 2, no fetcher was written: an intermittently-failing browser fetch is
+> worse than an absent one that is documented. The export/paste path from Task 2 is the
+> supported route and works. Task 9's README must carry the note below.
+>
+> The Playwright package and Chromium binary remain installed under `~/.local` and
+> `~/.cache/ms-playwright`. They are harmless; if the system libraries are ever installed
+> (`sudo apt-get install libnss3 libnspr4 libasound2t64`), re-run Step 1 and the remaining
+> steps become viable unchanged.
+
+### Original task (retained for reference)
 
 The user asked for the browser to perform the Moxfield export on their behalf, so the pipeline accepts a URL and not just pasted text. Moxfield serves scripted requests a Cloudflare challenge (403, confirmed against `api2.moxfield.com` on 2026-09-30 including with a browser User-Agent), so a real browser is the only automated route.
 
