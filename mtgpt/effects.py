@@ -288,7 +288,10 @@ def effect_of(card: Card, identity: frozenset[str] = _ANY) -> SimEffect:
 
         # Net mana = produced - cost, only count if positive
         net = produced - cost_mana
-        if net > 0:
+        if net > 0 and re.search(r"sacrifice (?:this|~|" + re.escape(card.name) + ")", cost, re.IGNORECASE):
+            # Sacrificed to make mana (Lotus Petal): once, like a Treasure.
+            treasure = max(treasure, net)
+        elif net > 0:
             mana = max(mana, net)
             colors |= produced_colors
 

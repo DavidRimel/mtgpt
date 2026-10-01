@@ -240,3 +240,10 @@ def test_enter_the_infinite_draws_the_library_and_puts_one_back():
     assert (effect.draw_library, effect.put_back) == (True, 1)
     assert effect.draw_once == 0
     assert not is_unmodeled(eti, effect)
+
+
+def test_sacrifice_for_mana_is_one_shot():
+    petal = card("Lotus Petal", "Artifact", "{T}, Sacrifice this artifact: Add one mana of any color.",
+                 mana_cost="{0}")
+    effect = effect_of(petal, G)
+    assert (effect.mana, effect.treasure_once) == (0, 1)
