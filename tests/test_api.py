@@ -171,6 +171,22 @@ def test_commander_synergy_drops_candidates_scryfall_cannot_verify():
     assert names <= {"Sol Ring", "Atraxa, Praetors' Voice", "Dockside Extortionist"}
 
 
+def test_commander_synergy_survives_one_unresolvable_candidate():
+    """One bad EDHREC name must not zero out the good candidates."""
+    edh = FakeEdhrec(json.loads((FIXTURES / "edhrec_commander.json").read_text()))
+    # "Cultivate" is a real EDHREC candidate for this commander (it appears in
+    # the fixture's "Top Cards" list), so it is the one that must survive.
+    good = load("search_results.json")
+    # Scryfall's real shape: good cards in data, unmatched ones in not_found.
+    partial = {"data": good["data"], "not_found": [{"name": "Some Name Scryfall Lacks"}]}
+    client = client_for(partial, NO_GAME_CHANGERS)
+    result = api.commander_synergy(
+        "Atraxa, Praetors' Voice", limit=40, client=client, edhrec_client=edh
+    )
+    # The resolvable cards still come back rather than the call aborting.
+    assert result["count"] > 0
+
+
 def test_commander_synergy_passes_the_variant_through():
     edh = FakeEdhrec(json.loads((FIXTURES / "edhrec_commander.json").read_text()))
     client = client_for(load("collection_basic.json"), NO_GAME_CHANGERS)
@@ -186,3 +202,15 @@ def test_commander_themes_returns_themes_and_bracket_spread():
     result = api.commander_themes("Atraxa, Praetors' Voice", edhrec_client=edh)
     assert result["themes"] and "label" in result["themes"][0]
     assert result["bracket_distribution"]
+
+
+def test_error_payload_carries_machine_readable_detail():
+    from mtgpt.errors import SourceUnavailable, UnresolvedCards
+
+    unresolved = api.error_payload(UnresolvedCards(["Fake Card"]))
+    assert unresolved["type"] == "UnresolvedCards"
+    assert unresolved["names"] == ["Fake Card"]
+
+    outage = api.error_payload(SourceUnavailable("EDHREC", "down"))
+    assert outage["type"] == "SourceUnavailable"
+    assert outage["source"] == "EDHREC"

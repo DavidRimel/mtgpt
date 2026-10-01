@@ -31,6 +31,9 @@ REQUEST_DELAY = 0.1
 #: Maximum pages for paginated endpoints before raising an error.
 MAX_GAME_CHANGER_PAGES = 20
 
+#: Maximum pages `search` will follow before raising an error.
+MAX_SEARCH_PAGES = 20
+
 USER_AGENT = "mtgpt/0.1"
 
 Transport = Callable[..., dict]
@@ -174,7 +177,13 @@ class ScryfallClient:
             "&unique=cards&order=edhrec"
         )
         found: list[dict] = []
+        pages = 0
         while url and len(found) < limit:
+            pages += 1
+            if pages > MAX_SEARCH_PAGES:
+                raise SourceUnavailable(
+                    "Scryfall search", f"pagination exceeded {MAX_SEARCH_PAGES} pages"
+                )
             try:
                 body = self._request(url)
             except (urllib.error.URLError, OSError, ValueError) as exc:

@@ -251,3 +251,29 @@ def test_resolve_degrades_when_game_changers_unavailable():
     client = ScryfallClient(transport=transport, sleep=lambda _: None)
     deck = resolve(parsed, client=client)
     assert deck.cards[0][1].is_game_changer is False
+
+
+def test_search_follows_pagination():
+    page_one = {
+        "data": [{"name": "Cultivate"}],
+        "has_more": True,
+        "next_page": "https://api.scryfall.com/cards/search?q=x&page=2",
+    }
+    page_two = {"data": [{"name": "Kodama's Reach"}], "has_more": False}
+    transport = FakeTransport(page_one, page_two)
+    client = ScryfallClient(transport=transport, sleep=lambda _: None)
+    results = client.search("c:g", limit=10)
+    assert [c["name"] for c in results] == ["Cultivate", "Kodama's Reach"]
+    assert len(transport.calls) == 2
+    assert "page=2" in transport.calls[1][0]
+
+
+def test_search_stops_at_the_page_cap():
+    """A server that always says has_more must not hang the client."""
+    def transport(url, payload=None):
+        return {"data": [], "has_more": True,
+                "next_page": "https://api.scryfall.com/cards/search?page=99"}
+
+    client = ScryfallClient(transport=transport, sleep=lambda _: None)
+    with pytest.raises(SourceUnavailable):
+        client.search("c:g", limit=10)

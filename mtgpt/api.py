@@ -16,7 +16,7 @@ from .audit import AuditReport, audit
 from .brackets import BracketReport, check
 from .classify import classify, classify_deck
 from .deckparse import parse
-from .errors import UnresolvedCards
+from .errors import SourceUnavailable, UnresolvedCards
 from .models import Card, Function, ResolvedDeck, Violation
 from .scryfall import ScryfallClient, card_from_json, resolve
 from .validate import validate
@@ -99,6 +99,21 @@ def _bracket_dict(report: BracketReport) -> dict:
 
 def _tags_dict(tags: dict[str, frozenset[Function]]) -> dict[str, list[str]]:
     return {name: sorted(f.value for f in fns) for name, fns in tags.items()}
+
+
+def error_payload(exc: Exception) -> dict:
+    """Serialize an exception into the error envelope's `data`.
+
+    Lives here, not in `cli.py`, because serialization is api.py's job: a
+    future MCP adapter needs this mapping too, and should not have to
+    reimplement it.
+    """
+    payload = {"type": type(exc).__name__, "message": str(exc)}
+    if isinstance(exc, UnresolvedCards):
+        payload["names"] = list(exc.names)
+    if isinstance(exc, SourceUnavailable):
+        payload["source"] = exc.source
+    return payload
 
 
 # --- Card operations -------------------------------------------------------
@@ -324,7 +339,9 @@ def commander_synergy(
     if not candidates:
         return {"commander": name, "variant": variant, "count": 0, "cards": []}
 
-    verified, _ = _client(client).collection([c["name"] for c in candidates])
+    verified, _ = _client(client).collection(
+        [c["name"] for c in candidates], strict=False
+    )
     by_name = {}
     for p in verified:
         card = card_from_json(p)

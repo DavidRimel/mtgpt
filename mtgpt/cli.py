@@ -106,15 +106,6 @@ def _emit(command: str, data, *, ok: bool = True) -> None:
     print(json.dumps({"ok": ok, "command": command, key: data}, indent=2))
 
 
-def _error_payload(exc: Exception) -> dict:
-    payload = {"type": type(exc).__name__, "message": str(exc)}
-    if isinstance(exc, UnresolvedCards):
-        payload["names"] = list(exc.names)
-    if isinstance(exc, SourceUnavailable):
-        payload["source"] = exc.source
-    return payload
-
-
 def _read_deck_text(args, command: str) -> str | None:
     """Return the decklist text, or None after emitting a user error."""
     if args.file:
@@ -188,10 +179,10 @@ def main(argv: list[str] | None = None, client: ScryfallClient | None = None) ->
                     limit=args.limit, client=client,
                 ))
     except (UnresolvedCards, DeckStructureError, SourceUnavailable) as exc:
-        _emit(command, _error_payload(exc), ok=False)
+        _emit(command, api.error_payload(exc), ok=False)
         return EXIT_USER_ERROR
     except MtgptError as exc:
-        _emit(command, _error_payload(exc), ok=False)
+        _emit(command, api.error_payload(exc), ok=False)
         return EXIT_USER_ERROR
 
     return EXIT_OK
