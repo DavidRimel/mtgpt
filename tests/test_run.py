@@ -1,3 +1,5 @@
+import dataclasses
+
 import pytest
 
 from mtgpt.goldfish.engine import prepare
@@ -7,6 +9,7 @@ from mtgpt.models import ResolvedDeck
 from simdeck import BEAR, NEVER, SOL_RING, SWORDS, TEFERIS_PROTECTION, card, commander, deck, forest
 
 GO_WIDE = {"archetype": "go_wide"}
+NEVER_GOAL = {"archetype": "custom", "thing": "commander", "win": NEVER}
 
 
 def test_fixed_seed_gives_identical_reports():
@@ -83,6 +86,7 @@ def test_compare_identical_decks_has_zero_deltas():
     assert result["before"] == result["after"]
     # When identical, deltas are 0 or None (if both sides were None)
     assert set(numbers(result["delta"])) == {0, None}
+    assert result["delta"]["commander"]["on_curve_rate"] == 0
 
 
 def test_compare_sees_a_better_deck():
@@ -133,38 +137,35 @@ def test_colorless_commander_plays():
     assert play(prepare(d, GO_WIDE), seed=1).commander_cast_turn == 4
 
 
-# --- Additional test coverage for report aggregates -------------------------
+# --- _delta unit tests -------------------------------------------------------
 
 
-def test_delta_handles_union_of_keys():
+def test_delta_union_of_keys():
     """Delta iterates union of keys, treating missing as 0."""
     from mtgpt.goldfish.run import _delta
     before = {"histogram": {"4": 10, "5": 5}, "median": 4}
     after = {"histogram": {"4": 12, "6": 3}, "median": 4}
     delta = _delta(before, after)
-    assert delta["histogram"]["4"] == 2  # 12 - 10
-    assert delta["histogram"]["5"] == -5  # 0 - 5
-    assert delta["histogram"]["6"] == 3  # 3 - 0
-    assert delta["median"] == 0  # 4 - 4
+    assert delta["histogram"]["4"] == 2
+    assert delta["histogram"]["5"] == -5
+    assert delta["histogram"]["6"] == 3
+    assert delta["median"] == 0
 
 
-def test_delta_handles_none_values():
-    """If exactly one side is None, delta is None."""
+def test_delta_one_sided_dict():
+    """One-sided dicts are diffed against empty dict."""
     from mtgpt.goldfish.run import _delta
-    before = {"median": None}
-    after = {"median": 5}
-    delta = _delta(before, after)
-    assert delta["median"] is None
-
-    # Reversed
-    before = {"median": 5}
-    after = {"median": None}
-    delta = _delta(before, after)
-    assert delta["median"] is None
+    assert _delta({}, {"x": {"y": 2}}) == {"x": {"y": 2}}
 
 
-def test_delta_handles_lists_elementwise():
-    """Lists diff elementwise."""
+def test_delta_lists_pad_and_diff():
+    """Lists of different lengths are padded and diffed elementwise."""
+    from mtgpt.goldfish.run import _delta
+    assert _delta({"l": [1]}, {"l": [1, 3]}) == {"l": [0, 3]}
+
+
+def test_delta_handles_none_in_lists():
+    """None (genuine) in lists: None vs numeric → None."""
     from mtgpt.goldfish.run import _delta
     before = {"mana_by_turn": [1.0, 2.0, None, 4.0]}
     after = {"mana_by_turn": [1.0, 2.5, 3.0, 4.0]}
@@ -172,144 +173,120 @@ def test_delta_handles_lists_elementwise():
     assert delta["mana_by_turn"] == [0.0, 0.5, None, 0.0]
 
 
-def test_compare_with_new_by_condition():
-    """After deck with new by_condition key includes it in delta."""
+# --- Disruption recovery ---
+
+
+def test_disruption_recovery_all_lands():
+    """All-lands deck: T4 cast, removed T6, T7, T9; recovery median is 1."""
+    def rem(ft):
+        return {"archetype": "custom", "thing": "commander", "win": NEVER,
+                "disruption": {"commander_removal": 1.0, "from_turn": ft}}
+    r = simulate(deck(), rem(6), games=10)
+    assert r["disruption"]["recovery_turns"]["median"] == 1
+    assert r["disruption"]["never_recovered"] == 0
+    assert r["disruption"]["landed"] == 30
+
+
+def test_disruption_never_recovered_at_cap():
+    """With turn_cap=5, all removals leave commander unrecovered."""
+    def rem(ft):
+        return {"archetype": "custom", "thing": "commander", "win": NEVER,
+                "disruption": {"commander_removal": 1.0, "from_turn": ft}}
+    r = simulate(deck(), rem(5), games=10, turn_cap=5)
+    assert r["disruption"]["never_recovered"] == 10
+    assert r["disruption"]["landed"] == 10
+
+
+def test_disruption_win_after_event_with_mana():
+    """With mana available win condition, all games win after removal."""
     goal = {"archetype": "custom", "thing": "commander",
-            "win": {"any": [{"commander_damage": 8}, {"board_power": 1000}]}}
-    slow, fast = deck(lands=99), deck(SOL_RING, lands=98)
-    result = compare(slow, fast, goal, games=50)
-    # Both should have at least commander_damage in by_condition
-    # Delta should include all keys from both
-    assert "by_condition" in result["delta"]["win"]
-    assert isinstance(result["delta"]["win"]["by_condition"], dict)
-    assert len(result["delta"]["win"]["by_condition"]) > 0
+            "win": {"mana_available": 7},
+            "disruption": {"commander_removal": 1.0, "from_turn": 5}}
+    r = simulate(deck(), goal, games=10)
+    assert r["disruption"]["win_rate_after_event"] == 1.0
 
 
-def test_delta_mana_by_turn_is_list():
-    """Delta's setup.mana_by_turn is a list of differences."""
-    result = compare(deck(lands=99), deck(SOL_RING, lands=98), GO_WIDE, games=50)
-    assert isinstance(result["delta"]["setup"]["mana_by_turn"], list)
-    assert len(result["delta"]["setup"]["mana_by_turn"]) > 0
+def test_disruption_win_after_event_none_when_no_events():
+    """When no events land, win_rate_after_event is None."""
+    r = simulate(deck(), NEVER_GOAL, games=10)
+    assert r["disruption"]["win_rate_after_event"] is None
 
 
-def test_protection_increases_stopped_rate():
-    """Deck with protection cards reduces disruption impact."""
-    goal = {"archetype": "custom", "thing": "commander", "win": {"commander_damage": 100},
-            "disruption": {"commander_removal": 1.0, "from_turn": 1}}
-    unprotected = deck(lands=99)
-    protected = deck(TEFERIS_PROTECTION, SWORDS, lands=97)
-
-    unprotected_report = simulate(unprotected, goal, games=10)
-    protected_report = simulate(protected, goal, games=10)
-
-    # Protected deck should have higher stopped_by_protection_rate
-    assert protected_report["disruption"]["stopped_by_protection_rate"] > unprotected_report["disruption"]["stopped_by_protection_rate"]
+# --- Protection stops disruption ---
 
 
-def test_recovery_turns_tracked():
-    """Recovery from disruption is measured."""
-    goal = {"archetype": "custom", "thing": "commander", "win": NEVER,
-            "disruption": {"commander_removal": 0.5, "from_turn": 5}}
-    deck_with_mana = deck(SOL_RING, lands=98)
-    report = simulate(deck_with_mana, goal, games=20)
-
-    # If events landed, recovery should be tracked
-    if report["disruption"]["landed"] > 0:
-        assert report["disruption"]["recovery_turns"]["median"] is None or report["disruption"]["recovery_turns"]["median"] >= 0
-
-
-def test_never_recovered_tracked():
-    """Games where thing never comes back online tracked."""
-    goal = {"archetype": "custom", "thing": "commander", "win": NEVER,
-            "disruption": {"commander_removal": 1.0, "from_turn": 1}}
-    mana_poor = ResolvedDeck(commanders=(commander(),), cards=((98, forest()),))
-    report = simulate(mana_poor, goal, games=10)
-
-    # With low mana and constant removal, many won't recover
-    assert report["disruption"]["never_recovered"] >= 0
+def test_disruption_stopped_by_protection():
+    """Deck with many protection cards stops removals."""
+    prot = [card(f"Shield {i}", "Instant",
+                  "Target creature you control gains hexproof until end of turn.",
+                  mana_cost="{G}")
+            for i in range(30)]
+    def rem(ft):
+        return {"archetype": "custom", "thing": "commander", "win": NEVER,
+                "disruption": {"commander_removal": 1.0, "from_turn": ft}}
+    d = simulate(deck(*prot), rem(1), games=30)["disruption"]
+    assert d["stopped_by_protection_rate"] > 0.5
+    assert d["landed"] < d["events"]
+    assert d["stopped_by_protection_rate"] == round((d["events"] - d["landed"]) / d["events"], 4)
 
 
-def test_win_rate_after_event_with_no_events():
-    """When no disruption events, win_rate_after_event is None or 0."""
-    goal = {"archetype": "custom", "thing": "commander", "win": NEVER,
-            "disruption": {"commander_removal": 0.0, "from_turn": 1}}
-    report = simulate(deck(), goal, games=10)
-    assert report["disruption"]["events"] == 0
-    # win_rate_after_event should be None when no events landed
-    rate = report["disruption"]["win_rate_after_event"]
-    assert rate is None or rate == 0
+def test_disruption_no_protection_unprotected():
+    """Unprotected deck has stopped_by_protection_rate == 0."""
+    def rem(ft):
+        return {"archetype": "custom", "thing": "commander", "win": NEVER,
+                "disruption": {"commander_removal": 1.0, "from_turn": ft}}
+    d = simulate(deck(), rem(1), games=10)["disruption"]
+    assert d["stopped_by_protection_rate"] == 0.0
 
 
-def test_win_rate_after_event_with_events():
-    """When disruption events land, win_rate_after_event is tracked."""
-    goal = {"archetype": "custom", "thing": "commander", "win": {"commander_damage": 100},
-            "disruption": {"commander_removal": 0.5, "from_turn": 1}}
-    report = simulate(deck(SOL_RING, lands=98), goal, games=20)
-
-    if report["disruption"]["landed"] > 0:
-        # Should be a number between 0 and 1
-        rate = report["disruption"]["win_rate_after_event"]
-        assert isinstance(rate, (int, float)) or rate is None
+# --- Interaction while online ---
 
 
-def test_interaction_while_online():
-    """Deck with removal and protection shows interaction_while_online."""
-    goal = {"archetype": "custom", "thing": "commander", "win": NEVER}
-    with_interaction = deck(SWORDS, SWORDS, SWORDS, lands=96)
-    report = simulate(with_interaction, goal, games=10)
-
-    # If commander comes online, interaction metrics should be available
-    if report["thing"]["online_rate"] > 0:
-        assert report["thing"]["interaction_while_online"]["removal"] >= 0
-        assert report["thing"]["interaction_while_online"]["protection"] >= 0
-
-
-def test_covered_rate_makes_sense():
-    """covered_rate is between 0 and 1 when thing is online, None/0 when never online."""
-    goal = {"archetype": "custom", "thing": "commander", "win": NEVER}
-    report = simulate(deck(), goal, games=10)
-
-    covered = report["thing"]["covered_rate"]
-    if report["thing"]["online_rate"] == 0:
-        assert covered is None or covered == 0
-    else:
-        assert covered is None or (0 <= covered <= 1)
+def test_interaction_removal_and_protection():
+    """Deck with removal and protection cards: metrics > 0, covered_rate in range."""
+    remv = [card(f"Bolt {i}", "Instant", "Destroy target creature.", mana_cost="{G}")
+            for i in range(30)]
+    prot = [card(f"Shield {i}", "Instant",
+                  "Target creature you control gains hexproof until end of turn.",
+                  mana_cost="{G}")
+            for i in range(30)]
+    t = simulate(deck(*remv, *prot), NEVER_GOAL, games=30)["thing"]
+    assert t["interaction_while_online"]["removal"] > 1
+    assert t["interaction_while_online"]["protection"] > 1
+    assert t["interaction_while_online"]["counterspell"] == 0.0
+    assert 0.5 < t["covered_rate"] <= 1.0
 
 
-def test_stalled_rate_with_low_lands():
-    """Deck with few lands shows stalled rate."""
-    goal = {"archetype": "go_wide"}
-    mana_poor = deck(BEAR, lands=20)
-    report = simulate(mana_poor, goal, games=20)
-
-    # Very few lands should show some stalled games
-    assert report["setup"]["stalled_rate"] >= 0
+def test_covered_rate_none_when_thing_never_online():
+    """Thing that never comes online: covered_rate is None."""
+    goal = {"archetype": "custom", "thing": {"count": "creature", "min": 50}, "win": NEVER}
+    t = simulate(deck(), goal, games=5)["thing"]
+    assert t["covered_rate"] is None
+    assert t["online_rate"] == 0.0
 
 
-def test_stalled_rate_with_all_lands():
-    """All-lands deck has 0 stalled rate."""
-    goal = {"archetype": "go_wide"}
-    report = simulate(deck(), goal, games=20)
-    assert report["setup"]["stalled_rate"] == 0.0
+# --- Stall and late reasons ---
 
 
-def test_games_by_turn_tracking():
-    """games_by_turn reflects how many games survive to each turn."""
-    report = simulate(deck(), GO_WIDE, games=20, turn_cap=5)
-    games_by_turn = report["setup"]["games_by_turn"]
-
-    # First turn should be all games
-    assert games_by_turn[0] == 20
-    # Later turns should be <= earlier (games end)
-    for i in range(len(games_by_turn) - 1):
-        assert games_by_turn[i + 1] <= games_by_turn[i]
+def test_stall_with_many_creatures():
+    """Deck with 79 creatures and 20 lands: stalled_rate > 0.2, land_light > 0.5."""
+    bears = [card(f"Bear {i}", "Creature — Bear", "", mana_cost="{1}{G}", power=2.0)
+             for i in range(79)]
+    r = simulate(deck(*bears, lands=20), GO_WIDE, games=50)
+    assert r["setup"]["stalled_rate"] > 0.2
+    assert r["commander"]["late_reasons"]["land_light"] > 0.5
 
 
-def test_late_reasons_land_light():
-    """Deck with few lands shows land_light in late_reasons."""
-    mana_poor = deck(BEAR, lands=15)
-    report = simulate(mana_poor, GO_WIDE, games=20)
+def test_stall_all_lands_is_zero():
+    """All-lands deck: stalled_rate == 0.0."""
+    r = simulate(deck(), GO_WIDE, games=20)
+    assert r["setup"]["stalled_rate"] == 0.0
 
-    if report["commander"]["cast_rate"] < 1.0:
-        # If not always cast, late_reasons should have entries
-        assert len(report["commander"]["late_reasons"]) > 0
+
+def test_color_screw_blue_commander_all_forests():
+    """Blue commander over all Forests: late_reasons == {'color_screw': 1.0}."""
+    blue = dataclasses.replace(commander("{2}{U}{U}", 4.0, "Blue Commander"),
+                               color_identity=frozenset("GU"))
+    d = ResolvedDeck(commanders=(blue,), cards=((99, forest()),))
+    r = simulate(d, GO_WIDE, games=10)
+    assert r["commander"]["late_reasons"] == {"color_screw": 1.0}

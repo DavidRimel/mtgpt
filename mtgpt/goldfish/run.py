@@ -194,14 +194,19 @@ def _ratio(n, total):
     return round(n / total, 4) if total else None
 
 
+# Sentinel value to distinguish padding from genuine None
+_MISSING = object()
+
+
 def _delta(a, b):
     """Compare two reports, returning each metric's before, after, and difference.
 
     - For dicts: iterate union of keys, treating missing keys as 0 for numbers.
     - For numbers: after - before (rounded to 4 places).
-    - For lists: diff elementwise.
+    - For lists: diff elementwise, padding shorter list with _MISSING (treated as 0).
     - If exactly one side is None and the other a number, delta is None (visible change).
     - Exclude bools and the keys 'seed', 'games', 'turn_cap'.
+    - One-sided dicts and lists are diffed against empty dict / list of _MISSING.
     """
     out = {}
     all_keys = set(a.keys()) | set(b.keys())
@@ -220,9 +225,12 @@ def _delta(a, b):
             nested = _delta(before, after)
             if nested:
                 out[key] = nested
-        # Both lists: elementwise diff
+        # Both lists: elementwise diff, pad to same length
         elif isinstance(before, list) and isinstance(after, list):
-            out[key] = [_diff_pair(bv, av) for bv, av in zip(before, after)]
+            max_len = max(len(before), len(after))
+            before_padded = list(before) + [_MISSING] * (max_len - len(before))
+            after_padded = list(after) + [_MISSING] * (max_len - len(after))
+            out[key] = [_diff_pair(bv, av) for bv, av in zip(before_padded, after_padded)]
         # Both numeric (not bool)
         elif _is_numeric(before) and _is_numeric(after):
             out[key] = round(after - before, 4)
@@ -234,6 +242,22 @@ def _delta(a, b):
             # Both are None
             elif before is None and after is None:
                 out[key] = None
+        # One key is missing and the other is dict: diff against empty dict
+        elif not before_exists and isinstance(after, dict):
+            nested = _delta({}, after)
+            if nested:
+                out[key] = nested
+        elif isinstance(before, dict) and not after_exists:
+            nested = _delta(before, {})
+            if nested:
+                out[key] = nested
+        # One key is missing and the other is list: diff against list of _MISSING
+        elif not before_exists and isinstance(after, list):
+            padded_before = [_MISSING] * len(after)
+            out[key] = [_diff_pair(bv, av) for bv, av in zip(padded_before, after)]
+        elif isinstance(before, list) and not after_exists:
+            padded_after = [_MISSING] * len(before)
+            out[key] = [_diff_pair(bv, av) for bv, av in zip(before, padded_after)]
         # One key is missing and the other is numeric: treat missing as 0
         elif not before_exists and _is_numeric(after):
             out[key] = round(after - 0, 4)
@@ -249,13 +273,33 @@ def _is_numeric(x):
 
 
 def _diff_pair(before, after):
-    """Diff two values in a list elementwise."""
+    """Diff two values in a list elementwise.
+
+    _MISSING (from padding) is treated as 0 when compared with a number.
+    Genuine None is handled normally: if one side is None and other is numeric, return None.
+    """
     if _is_numeric(before) and _is_numeric(after):
         return round(after - before, 4)
-    # One is None and the other is numeric
-    if (before is None and _is_numeric(after)) or (after is None and _is_numeric(before)):
+    # _MISSING (padding) vs numeric: treat _MISSING as 0
+    if before is _MISSING and _is_numeric(after):
+        return round(after - 0, 4)
+    if after is _MISSING and _is_numeric(before):
+        return round(0 - before, 4)
+    # Genuine None vs numeric: return None (visible change)
+    if before is None and _is_numeric(after):
+        return None
+    if after is None and _is_numeric(before):
         return None
     # Both None
     if before is None and after is None:
         return None
+    # Both _MISSING
+    if before is _MISSING and after is _MISSING:
+        return 0
+    # One _MISSING (padding) and other None (genuine)
+    if before is _MISSING and after is None:
+        return None
+    if before is None and after is _MISSING:
+        return None
+    # Other cases
     return None
