@@ -173,6 +173,14 @@ def test_delta_handles_none_in_lists():
     assert delta["mana_by_turn"] == [0.0, 0.5, None, 0.0]
 
 
+def test_delta_leaves_out_lists_of_names():
+    from mtgpt.goldfish.run import _delta
+    before = {"notes": {"unmodeled": ["A", "B"]}, "x": 1}
+    after = {"notes": {"unmodeled": ["A", "C", "D"]}, "x": 2}
+    assert _delta(before, after) == {"x": 1}
+    assert _delta({}, {"names": ["A"]}) == {}
+
+
 # --- Disruption recovery ---
 
 
