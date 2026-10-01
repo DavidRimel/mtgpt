@@ -34,9 +34,34 @@ def test_interaction_alone_is_held():
     assert choose(s) == {"pass": True}
 
 
-def test_untapped_land_is_played_before_a_tapped_one():
+def test_tapped_land_is_played_when_the_untapped_one_casts_nothing_more():
     s = rigged(GUILDGATE, hand=["Gate", "Forest"])
+    assert choose(s) == {"play_land": "Gate"}
+
+
+def test_untapped_land_is_played_when_it_casts_more():
+    bear = card("Grizzly Bears", "Creature — Bear", "", mana_cost="{1}{G}", power=2.0)
+    s = rigged(GUILDGATE, bear, hand=["Gate", "Forest", "Grizzly Bears"], lands_in_play=1)
     assert choose(s) == {"play_land": "Forest"}
+
+
+def test_tapped_land_on_a_turn_the_untapped_one_only_floats_mana():
+    # Three lands out and a 3-drop in hand: the untapped fourth land adds mana
+    # nothing can spend, so the tapped land goes down now.
+    bear = card("Grizzly Bears", "Creature — Bear", "", mana_cost="{2}{G}", power=2.0)
+    s = rigged(GUILDGATE, bear, hand=["Gate", "Forest", "Grizzly Bears"], lands_in_play=3)
+    s.command_zone = []
+    assert choose(s) == {"play_land": "Gate"}
+
+
+def test_land_choice_never_casts_less_than_untapped_first():
+    # Only the untapped land lets Bears resolve this turn, so it must be chosen
+    # and Bears must follow.
+    bear = card("Grizzly Bears", "Creature — Bear", "", mana_cost="{1}{G}", power=2.0)
+    s = rigged(GUILDGATE, bear, hand=["Gate", "Forest", "Grizzly Bears"], lands_in_play=1)
+    s.command_zone = []
+    apply(s, choose(s), in_place=True)
+    assert play_out_turn(s) == ["Grizzly Bears"]
 
 
 def test_tutor_finds_the_missing_combo_piece():

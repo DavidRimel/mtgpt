@@ -14,7 +14,7 @@ cards, which is what makes a before/after comparison mean something.
 from __future__ import annotations
 
 from ..goal import condition_names
-from .engine import GameState, apply, find_card, legal_actions, win_label
+from .engine import GameState, apply, available_mana, find_card, legal_actions, win_label
 
 RAMP, COMMANDER, ENGINE, VALUE, OTHER = range(5)
 #: Ranks below every tier: a `hold` card cast because it wins this turn.
@@ -93,18 +93,53 @@ def _wins_if_cast(state: GameState, action: dict) -> bool:
 
 
 def _pick_land(state: GameState, lands: list[dict]) -> dict:
-    """An untapped land that adds a new color, then any untapped land, then a
-    tapped one. An MDFC is played as a land only when nothing else is."""
+    """A tapped land on a turn it costs nothing, otherwise an untapped one.
+
+    When the hand holds both, each is tried on a copy of the game and the turn
+    is played out: the tapped land goes down whenever it spends as much mana as
+    the untapped one would, so the untapped land is saved for a turn that needs
+    it. Within each kind, a land adding a missing color comes first. An MDFC is
+    played as a land only when nothing else is. Holding up instant-speed mana
+    does not count, because the sim's disruption answers cost nothing.
+    """
     have = {c for p in state.battlefield if p.is_land and p.card is not None
             for c in state.cards[p.card].effect.land_colors}
 
+    def card_of(action):
+        return state.cards[find_card(state, action["play_land"], state.hand)]
+
     def score(action):
-        idx = find_card(state, action["play_land"], state.hand)
-        card = state.cards[idx]
+        card = card_of(action)
         new_colors = len(card.effect.land_colors - have)
         return (card.is_mdfc_land, card.effect.enters_tapped, -new_colors, card.name)
 
-    return min(lands, key=score)
+    ranked = sorted(lands, key=score)
+    plain = [a for a in ranked if not card_of(a).is_mdfc_land]
+    untapped = [a for a in plain if not card_of(a).effect.enters_tapped]
+    tapped = [a for a in plain if card_of(a).effect.enters_tapped]
+    if untapped and tapped and (
+            not _anything_affordable(state)
+            or _spend_after(state, tapped[0]) >= _spend_after(state, untapped[0])):
+        return tapped[0]
+    return ranked[0]
+
+
+def _anything_affordable(state: GameState) -> bool:
+    """Could one more untapped mana pay for anything? A shortcut past the
+    look-ahead: when no card costs that little, the tapped land is free."""
+    budget = available_mana(state) + 1
+    return any(not state.cards[i].is_land and state.cards[i].mana_value + state.tax.get(i, 0) <= budget
+               for i in state.hand + state.command_zone)
+
+
+def _spend_after(state: GameState, land: dict) -> int:
+    """Mana the policy spends this turn if it plays `land` now (on a copy)."""
+    after = apply(state, land)
+    while True:
+        action = choose(after)
+        if "pass" in action:
+            return sum(after.spent_this_turn.values())
+        apply(after, action, in_place=True)
 
 
 def _tutor_choice(state: GameState, legal: list[dict]) -> dict:
