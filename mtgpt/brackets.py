@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .classify import classify_deck
-from .models import Function, ResolvedDeck, Severity, Violation
+from .models import Card, Function, ResolvedDeck, Severity, Violation
 
 F = Function
 
@@ -82,22 +82,35 @@ def check(
     rule = RULES[target]
     tags = tags if tags is not None else classify_deck(deck)
 
-    game_changers = tuple(
-        card.name for _, card in deck.cards if card.is_game_changer
-    ) + tuple(c.name for c in deck.commanders if c.is_game_changer)
+    # Every scan considers the command zone, not just the 99: a commander that is
+    # itself a tutor or a land wipe must count the same as one in the deck.
+    scanned: tuple[tuple[int, Card], ...] = tuple(deck.cards) + tuple(
+        (1, commander) for commander in deck.commanders
+    )
+
+    if tags is not None:
+        scanned_names = {card.name for _, card in scanned}
+        missing = scanned_names - set(tags)
+        if missing:
+            raise ValueError(
+                f"tags is missing {len(missing)} card(s) present in the deck: "
+                f"{', '.join(sorted(missing)[:5])}. Pass classify_deck(deck) or omit tags."
+            )
+
+    game_changers = tuple(card.name for _, card in scanned if card.is_game_changer)
 
     mld = tuple(
         card.name
-        for _, card in deck.cards
+        for _, card in scanned
         if F.MASS_LAND_DENIAL in tags.get(card.name, frozenset())
     )
     extra_turns = tuple(
         card.name
-        for _, card in deck.cards
+        for _, card in scanned
         if F.EXTRA_TURNS in tags.get(card.name, frozenset())
     )
     tutor_count = sum(
-        qty for qty, card in deck.cards if F.TUTOR in tags.get(card.name, frozenset())
+        qty for qty, card in scanned if F.TUTOR in tags.get(card.name, frozenset())
     )
 
     findings: list[Violation] = []

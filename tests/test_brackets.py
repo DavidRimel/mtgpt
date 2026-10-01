@@ -136,3 +136,59 @@ def test_invalid_bracket_raises():
 def test_report_carries_target_name():
     assert check(deck_of([card("Bear")]), target=1).target_name == "Exhibition"
     assert check(deck_of([card("Bear")]), target=5).target_name == "cEDH"
+
+
+def test_exactly_two_extra_turn_spells_do_not_warn():
+    """The threshold is 3; two must stay silent or the constant is unpinned."""
+    turns = [card(f"Warp {i}", "Sorcery", "Target player takes an extra turn after this one.")
+             for i in range(2)]
+    assert "extra_turns" not in codes(check(deck_of(turns), target=2))
+
+
+def test_exactly_three_extra_turn_spells_warn():
+    turns = [card(f"Warp {i}", "Sorcery", "Target player takes an extra turn after this one.")
+             for i in range(3)]
+    assert "extra_turns" in codes(check(deck_of(turns), target=2))
+
+
+def test_exactly_three_tutors_do_not_warn_at_bracket_two():
+    """The threshold is 4; three must stay silent."""
+    tutors = [card(f"Tutor {i}", "Sorcery",
+                   "Search your library for a card, put that card into your hand, then shuffle.")
+              for i in range(3)]
+    assert "tutor_density" not in codes(check(deck_of(tutors), target=2))
+
+
+def test_a_report_with_only_warnings_is_still_compliant():
+    """Warnings inform; they must never block. An error that doesn't block would
+    be equally wrong, so pin the invariant in both directions."""
+    turns = [card(f"Warp {i}", "Sorcery", "Target player takes an extra turn after this one.")
+             for i in range(3)]
+    report = check(deck_of(turns), target=2)
+    assert [f.severity for f in report.findings] == [Severity.WARNING]
+    assert report.compliant is True
+
+
+def test_a_commander_that_is_itself_a_tutor_is_counted():
+    tutor_commander = card(
+        "Tutor Lord", "Legendary Creature — Avatar",
+        "Search your library for a card, put that card into your hand, then shuffle.",
+    )
+    deck = ResolvedDeck(commanders=(tutor_commander,), cards=((1, card("Bear")),))
+    assert check(deck, target=2).tutor_count == 1
+
+
+def test_a_commander_that_is_mass_land_denial_is_counted():
+    mld_commander = card("Land Hater", "Legendary Creature — Avatar", "Destroy all lands.")
+    deck = ResolvedDeck(commanders=(mld_commander,), cards=((1, card("Bear")),))
+    report = check(deck, target=2)
+    assert report.mass_land_denial == ("Land Hater",)
+    assert "mass_land_denial" in codes(report)
+
+
+def test_partial_tags_raises_rather_than_reporting_a_clean_bracket():
+    tutors = [card(f"Tutor {i}", "Sorcery",
+                   "Search your library for a card, put that card into your hand, then shuffle.")
+              for i in range(5)]
+    with pytest.raises(ValueError, match="missing"):
+        check(deck_of(tutors), tags={}, target=2)
