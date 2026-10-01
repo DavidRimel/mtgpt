@@ -275,6 +275,11 @@
       "note": "landfall: one mana of any color",
       "reviewed": "2026-10-01"
     },
+    "Lotus Petal": {
+      "status": "parsed",
+      "note": "one mana of any color once (sacrificed)",
+      "reviewed": "2026-10-01"
+    },
     "Mana Drain": {
       "status": "parsed",
       "note": "counterspell held as an answer; its mana next turn is not modeled",
@@ -348,6 +353,11 @@
     "Ruinous Ultimatum": {
       "status": "parsed",
       "note": "one-sided sweeper held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Silence": {
+      "status": "parsed",
+      "note": "opponents can't cast this turn: held as an answer to a win attempt",
       "reviewed": "2026-10-01"
     },
     "Sink into Stupor // Soporific Springs": {

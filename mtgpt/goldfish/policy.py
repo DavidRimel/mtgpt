@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from ..goal import condition_names
 from .engine import (GameState, _alt_costs, apply, available_mana, devotion_to_blue, find_card,
-                     legal_actions, win_label)
+                     legal_actions, production, win_label)
 from .mana import parse_cost
 
 RAMP, COMMANDER, ENGINE, VALUE, OTHER = range(5)
@@ -60,6 +60,8 @@ def choose(state: GameState) -> dict:
         if "cast" not in action:
             continue
         idx = _castable_index(state, action["cast"])
+        if state.cards[idx].is_commander and _hold_commander_for_kill(state, idx):
+            continue
         rank = tier(state, idx)
         if rank == "hold":
             # A look-ahead never nests another: inside one, held cards stay held.
@@ -127,6 +129,30 @@ def _wins_if_cast(state: GameState, action: dict) -> bool:
     wins = after.checkpoints["win"] == state.turn
     state.lookahead_cache[key] = wins
     return wins
+
+
+def _hold_commander_for_kill(state: GameState, cmd: int) -> bool:
+    """Hold the commander a turn when it can't win the turn it lands but can
+    next turn alongside a finisher already in hand — so it never sits exposed
+    to a round of removal. Only when removal is a risk."""
+    if state.looking_ahead:
+        return False
+    d = state.goal.disruption
+    if not state.disruption or d is None or d.commander_removal <= 0:
+        return False
+    win_names = set(condition_names(state.goal.win))
+    finishers = [i for i in state.hand if state.cards[i].name in win_names]
+    if not finishers:
+        return False
+    alt = state.cards[cmd].effect.alt_cost
+    alt_size = sum(parse_cost(alt)[0:1]) + len(parse_cost(alt)[1]) if alt else None
+    cheapest = min(state.cards[i].mana_value if alt_size is None else min(state.cards[i].mana_value, alt_size)
+                   for i in finishers)
+    need = state.cards[cmd].mana_value + state.tax.get(cmd, 0) + cheapest
+    if available_mana(state) >= need:
+        return False  # it can win this turn: cast it
+    next_turn = production(state) + state.treasures + (1 if any(state.cards[i].is_land for i in state.hand) else 0)
+    return next_turn >= need
 
 
 def _combo_halves(state: GameState) -> list[str]:

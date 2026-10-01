@@ -240,3 +240,23 @@ def test_a_tutor_completes_the_oracle_combo_first():
     s.command_zone = []
     s = apply(s, {"cast": "Demonic Tutor"})
     assert choose(s) == {"tutor": "Demonic Consultation"}
+
+
+def test_commander_is_held_for_a_same_turn_kill_when_removal_threatens():
+    finisher = card("Finisher", "Sorcery", "", mana_cost="{3}")
+    goal = {"archetype": "custom", "thing": "commander", "win": {"cast": "Finisher"},
+            "disruption": {"commander_removal": 0.2, "from_turn": 1}}
+    s = rigged(finisher, hand=["Finisher", "Forest"], lands_in_play=4, goal=goal)
+    s.turn = s.goal.commander_turn
+    s = apply(s, choose(s))  # land: 5 mana, commander 4 + finisher 3 needs 7
+    assert choose(s) != {"cast": "Test Commander"}
+
+
+def test_commander_is_not_held_without_removal_risk():
+    finisher = card("Finisher", "Sorcery", "", mana_cost="{3}")
+    goal = {"archetype": "custom", "thing": "commander", "win": {"cast": "Finisher"}}
+    s = rigged(finisher, hand=["Finisher", "Forest"], lands_in_play=4, goal=goal)
+    s.turn = s.goal.commander_turn
+    s = apply(s, choose(s))
+    from mtgpt.goldfish.policy import _hold_commander_for_kill
+    assert not _hold_commander_for_kill(s, s.command_zone[0])
