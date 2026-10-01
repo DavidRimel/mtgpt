@@ -10,7 +10,9 @@ Each subcommand is one operation, independently callable:
     python3 -m mtgpt.cli validate --file deck.txt
     python3 -m mtgpt.cli audit    --file deck.txt
     python3 -m mtgpt.cli bracket  --file deck.txt --target 3
-    python3 -m mtgpt.cli report   --file deck.txt --bracket 3 [--text]
+    python3 -m mtgpt.cli report   --file deck.txt --bracket 3 [--text] [--combos]
+    python3 -m mtgpt.cli combos   --file deck.txt
+    python3 -m mtgpt.cli card-combos "Thassa's Oracle"
 
 Output is JSON in a fixed envelope so results feed the next decision:
 
@@ -67,6 +69,10 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "report":
             cmd.add_argument("--bracket", type=int, default=3, choices=[1, 2, 3, 4, 5])
             cmd.add_argument("--text", action="store_true", help="Human-readable output")
+            cmd.add_argument(
+                "--combos", action="store_true",
+                help="Fetch Commander Spellbook combos and enforce them in the bracket check",
+            )
 
     synergy = sub.add_parser("synergy", help="EDHREC candidate cards for a commander")
     synergy.add_argument("commander")
@@ -75,6 +81,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     themes_cmd = sub.add_parser("themes", help="How a commander is usually built")
     themes_cmd.add_argument("commander")
+
+    combos_cmd = sub.add_parser("combos", help="Combos a decklist assembles")
+    src = combos_cmd.add_mutually_exclusive_group()
+    src.add_argument("--file")
+    src.add_argument("--stdin", action="store_true")
+
+    card_combos_cmd = sub.add_parser("card-combos", help="Combos that use one card")
+    card_combos_cmd.add_argument("name")
 
     return parser
 
@@ -133,6 +147,13 @@ def main(argv: list[str] | None = None, client: ScryfallClient | None = None) ->
                 args.commander, variant=args.variant, limit=args.limit, client=client))
         elif command == "themes":
             _emit(command, api.commander_themes(args.commander))
+        elif command == "card-combos":
+            _emit(command, api.card_combos(args.name))
+        elif command == "combos":
+            text = _read_deck_text(args, command)
+            if text is None:
+                return EXIT_USER_ERROR
+            _emit(command, api.deck_combos(text, client=client))
         else:
             text = _read_deck_text(args, command)
             if text is None:
@@ -146,7 +167,9 @@ def main(argv: list[str] | None = None, client: ScryfallClient | None = None) ->
             elif command == "bracket":
                 _emit(command, api.bracket_check(text, target=args.target, client=client))
             elif command == "report":
-                report = api.full_report(text, target=args.bracket, client=client)
+                report = api.full_report(
+                    text, target=args.bracket, client=client, combos=args.combos
+                )
                 if args.text:
                     print(api.render_report(report))
                 else:

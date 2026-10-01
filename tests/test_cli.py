@@ -14,7 +14,7 @@ def test_every_subcommand_is_registered():
     assert actions, "expected a subcommand dest named 'command'"
     assert set(actions[0].choices) == {
         "card", "search", "classify", "read", "validate", "audit", "bracket", "report",
-        "synergy", "themes",
+        "synergy", "themes", "combos", "card-combos",
     }
 
 
@@ -92,7 +92,7 @@ def test_bracket_passes_target_through(monkeypatch):
 
 def test_report_text_mode_renders_instead_of_json(monkeypatch, capsys):
     monkeypatch.setattr(cli.api, "full_report",
-                        lambda text, target=3, client=None: {"stub": True})
+                        lambda text, target=3, client=None, combos=False: {"stub": True})
     monkeypatch.setattr(cli.api, "render_report", lambda report: "RENDERED REPORT")
     assert cli.main(["report", "--file", str(FIXTURES / "sample_deck.txt"), "--text"]) == 0
     out = capsys.readouterr().out

@@ -3,9 +3,10 @@
 Layer 1 decides the four constraints that card data alone can settle: Game
 Changer count, mass land denial, extra-turn density, and tutor density.
 
-Two-card infinite combo detection needs Commander Spellbook and arrives in
-Layer 2. Until then every report states that gap in `deferred_checks`, because
-a bracket verdict that silently skips a rule is worse than no verdict.
+Two-card infinite combo detection needs Commander Spellbook data, supplied via
+the optional `combos` argument to `check`. When it is not supplied, the report
+states that gap in `deferred_checks`, because a bracket verdict that silently
+skips a rule is worse than no verdict.
 """
 
 from __future__ import annotations
@@ -34,21 +35,24 @@ class BracketRule:
     allow_mass_land_denial: bool
     watch_extra_turns: bool
     tutor_guidance: str
+    allow_two_card_combos: bool
 
 
 RULES: dict[int, BracketRule] = {
-    1: BracketRule(1, "Exhibition", 0, False, True, "minimal"),
-    2: BracketRule(2, "Core", 0, False, True, "sparse"),
-    3: BracketRule(3, "Upgraded", 3, False, True, "unrestricted"),
-    4: BracketRule(4, "Optimized", None, True, False, "unrestricted"),
-    5: BracketRule(5, "cEDH", None, True, False, "unrestricted"),
+    1: BracketRule(1, "Exhibition", 0, False, True, "minimal", False),
+    2: BracketRule(2, "Core", 0, False, True, "sparse", False),
+    3: BracketRule(3, "Upgraded", 3, False, True, "unrestricted", False),
+    4: BracketRule(4, "Optimized", None, True, False, "unrestricted", True),
+    5: BracketRule(5, "cEDH", None, True, False, "unrestricted", True),
 }
 
-#: Checks Layer 1 cannot perform, reported so the gap stays visible.
-DEFERRED_CHECKS = (
-    "Two-card infinite combo detection requires Commander Spellbook (Layer 2).",
+#: Checks Layer 1 cannot perform without combo data.
+COMBO_DEFERRED = (
+    "Two-card infinite combo detection requires Commander Spellbook (not supplied)."
+)
+EXTRA_TURN_APPROXIMATION = (
     "Chained extra turns are approximated by counting extra-turn spells, not by "
-    "detecting repeatability.",
+    "detecting repeatability."
 )
 
 
@@ -63,7 +67,7 @@ class BracketReport:
     tutor_count: int
     mass_land_denial: tuple[str, ...]
     extra_turns: tuple[str, ...]
-    deferred_checks: tuple[str, ...] = DEFERRED_CHECKS
+    deferred_checks: tuple[str, ...]
 
     @property
     def compliant(self) -> bool:
@@ -75,6 +79,7 @@ def check(
     deck: ResolvedDeck,
     tags: dict[str, frozenset[Function]] | None = None,
     target: int = 3,
+    combos: tuple[dict, ...] | None = None,
 ) -> BracketReport:
     """Compare the deck against `target` bracket's constraints."""
     if target not in RULES:
@@ -166,6 +171,26 @@ def check(
             )
         )
 
+    two_card = tuple(c for c in (combos or ()) if c.get("card_count") == 2)
+    if combos is not None and two_card and not rule.allow_two_card_combos:
+        names = "; ".join(" + ".join(c["cards"]) for c in two_card[:3])
+        findings.append(
+            Violation(
+                severity=Severity.ERROR,
+                code="two_card_combo",
+                message=(
+                    f"{len(two_card)} two-card infinite combo(s) detected, which bracket "
+                    f"{rule.number} ({rule.name}) excludes: {names}."
+                ),
+            )
+        )
+
+    deferred = (
+        (EXTRA_TURN_APPROXIMATION,)
+        if combos is not None
+        else (COMBO_DEFERRED, EXTRA_TURN_APPROXIMATION)
+    )
+
     return BracketReport(
         target=rule.number,
         target_name=rule.name,
@@ -174,4 +199,5 @@ def check(
         tutor_count=tutor_count,
         mass_land_denial=mld,
         extra_turns=extra_turns,
+        deferred_checks=deferred,
     )

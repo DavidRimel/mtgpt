@@ -192,3 +192,32 @@ def test_partial_tags_raises_rather_than_reporting_a_clean_bracket():
               for i in range(5)]
     with pytest.raises(ValueError, match="missing"):
         check(deck_of(tutors), tags={}, target=2)
+
+
+def test_combo_deferred_note_disappears_when_combos_are_supplied():
+    report = check(deck_of([card("Bear")]), target=2, combos=())
+    assert not any("Spellbook" in note for note in report.deferred_checks)
+
+
+def test_combo_note_present_when_combos_are_not_supplied():
+    report = check(deck_of([card("Bear")]), target=2)
+    assert any("Spellbook" in note for note in report.deferred_checks)
+
+
+def test_two_card_combo_is_an_error_below_bracket_four():
+    combos = [{"card_count": 2, "cards": ("Thassa's Oracle", "Demonic Consultation")}]
+    report = check(deck_of([card("Bear")]), target=2, combos=combos)
+    assert "two_card_combo" in [f.code for f in report.findings]
+    assert report.compliant is False
+
+
+def test_two_card_combo_is_allowed_at_bracket_four():
+    combos = [{"card_count": 2, "cards": ("Thassa's Oracle", "Demonic Consultation")}]
+    report = check(deck_of([card("Bear")]), target=4, combos=combos)
+    assert "two_card_combo" not in [f.code for f in report.findings]
+
+
+def test_three_card_combo_is_not_flagged_as_a_two_card_combo():
+    combos = [{"card_count": 3, "cards": ("A", "B", "C")}]
+    report = check(deck_of([card("Bear")]), target=2, combos=combos)
+    assert "two_card_combo" not in [f.code for f in report.findings]

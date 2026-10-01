@@ -197,19 +197,105 @@ def bracket_check(
 
 
 def full_report(
-    text: str, *, target: int = 3, client: ScryfallClient | None = None
+    text: str,
+    *,
+    target: int = 3,
+    client: ScryfallClient | None = None,
+    combos: bool = False,
+    spellbook_client=None,
 ) -> dict:
-    """Everything composed, for when the agent wants one complete picture."""
+    """Everything composed, for when the agent wants one complete picture.
+
+    `combos` defaults to false so `report` stays one cheap Scryfall-only call.
+    When true, it queries Commander Spellbook once per distinct deck card
+    (roughly 7 seconds for a 100-card deck) and the bracket verdict enforces
+    two-card infinite combos rather than deferring that check.
+    """
     deck = _resolved(text, client)
     tags = classify_deck(deck)
-    return {
+    detected: tuple[dict, ...] | None = None
+    combos_section: dict | None = None
+    if combos:
+        from .spellbook import SpellbookClient, combos_in_deck
+
+        names = [card.name for _, card in deck.cards] + [c.name for c in deck.commanders]
+        source = spellbook_client or SpellbookClient()
+        variants: list[dict] = []
+        for name in names:
+            variants.extend(source.variants_for_card(name))
+        detected = combos_in_deck(variants, names)
+        combos_section = {
+            "count": len(detected),
+            "two_card_count": sum(1 for c in detected if c["card_count"] == 2),
+            "combos": [
+                c | {"cards": list(c["cards"]), "produces": list(c["produces"])}
+                for c in detected
+            ],
+        }
+
+    result = {
         "commanders": [c.name for c in deck.commanders],
         "color_identity": sorted(deck.command_zone_identity),
         "total_cards": deck.total_with_commanders,
         "violations": _violations(validate(deck)),
         "audit": _audit_dict(audit(deck, tags=tags)),
-        "bracket": _bracket_dict(check(deck, tags=tags, target=target)),
+        "bracket": _bracket_dict(check(deck, tags=tags, target=target, combos=detected)),
         "tags": _tags_dict(tags),
+    }
+    if combos_section is not None:
+        result["combos"] = combos_section
+    return result
+
+
+# --- Commander Spellbook operations -----------------------------------------
+
+
+def card_combos(name: str, *, spellbook_client=None) -> dict:
+    """Combos that use a given card."""
+    from .spellbook import SpellbookClient, parse_variant
+
+    source = spellbook_client or SpellbookClient()
+    variants = source.variants_for_card(name)
+    combos = [parse_variant(v) for v in variants]
+    return {
+        "card": name,
+        "count": len(variants),
+        "combos": [
+            c | {"cards": list(c["cards"]), "produces": list(c["produces"])}
+            for c in combos
+        ],
+    }
+
+
+def deck_combos(
+    text: str, *, client: ScryfallClient | None = None, spellbook_client=None
+) -> dict:
+    """Combos the deck actually assembles.
+
+    Querying Spellbook once per card that *could* participate in a combo would
+    require knowing the combos in advance, so this queries per distinct deck
+    card instead and keeps only the variants whose every piece is in the deck.
+    For a 100-card deck that is roughly 70 requests at 100ms apart, about 7
+    seconds — accepted for now; no caching or concurrency.
+    """
+    from .spellbook import SpellbookClient, combos_in_deck
+
+    deck = _resolved(text, client)
+    names = [card.name for _, card in deck.cards] + [c.name for c in deck.commanders]
+    source = spellbook_client or SpellbookClient()
+
+    variants: list[dict] = []
+    for name in names:
+        variants.extend(source.variants_for_card(name))
+
+    found = combos_in_deck(variants, names)
+    return {
+        "commanders": [c.name for c in deck.commanders],
+        "count": len(found),
+        "two_card_count": sum(1 for c in found if c["card_count"] == 2),
+        "combos": [
+            c | {"cards": list(c["cards"]), "produces": list(c["produces"])} for c in found
+        ],
     }
 
 
