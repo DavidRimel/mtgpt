@@ -176,7 +176,8 @@ it recovers from disruption (`disruption`).
      ```
 
      Choose only from the view's `legal_actions`; a tutor waits for
-     `{"tutor": "<name>"}`. The view's `mana_available` is mana you can spend
+     `{"tutor": "<name>"}`, and Enter the Infinite for `{"put_back": "<name>"}`
+     (the card put on top of your library). The view's `mana_available` is mana you can spend
      right now, while the `{"mana_available": N}` condition counts the board's
      per-turn production plus Treasures. **Never open the state file** — it holds the
      library order, which a player would not know. Read the view.
@@ -201,6 +202,13 @@ it recovers from disruption (`disruption`).
    For pilot, replay the same `--seed` and `--game` numbers against the new list.
 6. Report the differences and keep or revert the swap. Later iterations
    reuse the user's mode unless they ask to change it.
+
+Drawing from an empty library loses: the report's `loss` block gives the loss
+rate, the rounds, and the reason (`decked`). Enter the Infinite draws the whole
+library; the auto pilot casts it only when its look-ahead — playing out the rest
+of the round, extra turns included, with the mana left — ends in a win, and puts
+back a Nexus of Fate if it holds one. Give Omniscience `"alt_cost": "{0}"` so its
+free casting is modeled.
 
 Extra turns are full turns (untap, draw, land drop, main, combat) that keep the
 table-turn number: every turn count in the report is a full round of the table,

@@ -417,3 +417,8 @@ def test_goal_error_payload_names_the_field():
 def test_pilot_view_says_whether_this_is_an_extra_turn():
     view = api.goldfish_new(deck_text(), GO_WIDE, client=deck_client())["view"]
     assert (view["extra_turn"], view["extra_turns_pending"]) == (False, 0)
+
+
+def test_pilot_view_shows_put_back_and_loss():
+    view = api.goldfish_new(deck_text(), GO_WIDE, client=deck_client())["view"]
+    assert (view["pending_put_back"], view["loss_by"]) == (0, None)

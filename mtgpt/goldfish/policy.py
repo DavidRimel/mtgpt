@@ -26,6 +26,8 @@ _WINS_NOW = -1
 def choose(state: GameState) -> dict:
     """The action the heuristic takes in this state."""
     legal = legal_actions(state)
+    if state.pending_put_back:
+        return _put_back_choice(state)
     if state.pending_tutor is not None:
         return _tutor_choice(state, legal)
     lands = [a for a in legal if "play_land" in a]
@@ -39,7 +41,8 @@ def choose(state: GameState) -> dict:
         idx = _castable_index(state, action["cast"])
         rank = tier(state, idx)
         if rank == "hold":
-            if _wins_if_cast(state, action):
+            # A look-ahead never nests another: inside one, held cards stay held.
+            if not state.looking_ahead and _wins_if_cast(state, action):
                 options.append((_WINS_NOW, 0.0, action["cast"], action))
             continue
         if rank is not None:
@@ -54,6 +57,10 @@ def tier(state: GameState, idx: int):
     card = state.cards[idx]
     spec = state.goal.engine_for(card.name)
     if spec is not None and spec.priority == "hold":
+        return "hold"
+    # Drawing the whole library (Enter the Infinite) decks you two turns later
+    # unless the round it is cast in wins, so it is cast only when it does.
+    if card.effect.draw_library:
         return "hold"
     if card.is_commander:
         return COMMANDER
@@ -84,14 +91,37 @@ def _castable_index(state: GameState, name: str) -> int:
 
 
 def _wins_if_cast(state: GameState, action: dict) -> bool:
-    """Look ahead: would casting this, then ending the turn, win?"""
+    """Look ahead: cast this, play out the rest of the round with the policy —
+    the turn and any extra turns it brings — and report whether the round
+    ends in a win. Cached per turn and board, since choose() asks again after
+    every action while the card stays castable."""
+    key = (state.turn_index, action["cast"], available_mana(state), len(state.hand),
+           len(state.battlefield), state.land_played)
+    if key in state.lookahead_cache:
+        return state.lookahead_cache[key]
     after = apply(state, action)
-    while after.pending_tutor is not None:
-        after = apply(after, _tutor_choice(after, legal_actions(after)), in_place=True)
-    if win_label(after) is not None:
-        return True
-    after = apply(after, {"pass": True}, in_place=True)
-    return after.checkpoints["win"] == state.turn
+    after.looking_ahead = True
+    while not after.over and after.turn == state.turn:
+        apply(after, choose(after), in_place=True)
+    wins = after.checkpoints["win"] == state.turn
+    state.lookahead_cache[key] = wins
+    return wins
+
+
+def _put_back_choice(state: GameState) -> dict:
+    """After Enter the Infinite: put back a self-shuffling extra turn (Nexus
+    of Fate) to keep the loop going, else a land, else the least needed card."""
+    def score(idx):
+        card = state.cards[idx]
+        if card.effect.shuffle_self and card.effect.extra_turns:
+            return (0, 0, card.name)
+        if card.is_land:
+            return (1, 0, card.name)
+        rank = tier(state, idx)
+        rank = OTHER + 1 if rank in (None, "hold") else rank
+        return (2, -rank, card.name)
+
+    return {"put_back": state.cards[min(state.hand, key=score)].name}
 
 
 def _pick_land(state: GameState, lands: list[dict]) -> dict:

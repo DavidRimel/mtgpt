@@ -455,3 +455,54 @@ def test_extra_turn_state_round_trips():
     s = apply(apply(s, {"cast": "Time Stretch"}), PASS)
     data = to_dict(s)
     assert to_dict(from_dict(json.loads(json.dumps(data)))) == data
+
+
+# --- Enter the Infinite and decking ------------------------------------------
+
+ETI = card("Enter the Infinite", "Sorcery", "Draw cards equal to the number of cards in your "
+           "library, then put a card from your hand on top of your library. You have no maximum "
+           "hand size until your next turn.", mana_cost="{1}")
+
+
+def test_drawing_from_an_empty_library_loses():
+    s = rigged(lands_in_play=1)
+    s.command_zone = []
+    s.library = []
+    s = apply(s, PASS)
+    assert s.over and s.loss_by == "decked" and s.checkpoints["loss"] == 2
+    assert legal_actions(s) == []
+
+
+def test_enter_the_infinite_draws_everything_then_waits_for_a_put_back():
+    s = rigged(ETI, hand=["Enter the Infinite"], lands_in_play=1)
+    s.command_zone = []
+    library_size = len(s.library)
+    s = apply(s, {"cast": "Enter the Infinite"})
+    assert s.library == [] and s.pending_put_back == 1
+    legal = legal_actions(s)
+    assert PASS not in legal and {"put_back": "Forest"} in legal
+    s = apply(s, {"put_back": "Forest"})
+    assert [s.cards[i].name for i in s.library] == ["Forest"]
+    assert len(s.hand) == library_size - 1  # Enter the Infinite cast, library drawn, one put back
+    s = apply(s, PASS)  # turn 2 draws the Forest
+    assert not s.over and s.library == []
+    s = apply(s, PASS)  # turn 3 decks
+    assert s.loss_by == "decked" and s.checkpoints["loss"] == 3
+
+
+def test_put_back_nexus_keeps_the_loop_alive():
+    s = rigged(ETI, NEXUS, hand=["Enter the Infinite"], lands_in_play=2)
+    s.command_zone = []
+    s = apply(apply(s, {"cast": "Enter the Infinite"}), {"put_back": "Nexus of Fate"})
+    s = apply(s, PASS)  # turn 2 draws Nexus
+    s = apply(apply(s, {"cast": "Nexus of Fate"}), PASS)  # extra turn draws Nexus again
+    assert not s.over and s.extra_turn
+    assert "Nexus of Fate" in names(s, s.hand)
+
+
+def test_put_back_state_round_trips():
+    s = rigged(ETI, hand=["Enter the Infinite"], lands_in_play=1)
+    s.command_zone = []
+    s = apply(s, {"cast": "Enter the Infinite"})
+    data = to_dict(s)
+    assert to_dict(from_dict(json.loads(json.dumps(data)))) == data

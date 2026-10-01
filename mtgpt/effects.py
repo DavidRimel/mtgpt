@@ -61,6 +61,11 @@ _TUTOR = re.compile(
 _ENTERS_TAPPED = re.compile(r"enters(?: the battlefield)? tapped(?!\s+unless)", re.IGNORECASE)
 _POWER_BONUS = re.compile(r"(?:equipped|enchanted) creature gets \+(\d+)/", re.IGNORECASE)
 _WIPE_PROOF = re.compile(r"indestructible|phases? out", re.IGNORECASE)
+#: Enter the Infinite: "Draw cards equal to the number of cards in your library".
+_DRAW_LIBRARY = re.compile(r"draw cards equal to the number of cards in your library", re.IGNORECASE)
+#: "...then put a card from your hand on top of your library".
+_PUT_BACK = re.compile(r"put (a|one|two|three) cards? from your hand on top of your library",
+                       re.IGNORECASE)
 #: "Take an extra turn after this one", "takes two extra turns".
 _EXTRA_TURN_COUNT = re.compile(r"\btakes? (an|one|two|three|\d+) extra turns?", re.IGNORECASE)
 #: The card types a tutor restriction can name, matched against type lines.
@@ -114,6 +119,10 @@ class SimEffect:
     #: The spell shuffles itself into the library instead of the graveyard
     #: (Nexus of Fate, Beacon of Tomorrows).
     shuffle_self: bool = False
+    #: Draw the whole library (Enter the Infinite), then put this many cards
+    #: from hand back on top.
+    draw_library: bool = False
+    put_back: int = 0
 
     @property
     def is_ramp(self) -> bool:
@@ -127,7 +136,7 @@ class SimEffect:
         """True when the sim gives this card anything to do beyond its power."""
         return bool(
             self.is_ramp or self.draw_once or self.draw_per_turn or self.tutor
-            or self.power_bonus or self.held or self.extra_turns
+            or self.power_bonus or self.held or self.extra_turns or self.draw_library
         )
 
 
@@ -235,6 +244,8 @@ def effect_of(card: Card, identity: frozenset[str] = _ANY) -> SimEffect:
         wipe_proof="protection" in held and bool(_WIPE_PROOF.search(text)),
         extra_turns=_extra_turns(text),
         shuffle_self=is_spell and _shuffles_itself(card, text),
+        draw_library=bool(_DRAW_LIBRARY.search(text)),
+        put_back=_count(m.group(1)) if (m := _PUT_BACK.search(text)) else 0,
     )
 
 

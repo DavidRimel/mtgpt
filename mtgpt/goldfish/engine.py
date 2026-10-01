@@ -135,14 +135,22 @@ class GameState:
     treasures: int = 0
     #: Set while a tutor waits for its choice: the tutor's restriction.
     pending_tutor: str | None = None
+    #: Cards still to put from hand on top of the library (Enter the Infinite).
+    pending_put_back: int = 0
     triggers_this_turn: int = 0
     opponent_life_lost: float = 0.0
     commander_damage: float = 0.0
     cast_names: list[str] = field(default_factory=list)
     commander_cast_turn: int | None = None
     checkpoints: dict[str, int | None] = field(
-        default_factory=lambda: {"commander": None, "thing": None, "win": None})
+        default_factory=lambda: {"commander": None, "thing": None, "win": None, "loss": None})
     win_by: str | None = None
+    #: Why the game was lost ("decked"); None while it is not.
+    loss_by: str | None = None
+    #: True on the copy a policy look-ahead plays out. Not serialized.
+    looking_ahead: bool = False
+    #: Look-ahead results already computed this turn. Not serialized.
+    lookahead_cache: dict = field(default_factory=dict)
     mulligans: int = 0
     spent_this_turn: dict[str, int] = field(
         default_factory=lambda: dict.fromkeys(_SPEND_CATEGORIES, 0))
@@ -243,6 +251,8 @@ def legal_actions(state: GameState) -> list[dict]:
     tutor is waiting for its choice or the game is over."""
     if state.over:
         return []
+    if state.pending_put_back:
+        return [{"put_back": name} for name in _distinct(state, state.hand, lambda c: True)]
     if state.pending_tutor is not None:
         names = sorted({state.cards[i].name for i in state.library
                         if _tutor_matches(state.cards[i], state.pending_tutor)})
@@ -358,6 +368,8 @@ def apply(state: GameState, action: dict, *, in_place: bool = False) -> GameStat
         _play_land(s, action["play_land"])
     elif "cast" in action:
         _cast(s, action["cast"])
+    elif "put_back" in action:
+        _put_back(s, action["put_back"])
     elif "tutor" in action:
         _tutor(s, action["tutor"])
     elif "sacrifice" in action:
@@ -419,6 +431,9 @@ def _resolve(s: GameState, idx: int) -> None:
     for _ in range(effect.fetch_hand):
         _fetch_land(s, to_battlefield=False, tapped=False)
     _draw(s, effect.draw_once)
+    if effect.draw_library:
+        _draw(s, len(s.library))
+        s.pending_put_back = min(effect.put_back, len(s.hand))
     if effect.tutor and any(_tutor_matches(s.cards[i], effect.tutor) for i in s.library):
         s.pending_tutor = effect.tutor
 
@@ -457,9 +472,29 @@ def _fetch_land(s: GameState, *, to_battlefield: bool, tapped: bool) -> None:
 
 
 def _draw(s: GameState, n: int) -> None:
+    """Draw `n` cards. Drawing from an empty library loses the game."""
     for _ in range(n):
-        if s.library:
-            s.hand.append(s.library.pop(0))
+        if s.over:
+            return
+        if not s.library:
+            _lose(s, "decked")
+            return
+        s.hand.append(s.library.pop(0))
+
+
+def _lose(s: GameState, reason: str) -> None:
+    s.over = True
+    s.loss_by = reason
+    s.checkpoints["loss"] = s.turn
+    s.log.append(f"T{s.turn}: lose ({reason})")
+
+
+def _put_back(s: GameState, name: str) -> None:
+    idx = find_card(s, name, s.hand)
+    s.hand.remove(idx)
+    s.library.insert(0, idx)
+    s.pending_put_back -= 1
+    s.log.append(f"T{s.turn}: put {name} on top of the library")
 
 
 def _kill(s: GameState, perms: list[Permanent]) -> None:
@@ -571,7 +606,7 @@ def _begin_turn(s: GameState, *, extra: bool = False) -> None:
     _fire(s, "upkeep")
     if s.turn_index > 1:
         _draw(s, 1)
-    if not extra:
+    if not extra and not s.over:
         _disrupt(s)
 
 
@@ -890,6 +925,8 @@ def to_dict(s: GameState) -> dict:
         "pool": [sorted(c) for c in s.pool],
         "treasures": s.treasures,
         "pending_tutor": s.pending_tutor,
+        "pending_put_back": s.pending_put_back,
+        "loss_by": s.loss_by,
         "triggers_this_turn": s.triggers_this_turn,
         "opponent_life_lost": s.opponent_life_lost,
         "commander_damage": s.commander_damage,
@@ -948,6 +985,9 @@ def _from_dict(data: dict) -> GameState:
     plain["extra_turn"] = data.get("extra_turn", False)
     plain["extra_turns_pending"] = data.get("extra_turns_pending", 0)
     plain["extra_turns_taken"] = data.get("extra_turns_taken", 0)
+    plain["pending_put_back"] = data.get("pending_put_back", 0)
+    plain["loss_by"] = data.get("loss_by")
+    plain["checkpoints"] = {"loss": None, **plain["checkpoints"]}
     return GameState(
         cards=cards, goal=goal, goal_raw=data["goal"], turn_cap=data["turn_cap"],
         disruption=data["disruption"], rng=_load_rng(data["rng"]),
