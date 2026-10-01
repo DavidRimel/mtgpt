@@ -168,6 +168,8 @@ class SimEffect:
     opp_draw_cards: int = 0
     #: A Treasure on opponents' draws (Smothering Tithe).
     opp_draw_treasure: bool = False
+    #: A static hoser that stops opponents' win attempts while it is out.
+    stax: bool = False
 
     @property
     def is_ramp(self) -> bool:
@@ -190,7 +192,7 @@ class SimEffect:
             or self.landfall_treasure or self.mana_per_color or self.cascade
             or self.grants_cascade_min or self.approach or self.dig_permanents or self.dig_look
             or self.free_spell_per_turn or self.emergent or self.sac_tutor_top
-            or self.opp_draw_cards or self.opp_draw_treasure
+            or self.opp_draw_cards or self.opp_draw_treasure or self.stax
         )
 
 
@@ -493,6 +495,9 @@ def _mechanics(card: Card, text: str) -> dict:
         out["opp_draw_cards"] = _num(m.group(1))
     if re.search(r"whenever an opponent draws a card, .*you create a treasure", t):
         out["opp_draw_treasure"] = True
+    if re.search(r"\b(?:your opponents|each opponent|players|your opponents' spells) can't (?:cast|search|win)", t) \
+            or "spells your opponents cast cost" in t or "your opponents can't" in t and "spells" in t:
+        out["stax"] = True
     if "at the beginning of your draw step, you may draw two additional cards" in t:
         out["sylvan"] = True
     return out

@@ -132,3 +132,15 @@ def test_alt_cost_and_override_mana_validation(spec, field):
     with pytest.raises(GoalError) as err:
         load({"archetype": "go_wide", "engine": {"Blood Artist": spec}})
     assert err.value.field == field
+
+
+def test_opponent_win_block():
+    goal = load({"archetype": "go_wide", "opponent_win": {"from_turn": 5}})
+    assert goal.opponent_win.from_turn == 5
+    assert goal.opponent_win.answers == ("removal", "counterspell", "stax")
+    assert load({"archetype": "go_wide"}).opponent_win is None
+    with pytest.raises(GoalError) as err:
+        load({"archetype": "go_wide", "opponent_win": {"answers": ["protection"]}})
+    assert err.value.field == "opponent_win.answers"
+    with pytest.raises(GoalError):
+        load({"archetype": "go_wide", "opponent_win": {"from_turn": 0}})

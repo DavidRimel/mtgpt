@@ -47,12 +47,15 @@ _DEFAULTS: dict[str, tuple[object, object]] = {
     "big_mana": ({"mana_available": 10}, None),
     "custom": (None, None),
 }
-_GOAL_FIELDS = ("archetype", "commander_turn", "engine", "thing", "win", "disruption")
+_GOAL_FIELDS = ("archetype", "commander_turn", "engine", "thing", "win", "disruption",
+                "opponent_win")
+#: What can stop an opponent's win attempt.
+ANSWER_KINDS = ("removal", "counterspell", "stax")
 _INT_SPEC_FIELDS = ("drain", "draw", "treasure", "tokens", "anthem", "mana")
 #: A mana cost written in symbols: {3}, {W}, {C}, {X}, hybrid {W/U}, {2/W}, Phyrexian {B/P}.
 _MANA_COST = re.compile(r"(?:\{(?:\d+|[WUBRGCXS]|[WUBRG2]/[WUBRGP])\})+")
 _MANA_COLORS = frozenset("WUBRGC")
-_BOOL_SPEC_FIELDS = ("sac_outlet", "payoff", "finisher")
+_BOOL_SPEC_FIELDS = ("sac_outlet", "payoff", "finisher", "stax")
 
 
 class GoalError(MtgptError):
@@ -91,6 +94,8 @@ class EngineSpec:
     sac_outlet: bool = False
     payoff: bool = False
     finisher: bool = False
+    #: A static hoser on the battlefield stops opponents' win attempts.
+    stax: bool = False
     anthem: int = 0
     priority: str | None = None
     #: While this permanent is on the battlefield, any spell may be cast for
@@ -117,6 +122,15 @@ class Disruption:
 
 
 @dataclass(frozen=True)
+class OpponentWin:
+    """A fast table: from `from_turn` on, each round an opponent tries to win,
+    and you lose unless you hold (or have out) one of `answers`."""
+
+    from_turn: int = 5
+    answers: tuple[str, ...] = ANSWER_KINDS
+
+
+@dataclass(frozen=True)
 class Goal:
     archetype: str
     commander_turn: int
@@ -124,6 +138,7 @@ class Goal:
     win: Condition
     engine: tuple[tuple[str, EngineSpec], ...] = ()
     disruption: Disruption | None = None
+    opponent_win: OpponentWin | None = None
 
     @cached_property
     def _engine_map(self) -> dict[str, EngineSpec]:
@@ -170,6 +185,7 @@ def load_goal(data, *, deck_names: Iterable[str], commander_mv: float = 0.0) -> 
         win=_condition(win_raw, "win", canon),
         engine=_engine(data.get("engine", {}), canon),
         disruption=_disruption(data["disruption"]) if "disruption" in data else None,
+        opponent_win=_opponent_win(data["opponent_win"]) if "opponent_win" in data else None,
     )
 
 
@@ -306,6 +322,24 @@ def _mana_colors(value, field: str) -> frozenset[str]:
     if not isinstance(value, str) or not set(value.upper()) <= _MANA_COLORS:
         raise GoalError(field, "must be a string of mana symbols from WUBRGC, e.g. \"WUBRG\"", [value])
     return frozenset(value.upper())
+
+
+def _opponent_win(raw) -> OpponentWin:
+    if not isinstance(raw, dict):
+        raise GoalError("opponent_win", "must be an object")
+    unknown = sorted(set(raw) - {"from_turn", "answers"})
+    if unknown:
+        raise GoalError("opponent_win", f"unknown field(s): {', '.join(unknown)}", unknown)
+    from_turn = raw.get("from_turn", 5)
+    if not isinstance(from_turn, int) or isinstance(from_turn, bool) or from_turn < 1:
+        raise GoalError("opponent_win.from_turn", "must be a whole number of turns, 1 or more",
+                        [from_turn])
+    answers = raw.get("answers", list(ANSWER_KINDS))
+    bad = [a for a in answers if a not in ANSWER_KINDS] if isinstance(answers, list) else [answers]
+    if bad or not answers:
+        raise GoalError("opponent_win.answers", f"must be a list drawn from {', '.join(ANSWER_KINDS)}",
+                        bad)
+    return OpponentWin(from_turn=from_turn, answers=tuple(answers))
 
 
 def _disruption(raw) -> Disruption:

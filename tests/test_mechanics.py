@@ -413,3 +413,68 @@ def test_new_mechanic_state_round_trips():
     s = apply(s, {"play_land": "Forest"})
     data = to_dict(s)
     assert to_dict(from_dict(json.loads(json.dumps(data)))) == data
+
+
+# --- Opponents' win attempts (fast tables) -------------------------------------
+
+WINNOWER = card("Void Winnower", "Creature — Eldrazi", "Your opponents can't cast spells with even "
+                "mana values. (Zero is even.)\nYour opponents can't block with creatures with even mana "
+                "values.", mana_cost="{9}", power=11.0)
+FAST_TABLE = {"archetype": "custom", "thing": "commander", "win": NEVER,
+              "opponent_win": {"from_turn": 2, "answers": ["removal", "counterspell", "stax"]}}
+
+
+def test_stax_is_parsed():
+    assert effect_of(WINNOWER, WUBRG).stax
+
+
+def test_an_unanswered_win_attempt_loses():
+    s = rigged(lands_in_play=1, goal=FAST_TABLE)
+    s.command_zone = []
+    s = apply(s, PASS)
+    assert s.over and s.loss_by == "opponent_win" and s.checkpoints["loss"] == 2
+
+
+def test_removal_in_hand_answers_and_is_used_up():
+    from simdeck import SWORDS
+    s = rigged(SWORDS, hand=["Swords to Plowshares"], lands_in_play=1, goal=FAST_TABLE)
+    s.command_zone = []
+    s = apply(s, PASS)
+    assert not s.over and "Swords to Plowshares" in names(s, s.graveyard)
+    assert s.win_attempts[-1] == {"turn": 2, "stopped": True, "by": "Swords to Plowshares"}
+    s = apply(s, PASS)  # round 3: they try again, nothing left
+    assert s.loss_by == "opponent_win"
+
+
+def test_a_stax_piece_on_the_battlefield_stops_every_attempt():
+    s = rigged(WINNOWER, on_board=["Void Winnower"], lands_in_play=1, goal=FAST_TABLE)
+    s.command_zone = []
+    for _ in range(3):
+        s = apply(s, PASS)
+    assert not s.over and all(a["by"] == "Void Winnower" for a in s.win_attempts)
+
+
+def test_protection_does_not_answer_a_win_attempt():
+    from simdeck import TEFERIS_PROTECTION
+    s = rigged(TEFERIS_PROTECTION, hand=["Teferi's Protection"], lands_in_play=1, goal=FAST_TABLE)
+    s.command_zone = []
+    s = apply(s, PASS)
+    assert s.loss_by == "opponent_win"
+
+
+def test_answer_kinds_are_configurable():
+    from simdeck import COUNTERSPELL
+    goal = {**FAST_TABLE, "opponent_win": {"from_turn": 2, "answers": ["removal"]}}
+    s = rigged(COUNTERSPELL, hand=["Counterspell"], lands_in_play=1, goal=goal)
+    s.command_zone = []
+    s = apply(s, PASS)
+    assert s.loss_by == "opponent_win"
+
+
+def test_report_has_opponent_win_and_win_by_round():
+    from mtgpt.goldfish.run import simulate
+    from simdeck import deck
+    r = simulate(deck(), {**FAST_TABLE, "opponent_win": {"from_turn": 5}}, games=10)
+    assert r["opponent_win"]["attempts"] == 10 and r["opponent_win"]["answered_rate"] == 0.0
+    assert r["loss"]["by_reason"] == {"opponent_win": 1.0}
+    assert r["win"]["win_by_round"] == [0.0] * 10

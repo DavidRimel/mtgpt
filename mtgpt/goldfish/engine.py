@@ -178,6 +178,8 @@ class GameState:
     thing_turns: list[dict] = field(default_factory=list)
     #: Disruption events: {"turn", "kind", "stopped", "by"}.
     events: list[dict] = field(default_factory=list)
+    #: Opponents' win attempts: {"turn", "stopped", "by"}.
+    win_attempts: list[dict] = field(default_factory=list)
     late_reason: str | None = None
     log: list[str] = field(default_factory=list)
 
@@ -778,6 +780,9 @@ def _begin_turn(s: GameState, *, extra: bool = False) -> None:
     s.spent_this_turn = dict.fromkeys(_SPEND_CATEGORIES, 0)
     if not extra and s.turn_index > 1:
         _opponents_draws(s)
+        _opponent_win_attempt(s)
+        if s.over:
+            return
     for perm in s.battlefield:
         perm.tapped = False
     _sac_tutors(s)
@@ -803,6 +808,37 @@ def _opponents_draws(s: GameState) -> None:
                 _draw(s, effect.opp_draw_cards)
         if effect.opp_draw_treasure:
             s.treasures += TITHE_TREASURES_PER_ROUND
+
+
+def _opponent_win_attempt(s: GameState) -> None:
+    """On a fast table an opponent tries to win during the round. A stax piece
+    you control stops it and stays; otherwise a held removal spell or
+    counterspell stops it and is spent; otherwise you lose."""
+    rule = s.goal.opponent_win
+    if rule is None or s.turn < rule.from_turn:
+        return
+    if "stax" in rule.answers:
+        for perm in s.battlefield:
+            if perm.card is None or perm.is_land:
+                continue
+            spec = s.goal.engine_for(perm.name)
+            if s.cards[perm.card].effect.stax or (spec is not None and spec.stax):
+                s.win_attempts.append({"turn": s.turn, "stopped": True, "by": perm.name})
+                return
+    wanted = set()
+    if "removal" in rule.answers:
+        wanted |= {"removal", "sweeper"}
+    if "counterspell" in rule.answers:
+        wanted.add("counterspell")
+    for idx in s.hand:
+        if s.cards[idx].effect.held & wanted:
+            s.hand.remove(idx)
+            s.graveyard.append(idx)
+            s.win_attempts.append({"turn": s.turn, "stopped": True, "by": s.cards[idx].name})
+            s.log.append(f"T{s.turn}: opponent's win attempt stopped by {s.cards[idx].name}")
+            return
+    s.win_attempts.append({"turn": s.turn, "stopped": False, "by": None})
+    _lose(s, "opponent_win")
 
 
 def _sac_tutors(s: GameState) -> None:
@@ -1231,6 +1267,7 @@ def to_dict(s: GameState) -> dict:
         "per_turn": [dict(t) for t in s.per_turn],
         "thing_turns": [dict(t) for t in s.thing_turns],
         "events": [dict(e) for e in s.events],
+        "win_attempts": [dict(a) for a in s.win_attempts],
         "late_reason": s.late_reason,
         "log": list(s.log),
     }
@@ -1284,6 +1321,7 @@ def _from_dict(data: dict) -> GameState:
     plain["free_spells_used"] = data.get("free_spells_used", 0)
     plain["alt_win"] = data.get("alt_win")
     plain["tutors_left"] = data.get("tutors_left", 0)
+    plain["win_attempts"] = data.get("win_attempts", [])
     return GameState(
         cards=cards, goal=goal, goal_raw=data["goal"], turn_cap=data["turn_cap"],
         disruption=data["disruption"], rng=_load_rng(data["rng"]),
