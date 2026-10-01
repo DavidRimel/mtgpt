@@ -569,7 +569,7 @@ def _imprint(s: GameState, mox: int) -> None:
     """Chrome Mox: exile the least needed colored nonartifact, nonland card from
     hand; the mox taps for its colors. With nothing to exile it makes no mana."""
     options = [i for i in s.hand if not s.cards[i].is_land and s.cards[i].colors
-               and "Artifact" not in s.cards[i].type_line]
+               and "Artifact" not in s.cards[i].type_line and not s.cards[i].effect.held]
     if not options:
         return
     worst = _best_cards(s, options, len(options))[-1]
@@ -961,8 +961,11 @@ def _event(s: GameState, kind: str) -> None:
         _kill(s, _commanders_on_board(s)[:1])
     else:
         # Lands and noncreature mana rocks survive; everything else goes.
-        _kill(s, [p for p in s.battlefield if not p.is_land and not (
-            not p.is_creature and p.card is not None and s.cards[p.card].effect.mana)])
+        def rock(p):
+            effect = s.cards[p.card].effect if p.card is not None else None
+            return (not p.is_creature and effect is not None
+                    and (effect.mana or effect.imprint or effect.mana_per_color))
+        _kill(s, [p for p in s.battlefield if not p.is_land and not rock(p)])
 
 
 def _protection_on_board(s: GameState) -> Permanent | None:
@@ -976,11 +979,16 @@ def _protection_on_board(s: GameState) -> Permanent | None:
 
 def _answer_in_hand(s: GameState, kind: str) -> int | None:
     """Protection first, then a counterspell. A wipe needs protection that
-    survives it: indestructible or phasing."""
-    for idx in s.hand:
-        effect = s.cards[idx].effect
-        if "protection" in effect.held and (kind == "commander_removal" or effect.wipe_proof):
-            return idx
+    survives it: indestructible or phasing. Pure protection goes before a card
+    that could also stop an opponent's win (Boros Charm's removal mode), so
+    the win-attempt answer is kept for the win attempt."""
+    def keeps_win_answer(idx):
+        return bool(s.cards[idx].effect.held & {"removal", "sweeper", "counterspell"})
+
+    protection = [idx for idx in s.hand if "protection" in s.cards[idx].effect.held
+                  and (kind == "commander_removal" or s.cards[idx].effect.wipe_proof)]
+    if protection:
+        return min(protection, key=keeps_win_answer)
     for idx in s.hand:
         if "counterspell" in s.cards[idx].effect.held:
             return idx

@@ -6,6 +6,11 @@
       "note": "sweeper held as interaction in hand; spent by the disruption model; no target in a goldfish",
       "reviewed": "2026-10-01"
     },
+    "An Offer You Can't Refuse": {
+      "status": "parsed",
+      "note": "1-mana counter for a noncreature spell, held as an answer; the opponent's Treasures don't matter in a goldfish",
+      "reviewed": "2026-10-01"
+    },
     "Anguished Unmaking": {
       "status": "parsed",
       "note": "removal held as interaction in hand; spent by the disruption model; no target in a goldfish",
@@ -61,6 +66,11 @@
       "note": "5 mana, all your mana any color; its {5},{T} draw ability is not modeled",
       "reviewed": "2026-10-01"
     },
+    "Chrome Mox": {
+      "status": "parsed",
+      "note": "imprints the least needed colored card; taps for its colors",
+      "reviewed": "2026-10-01"
+    },
     "Conflux": {
       "status": "parsed",
       "note": "five tutors (the one-of-each-color constraint is approximated)",
@@ -84,6 +94,20 @@
     "Deflecting Swat": {
       "status": "parsed",
       "note": "free redirect: protection",
+      "reviewed": "2026-10-01"
+    },
+    "Delighted Halfling": {
+      "status": "override",
+      "note": "dork, any color; its 'can't be countered' clause is not protection",
+      "reviewed": "2026-10-01",
+      "rule": {
+        "mana": 1,
+        "mana_colors": "WUBRG"
+      }
+    },
+    "Demonic Tutor": {
+      "status": "parsed",
+      "note": "tutor: any card",
       "reviewed": "2026-10-01"
     },
     "Diabolic Tutor": {
@@ -111,6 +135,11 @@
       "note": "finds 3 monocolored cards; opponents shuffle back the best one; the other two are cast free",
       "reviewed": "2026-10-01"
     },
+    "Enlightened Tutor": {
+      "status": "parsed",
+      "note": "tutor: artifact or enchantment, to the top",
+      "reviewed": "2026-10-01"
+    },
     "Enter the Infinite": {
       "status": "parsed",
       "note": "draws the library, puts one back; auto pilot casts it only when the round wins",
@@ -131,6 +160,11 @@
       "note": "MDFC: removal held in hand, or a B land",
       "reviewed": "2026-10-01"
     },
+    "Fierce Guardianship": {
+      "status": "parsed",
+      "note": "free counterspell (noncreature) held as an answer",
+      "reviewed": "2026-10-01"
+    },
     "Fist of Suns": {
       "status": "parsed",
       "note": "alt cost WUBRG, same as Jodah",
@@ -139,6 +173,16 @@
     "Flawless Maneuver": {
       "status": "parsed",
       "note": "free protection that survives a wipe",
+      "reviewed": "2026-10-01"
+    },
+    "Flusterstorm": {
+      "status": "parsed",
+      "note": "counters an instant or sorcery; held as an answer",
+      "reviewed": "2026-10-01"
+    },
+    "Force of Will": {
+      "status": "parsed",
+      "note": "free counterspell held as an answer",
       "reviewed": "2026-10-01"
     },
     "Genesis Ultimatum": {
@@ -201,9 +245,29 @@
       "note": "landfall: one mana of any color",
       "reviewed": "2026-10-01"
     },
+    "Mana Vault": {
+      "status": "parsed",
+      "note": "taps for {C}{C}{C} once; doesn't untap (paying 4 to untap is not modeled)",
+      "reviewed": "2026-10-01"
+    },
+    "Mental Misstep": {
+      "status": "parsed",
+      "note": "counters only mana value 1; held as a counterspell (a weak answer to a win attempt)",
+      "reviewed": "2026-10-01"
+    },
+    "Mox Diamond": {
+      "status": "parsed",
+      "note": "one mana of any color; needs a land to discard",
+      "reviewed": "2026-10-01"
+    },
     "Mystic Confluence": {
       "status": "parsed",
       "note": "counterspell held as interaction in hand; spent by the disruption model; no target in a goldfish; draw modes not used",
+      "reviewed": "2026-10-01"
+    },
+    "Mystical Tutor": {
+      "status": "parsed",
+      "note": "tutor: instant or sorcery, to the top",
       "reviewed": "2026-10-01"
     },
     "Nature's Lore": {
@@ -224,6 +288,11 @@
     "Oracle of Mul Daya": {
       "status": "parsed",
       "note": "extra land drop; lands from the top of the library",
+      "reviewed": "2026-10-01"
+    },
+    "Pact of Negation": {
+      "status": "parsed",
+      "note": "free counterspell; once spent, pay {3}{U}{U} next upkeep or lose",
       "reviewed": "2026-10-01"
     },
     "Phyrexian Arena": {
@@ -319,6 +388,16 @@
     "Unite the Coalition": {
       "status": "parsed",
       "note": "protection/removal held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Vampiric Tutor": {
+      "status": "parsed",
+      "note": "tutor: any card, to the top; life loss not tracked",
+      "reviewed": "2026-10-01"
+    },
+    "Void Winnower": {
+      "status": "parsed",
+      "note": "stax: opponents can't cast even-mana-value spells; counts as an answer to every win attempt while out (optimistic: odd-cost wins get through)",
       "reviewed": "2026-10-01"
     },
     "Wood Elves": {

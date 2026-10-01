@@ -555,3 +555,36 @@ def test_chrome_mox_imprints_a_card_and_taps_for_its_colors():
     s2.command_zone = []
     s2 = apply(s2, {"cast": "Chrome Mox"})
     assert available_mana(s2) == 0  # nothing to imprint
+
+
+def test_disruption_spends_pure_protection_before_a_win_attempt_answer():
+    from simdeck import TEFERIS_PROTECTION
+    charm = card("Boros Charm", "Instant", "Choose one —\n• Boros Charm deals 4 damage to target player or "
+                 "planeswalker.\n• Permanents you control gain indestructible until end of turn.\n• Target "
+                 "creature gains double strike until end of turn.", mana_cost="{R}{W}")
+    goal = {"archetype": "custom", "thing": "commander", "win": NEVER,
+            "disruption": {"commander_removal": 1.0, "from_turn": 1}, "opponent_win": {"from_turn": 9}}
+    s = rigged(TEFERIS_PROTECTION, charm, hand=["Boros Charm", "Teferi's Protection"], lands_in_play=1,
+               commander_out=True, goal=goal)
+    s = apply(s, PASS)
+    assert "Teferi's Protection" in names(s, s.graveyard) and "Boros Charm" in names(s, s.hand)
+
+
+def test_imprint_never_takes_an_answer():
+    from simdeck import COUNTERSPELL
+    green = card("Green Thing", "Creature — Elf", "", mana_cost="{3}{G}", power=3.0, colors="G")
+    s = rigged(source=five_color(CHROME, COUNTERSPELL, green), land="Prism Land",
+               hand=["Chrome Mox", "Counterspell", "Green Thing"])
+    s.command_zone = []
+    s = apply(s, {"cast": "Chrome Mox"})
+    assert "Counterspell" in names(s, s.hand) and "Green Thing" not in names(s, s.hand)
+
+
+def test_a_wipe_spares_an_imprinted_mox():
+    goal = {"archetype": "custom", "thing": "commander", "win": NEVER,
+            "disruption": {"board_wipe": 1.0, "from_turn": 1}}
+    s = rigged(source=five_color(CHROME, RED_SPELL), land="Prism Land", hand=["Chrome Mox", "Red Spell"],
+               goal=goal)
+    s.command_zone = []
+    s = apply(apply(s, {"cast": "Chrome Mox"}), PASS)
+    assert "Chrome Mox" in [p.name for p in s.battlefield]
