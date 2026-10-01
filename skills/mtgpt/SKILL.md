@@ -146,10 +146,10 @@ it recovers from disruption (`disruption`).
    models value — mana, draw, tutors, power — so name the deck's engine
    cards under `engine` with what they do (`on` one of `creature_dies`,
    `creature_etb`, `spell_cast`, `instant_sorcery_cast`, `upkeep`, `attack`;
-   effects `drain`, `draw`, `treasure`, `tokens`/`token_power`; tags
-   `sac_outlet`, `payoff`, `finisher`, `anthem`; `priority` `engine` or
-   `hold`). Engine names must be in the deck: a `GoalError` names the field
-   and value at fault.
+   effects `drain`, `draw`, `treasure`, `tokens`/`token_power`, `anthem` (number: +N
+   power to each creature you control); tags `sac_outlet`, `payoff`, `finisher`;
+   `priority` `engine` or `hold`). Engine names must be in the deck: a `GoalError`
+   names the field and value at fault.
 2. **Ask which mode to run, every time; never pick for the user:**
    - **Auto** — 1000 heuristic games; the statistics that drive tuning.
 
@@ -157,22 +157,25 @@ it recovers from disruption (`disruption`).
      python3 -m mtgpt.cli goldfish --file deck.txt --goal deck.goal.json
      ```
 
-   - **Pilot** — you play N seeded games (default 3) turn by turn and
+   - **Pilot** — you play N games (default 3) — `--game 0`, `--game 1`, `--game 2`
+     of the same `--seed`, each with its own `--out` file — turn by turn and
      narrate each turn's choices:
 
      ```bash
-     python3 -m mtgpt.cli goldfish-new  --file deck.txt --goal deck.goal.json --seed 1 --out game.json
-     python3 -m mtgpt.cli goldfish-step --state game.json --action '{"play_land": "Forest"}'
-     python3 -m mtgpt.cli goldfish-step --state game.json --action '{"cast": "Sol Ring"}'
-     python3 -m mtgpt.cli goldfish-step --state game.json --action '{"pass": true}'
+     python3 -m mtgpt.cli goldfish-new  --file deck.txt --goal deck.goal.json --seed 1 --game 0 --out game0.json
+     python3 -m mtgpt.cli goldfish-step --state game0.json --action '{"play_land": "Forest"}'
+     python3 -m mtgpt.cli goldfish-step --state game0.json --action '{"cast": "Sol Ring"}'
+     python3 -m mtgpt.cli goldfish-step --state game0.json --action '{"pass": true}'
      ```
 
      Choose only from the view's `legal_actions`; a tutor waits for
      `{"tutor": "<name>"}`. **Never open the state file** — it holds the
      library order, which a player would not know. Read the view.
-   - **Both** — auto first, then pilot games on seeds from the same run,
-     reported next to the auto distribution so the user sees where the
-     heuristic misplays.
+   - **Both** — auto first, then pilot games `--game 0..N-1` of the same
+     `--seed`: pilot game I is dealt exactly as auto game I (same shuffle and
+     disruption dice), so report each pilot game's checkpoint turns next to the
+     auto distribution and say where your line beat or lost to the heuristic's on
+     the same deal.
 3. Name the weakest block — setup, commander, thing, or win — and say what
    it means for how the deck plays. Surface `notes.unmodeled`: those cards'
    text did nothing in the sim, so offer an `engine` override for any that
@@ -185,7 +188,7 @@ it recovers from disruption (`disruption`).
    python3 -m mtgpt.cli goldfish-compare --file deck.txt --file deck-v2.txt --goal deck.goal.json
    ```
 
-   For pilot, replay the same seeds.
+   For pilot, replay the same `--seed` and `--game` numbers against the new list.
 6. Report the differences and keep or revert the swap. Later iterations
    reuse the user's mode unless they ask to change it.
 

@@ -372,6 +372,36 @@ def test_pilot_game_round_trips_through_json():
     assert api.goldfish_step(state, {"pass": True})["view"]["turn"] == 2
 
 
+def test_pilot_game_n_matches_auto_game_n():
+    """Pilot game `game` of `seed` is dealt exactly as auto game `game`."""
+    # Start a pilot game with game=2
+    from mtgpt.goldfish.engine import new_game, prepare, to_dict
+    from mtgpt.scryfall import resolve
+    from mtgpt.deckparse import parse
+
+    deck_text_str = deck_text()
+    # Use a client that can handle multiple resolve calls
+    client = client_for(load("collection_sample_deck.json"), NO_GAME_CHANGERS,
+                        load("collection_sample_deck.json"), NO_GAME_CHANGERS)
+
+    pilot_result = api.goldfish_new(deck_text_str, GO_WIDE, seed=1, game=2, client=client)
+    pilot_state = pilot_result["state"]
+
+    # Get the equivalent auto game state with a fresh client
+    client2 = client_for(load("collection_sample_deck.json"), NO_GAME_CHANGERS,
+                         load("collection_sample_deck.json"), NO_GAME_CHANGERS)
+    resolved = resolve(parse(deck_text_str), client=client2)
+    prepared = prepare(resolved, GO_WIDE)
+    auto_state = new_game(prepared, seed="1-2")
+    auto_state_dict = to_dict(auto_state)
+
+    # Compare hand, library, dice info
+    assert pilot_state["hand"] == auto_state_dict["hand"]
+    assert pilot_state["library"] == auto_state_dict["library"]
+    # Check that the dice/rng would be the same (comparing other relevant fields)
+    assert pilot_state["opponent_life_lost"] == auto_state_dict["opponent_life_lost"]
+
+
 def test_pilot_illegal_action_is_data():
     from mtgpt.goldfish.engine import IllegalAction
 

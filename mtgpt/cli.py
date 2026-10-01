@@ -113,6 +113,8 @@ def build_parser() -> argparse.ArgumentParser:
         src.add_argument("--stdin", action="store_true")
         _add_goldfish_options(cmd, games=name == "goldfish")
         if name == "goldfish-new":
+            cmd.add_argument("--game", type=int, default=0,
+                             help="Replay auto game N of --seed (default 0)")
             cmd.add_argument("--out", required=True, help="Where to write the game state")
 
     goldfish_compare = sub.add_parser(
@@ -259,6 +261,8 @@ def _goldfish(args, command: str, client) -> int:
         return EXIT_USER_ERROR
     options = {"turns": args.turns, "seed": args.seed,
                "disruption": not args.no_disruption, "client": client}
+    if command == "goldfish-new":
+        options["game"] = args.game
 
     if command == "goldfish-compare":
         if len(args.file) != 2:

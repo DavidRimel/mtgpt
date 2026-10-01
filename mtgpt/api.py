@@ -614,12 +614,17 @@ def goldfish_new(
     *,
     turns: int = DEFAULT_TURN_CAP,
     seed: int = 1,
+    game: int = 0,
     disruption: bool = True,
     client: ScryfallClient | None = None,
 ) -> dict:
-    """Start one game for Claude to pilot. Returns the state and a view of it."""
+    """Start one game for Claude to pilot. Returns the state and a view of it.
+
+    Pilot game `game` of `seed` is dealt exactly as auto game `game` of the
+    same seed: same shuffle, same disruption dice.
+    """
     deck = _resolved(text, client)
-    state = new_game(prepare(deck, goal), seed=seed, turn_cap=turns, disruption=disruption)
+    state = new_game(prepare(deck, goal), seed=f"{seed}-{game}", turn_cap=turns, disruption=disruption)
     return {"state": to_dict(state), "view": game_view(state)}
 
 
