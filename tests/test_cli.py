@@ -198,28 +198,32 @@ def test_goldfish_compare_needs_two_files(capsys, tmp_path):
 
 
 def test_pilot_new_writes_state_and_step_rewrites_it(monkeypatch, capsys, tmp_path):
+    import pytest
     out = tmp_path / "game.json"
 
     # Track that goldfish_new is called with the right arguments
-    called_with_game = None
     def mock_goldfish_new(text, goal, **o):
-        nonlocal called_with_game
-        called_with_game = o.get("game", 0)
         return {"state": {"turn": 1}, "view": {"turn": 1}}
 
     monkeypatch.setattr(cli.api, "goldfish_new", mock_goldfish_new)
 
     # Test default game=0
+    called = []
+    def mock1(text, goal, **o):
+        called.append(o["game"])
+        return {"state": {"turn": 1}, "view": {"turn": 1}}
+    monkeypatch.setattr(cli.api, "goldfish_new", mock1)
+
     assert cli.main(["goldfish-new", "--file", str(FIXTURES / "sample_deck.txt"),
                      "--goal", goal_file(tmp_path), "--out", str(out)]) == 0
-    assert called_with_game == 0
+    assert called[-1] == 0
     assert json.loads(out.read_text()) == {"turn": 1}
     assert json.loads(capsys.readouterr().out)["data"] == {"turn": 1}
 
     # Test --game 2
     assert cli.main(["goldfish-new", "--file", str(FIXTURES / "sample_deck.txt"),
                      "--goal", goal_file(tmp_path), "--game", "2", "--out", str(out)]) == 0
-    assert called_with_game == 2
+    assert called[-1] == 2
 
     def step(state, action):
         assert (state, action) == ({"turn": 1}, {"pass": True})
@@ -228,6 +232,14 @@ def test_pilot_new_writes_state_and_step_rewrites_it(monkeypatch, capsys, tmp_pa
     monkeypatch.setattr(cli.api, "goldfish_step", step)
     assert cli.main(["goldfish-step", "--state", str(out), "--action", '{"pass": true}']) == 0
     assert json.loads(out.read_text()) == {"turn": 2}
+
+
+def test_pilot_new_rejects_negative_game(tmp_path):
+    import pytest
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["goldfish-new", "--file", str(FIXTURES / "sample_deck.txt"),
+                  "--goal", goal_file(tmp_path), "--game", "-1", "--out", str(tmp_path / "game.json")])
+    assert exc_info.value.code == 2
 
 
 def test_pilot_illegal_action_is_a_user_error(monkeypatch, capsys, tmp_path):

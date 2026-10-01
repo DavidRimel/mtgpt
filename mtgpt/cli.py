@@ -113,7 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
         src.add_argument("--stdin", action="store_true")
         _add_goldfish_options(cmd, games=name == "goldfish")
         if name == "goldfish-new":
-            cmd.add_argument("--game", type=int, default=0,
+            cmd.add_argument("--game", type=_non_negative_int, default=0,
                              help="Replay auto game N of --seed (default 0)")
             cmd.add_argument("--out", required=True, help="Where to write the game state")
 
@@ -134,6 +134,13 @@ def _positive_int(value: str) -> int:
     number = int(value)
     if number < 1:
         raise argparse.ArgumentTypeError("must be 1 or more")
+    return number
+
+
+def _non_negative_int(value: str) -> int:
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError("must be 0 or more")
     return number
 
 
