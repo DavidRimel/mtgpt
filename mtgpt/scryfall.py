@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
 
@@ -155,6 +156,26 @@ class ScryfallClient:
                     names.add(name.casefold())
             url = body.get("next_page") if body.get("has_more") else None
         return frozenset(names)
+
+    def search(self, query: str, *, limit: int = 25) -> tuple[dict, ...]:
+        """Run a Scryfall search and return up to `limit` card payloads.
+
+        This is how an agent finds candidate cards. Results are capped because
+        the caller is choosing among options, not enumerating a set.
+        """
+        url = (
+            f"{API}/cards/search?q={urllib.parse.quote(query)}"
+            "&unique=cards&order=edhrec"
+        )
+        found: list[dict] = []
+        while url and len(found) < limit:
+            try:
+                body = self._request(url)
+            except (urllib.error.URLError, OSError, ValueError) as exc:
+                raise SourceUnavailable("Scryfall search", str(exc)) from exc
+            found.extend(body.get("data") or ())
+            url = body.get("next_page") if body.get("has_more") else None
+        return tuple(found[:limit])
 
 
 def _index_by_name(payloads: Sequence[dict]) -> dict[str, dict]:
