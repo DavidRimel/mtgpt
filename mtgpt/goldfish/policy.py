@@ -2,8 +2,11 @@
 """The heuristic pilot: a fixed priority order, so runs are repeatable.
 
 The order is the user's: ramp, then the commander, then the commander's thing,
-then card flow, then everything else. Interaction is never cast; it is held and
-counted, and disruption spends protection when it lands. Because the order is
+then card flow, then everything else. Instant and sorcery interaction is never
+cast; it is held and counted, and disruption spends protection when it lands.
+Interaction permanents (Equipment, Lightning Greaves, Mother of Runes) are cast,
+and protect the commander from the battlefield. An MDFC whose spell face the
+sim cannot model is kept as a land drop unless the goal names it. Because the order is
 fixed, two versions of a deck played on the same seeds differ only by their
 cards, which is what makes a before/after comparison mean something.
 """
@@ -52,12 +55,18 @@ def tier(state: GameState, idx: int):
         return "hold"
     if card.is_commander:
         return COMMANDER
-    if card.effect.held and spec is None:
+    named = spec is not None or card.name in _plan_names(state)
+    if not named and card.effect.held and not card.is_permanent:
+        return None
+    if not named and card.is_mdfc_land and card.unmodeled:
         return None
     if card.effect.is_ramp:
         return RAMP
-    if spec is not None or card.name in _plan_names(state):
+    if named:
         return ENGINE
+    if card.effect.held:
+        is_attachment = any(t in card.type_line for t in ("Equipment", "Aura"))
+        return ENGINE if is_attachment and state.goal.archetype == "voltron" else OTHER
     if card.effect.draw_once or card.effect.draw_per_turn or card.effect.tutor:
         return VALUE
     return OTHER
