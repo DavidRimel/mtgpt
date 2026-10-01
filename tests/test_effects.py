@@ -29,9 +29,27 @@ def test_either_color_is_one_mana():
     assert (effect_of(talisman, BG).mana, effect_of(talisman, BG).mana_colors) == (1, BG)
 
 
-def test_mana_filter_is_not_a_source():
+def test_talisman_multiple_alternatives():
+    # Multiple {T}: Add lines are alternatives (tapping is the cost), so mana = max
+    # and mana_colors = union of all colors across lines
+    talisman = card("Talisman", "Artifact",
+                    "{T}: Add {C}.\n{T}: Add {B} or {G}. This artifact deals 1 damage to you.",
+                    mana_cost="{2}")
+    effect = effect_of(talisman, BG)
+    assert effect.mana == 1
+    assert effect.mana_colors == frozenset("BCG")
+
+
+def test_mana_filter_counts_its_net_mana():
+    # {1}, {T}: Add {B}{B} produces 2 but costs 1, net = 1
     filt = card("Filter", "Artifact", "{1}, {T}: Add {B}{B}.", mana_cost="{2}")
-    assert effect_of(filt, BG).mana == 0
+    effect = effect_of(filt, BG)
+    assert (effect.mana, effect.mana_colors) == (1, frozenset("B"))
+    # A Signet produces net mana and is thus modeled
+    signet = card("Signet", "Artifact", "{1}, {T}: Add {B}{G}.", mana_cost="{2}")
+    effect = effect_of(signet, BG)
+    assert (effect.mana, effect.mana_colors) == (1, BG)
+    assert not is_unmodeled(signet, effect)
 
 
 def test_ritual_is_one_shot_mana():
@@ -101,6 +119,14 @@ def test_tutor_restrictions():
     assert effect_of(mystical, G).tutor == "instant|sorcery"
 
 
+def test_tutor_strips_non_prefix():
+    # "noncreature, nonland" should strip "non" and find "card" → "any"
+    tutor = card("Tutor", "Instant",
+                 "Search your library for a noncreature, nonland card, reveal it, "
+                 "put it into your hand, then shuffle.")
+    assert effect_of(tutor, G).tutor == "any"
+
+
 def test_lands():
     tower = card("Command Tower", "Land",
                  "{T}: Add one mana of any color in your commander's color identity.",
@@ -119,6 +145,12 @@ def test_lands():
     assert not effect_of(checkland, BG).enters_tapped
     assert effect_of(wilds, BG).land_colors == BG
     assert effect_of(wilds, BG).enters_tapped
+    # Shockland is optimistic: assume life payment is made, so untapped
+    shock = card("Shock", "Land — Island Swamp",
+                 "As this land enters the battlefield, you may pay 2 life. If you don't, "
+                 "it enters tapped.",
+                 produced_mana="UB")
+    assert not effect_of(shock, BG).enters_tapped
 
 
 def test_mdfc_land_face_colors():

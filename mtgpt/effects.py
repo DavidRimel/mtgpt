@@ -13,8 +13,10 @@ every effect:
 * A "Whenever" line is a trigger whose cause the sim cannot see (an opponent
   drawing, a creature dying), so it is skipped. Triggers are modeled by the
   goal file's engine overrides instead.
-* An activated ability that costs mana is a filter, not a source: "{1}, {T}:
-  Add {B}{B}" nets one mana, so it is skipped rather than counted as two.
+* An activated ability that costs mana nets output minus cost: "{1}, {T}: Add
+  {B}{B}" produces 2 mana but costs 1 to activate, netting 1 mana counted when
+  positive. Multiple {T}-Add lines are alternatives (tapping is the cost), so
+  mana = max units produced across lines, and mana_colors = union of colors.
 """
 
 from __future__ import annotations
@@ -52,7 +54,7 @@ _FETCH_COUNT = re.compile(
     r"search your library for (?:up to )?(a|an|one|two|three|\d+)\b", re.IGNORECASE
 )
 _TUTOR = re.compile(
-    r"search your library for (?:a|an) (?P<what>[^.,]*?)\bcards?\b", re.IGNORECASE
+    r"search your library for (?:a|an) (?P<what>[^.]*?)\bcards?\b", re.IGNORECASE
 )
 #: "This land enters tapped unless you control..." is read as untapped: the
 #: condition is usually met in a two-color deck, and the sim cannot check it.
@@ -134,7 +136,9 @@ def effect_of(card: Card, identity: frozenset[str] = _ANY) -> SimEffect:
 
     text = card.oracle_text or ""
     is_spell = any(t in card.front_type_line for t in ("Instant", "Sorcery"))
-    mana, colors = 0, frozenset()
+
+    # Collect all {T}: Add lines to find the max mana (alternatives, not sum)
+    activated_lines = []
     mana_once = treasure = draw_once = draw_turn = 0
     fetch_bf = fetch_hand = 0
     fetch_tapped = False
@@ -145,10 +149,7 @@ def effect_of(card: Card, identity: frozenset[str] = _ANY) -> SimEffect:
             continue
         activated = _ACTIVATED_ADD.match(line)
         if activated:
-            if not _MANA_IN_COST.search(activated.group("cost").replace("{T}", "")):
-                units, unit_colors = _add_clause(activated.group("clause"), identity)
-                mana += units
-                colors |= unit_colors
+            activated_lines.append((activated.group("cost"), activated.group("clause")))
             continue
         ritual = _RITUAL_ADD.match(line)
         if ritual and is_spell:
@@ -172,6 +173,29 @@ def effect_of(card: Card, identity: frozenset[str] = _ANY) -> SimEffect:
                 draw_turn += n
             else:
                 draw_once += n
+
+    # Process activated {T}: Add lines - take max across alternatives, union colors
+    mana, colors = 0, frozenset()
+    for cost, clause in activated_lines:
+        cost_without_t = cost.replace("{T}", "")
+        mana_symbols_in_cost = _MANA_IN_COST.findall(cost_without_t)
+
+        # Calculate cost in mana value
+        cost_mana = 0
+        for symbol in mana_symbols_in_cost:
+            if symbol.isdigit():
+                cost_mana += int(symbol)
+            else:  # Colored or C symbol
+                cost_mana += 1
+
+        # Parse produced mana
+        produced, produced_colors = _add_clause(clause, identity)
+
+        # Net mana = produced - cost, only count if positive
+        net = produced - cost_mana
+        if net > 0:
+            mana = max(mana, net)
+            colors |= produced_colors
 
     tags = classify(card)
     held = frozenset(name for fn, name in _HELD.items() if fn in tags)
@@ -226,6 +250,11 @@ def _land_effect(card: Card, identity: frozenset[str]) -> SimEffect:
     text = card.oracle_text or ""
     colors = frozenset(card.produced_mana) & (identity | {"C"})
     tapped = bool(_ENTERS_TAPPED.search(text))
+
+    # Shockland case: "If you don't [pay X], it enters tapped" is optimistic
+    if tapped and "if you don't" in text.lower():
+        tapped = False
+
     if not colors and _LAND_SEARCH.search(text):
         # A fetchland makes no mana itself; it becomes the basic it finds.
         # Modeled as that basic, in any of the deck's colors.
@@ -269,7 +298,9 @@ def _fetch(line: str) -> tuple[int, int, bool]:
 
 
 def _restriction(what: str) -> str:
-    found = [t for t in _TUTOR_TYPES if t in what.lower()]
+    # Strip words starting with "non" (noncreature, nonartifact, etc.)
+    stripped = re.sub(r"\bnon\w+\s*", "", what.lower())
+    found = [t for t in _TUTOR_TYPES if t in stripped]
     return "|".join(found) if found else "any"
 
 
