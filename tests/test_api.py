@@ -197,6 +197,34 @@ def test_commander_synergy_passes_the_variant_through():
     assert edh.calls == [("Atraxa, Praetors' Voice", "upgraded")]
 
 
+def test_candidates_carry_the_real_game_changer_flag():
+    """Regression: commander_synergy once omitted game_changers=, so every
+    candidate reported False and the bracket filter was unreachable."""
+    edh = FakeEdhrec(json.loads((FIXTURES / "edhrec_commander.json").read_text()))
+    # Scryfall resolves Rhystic Study, and the Game Changers search returns it.
+    rhystic = {
+        "object": "card", "name": "Rhystic Study", "cmc": 3.0,
+        "type_line": "Enchantment",
+        "oracle_text": "Whenever an opponent casts a spell, that player may pay {1}. "
+                       "If the player doesn't, you may draw a card.",
+        "mana_cost": "{2}{U}", "color_identity": ["U"], "colors": ["U"],
+        "layout": "normal", "keywords": [], "legalities": {"commander": "legal"},
+        "prices": {"usd": "30.00"},
+    }
+    client = ScryfallClient(
+        transport=FakeTransport(
+            {"data": [rhystic], "not_found": []},
+            {"data": [{"object": "card", "name": "Rhystic Study"}], "has_more": False},
+        ),
+        sleep=lambda _: None,
+    )
+    result = api.commander_synergy(
+        "Atraxa, Praetors' Voice", limit=40, client=client, edhrec_client=edh
+    )
+    flags = {c["name"]: c["is_game_changer"] for c in result["cards"]}
+    assert flags.get("Rhystic Study") is True, flags
+
+
 def test_commander_themes_returns_themes_and_bracket_spread():
     edh = FakeEdhrec(json.loads((FIXTURES / "edhrec_commander.json").read_text()))
     result = api.commander_themes("Atraxa, Praetors' Voice", edhrec_client=edh)

@@ -339,12 +339,18 @@ def commander_synergy(
     if not candidates:
         return {"commander": name, "variant": variant, "count": 0, "cards": []}
 
-    verified, _ = _client(client).collection(
-        [c["name"] for c in candidates], strict=False
-    )
+    scry = _client(client)
+    verified, _ = scry.collection([c["name"] for c in candidates], strict=False)
+    # A Game Changers outage must not fail the whole operation: the candidate
+    # list is still useful, the bracket filter just cannot run.
+    try:
+        game_changers = scry.game_changers()
+    except SourceUnavailable:
+        game_changers = frozenset()
+
     by_name = {}
     for p in verified:
-        card = card_from_json(p)
+        card = card_from_json(p, game_changers=game_changers)
         by_name[card.name.casefold()] = card
         front, _, _ = card.name.partition("//")
         by_name.setdefault(front.strip().casefold(), card)
@@ -449,6 +455,7 @@ def suggest_additions(
     rule = RULES[target]
     gc_allowance = rule.game_changers_max
     gc_in_deck = sum(1 for _, c in deck.cards if c.is_game_changer)
+    gc_budget = None if gc_allowance is None else gc_allowance - gc_in_deck
 
     suggestions = []
     for candidate in pool:
@@ -458,8 +465,8 @@ def suggest_additions(
             continue
         if candidate["legal_commander"] != "legal":
             continue
-        if gc_allowance is not None and candidate["is_game_changer"]:
-            if gc_in_deck >= gc_allowance:
+        if candidate["is_game_changer"]:
+            if gc_budget is not None and gc_budget <= 0:
                 continue
         fills = sorted(set(candidate["functions"]) & wanted)
         if not fills:
@@ -474,6 +481,8 @@ def suggest_additions(
             else f"fills {', '.join(fills)}"
         )
         suggestions.append(entry)
+        if candidate["is_game_changer"] and gc_budget is not None:
+            gc_budget -= 1
 
     suggestions.sort(
         key=lambda s: (len(s["fills"]), s.get("synergy") or 0.0), reverse=True
