@@ -247,3 +247,8 @@ def test_sacrifice_for_mana_is_one_shot():
                  mana_cost="{0}")
     effect = effect_of(petal, G)
     assert (effect.mana, effect.treasure_once) == (0, 1)
+
+
+def test_instant_stax_is_held_as_an_answer():
+    silence = card("Silence", "Instant", "Your opponents can't cast spells this turn.", mana_cost="{W}")
+    assert "counterspell" in effect_of(silence, G).held

@@ -300,6 +300,11 @@ def effect_of(card: Card, identity: frozenset[str] = _ANY) -> SimEffect:
     if _REDIRECT.search(text):
         held |= {"protection"}
     extra = _mechanics(card, text)
+    if extra.get("stax") and is_spell:
+        # An instant that stops opponents casting (Silence) answers a win
+        # attempt the way a counterspell does.
+        held |= {"counterspell"}
+        extra.pop("stax")
     if extra.get("sylvan"):
         draw_turn += 1
     extra.pop("sylvan", None)
