@@ -94,3 +94,28 @@ def test_raises_when_no_entries_found():
 def test_raises_on_empty_input():
     with pytest.raises(DeckStructureError):
         parse("   \n\n")
+
+
+def test_multiword_category_preserves_name_and_set_code():
+    # A multi-word category like "#Ramp, Draw" should not corrupt the card name,
+    # set code, or collector number.
+    deck = parse("1 Cultivate (M21) 177 #Ramp, Draw\n")
+    assert deck.entries[0].name == "Cultivate"
+    assert deck.entries[0].set_code == "M21"
+    assert deck.entries[0].collector_number == "177"
+    assert deck.entries[0].category == "Ramp, Draw"
+
+
+def test_multiple_tags_take_first_as_category():
+    # When multiple tags are present, take the first one as the category.
+    deck = parse("1 Sol Ring (LTR) 264 #Ramp #Fast\n")
+    assert deck.entries[0].name == "Sol Ring"
+    assert deck.entries[0].set_code == "LTR"
+    assert deck.entries[0].collector_number == "264"
+    assert deck.entries[0].category == "Ramp"
+
+
+def test_bom_on_first_line_does_not_drop_entry():
+    # A UTF-8 BOM on the first line should not cause the entry to be dropped.
+    deck = parse("﻿1 Sol Ring\n2 Forest\n")
+    assert [(e.qty, e.name) for e in deck.entries] == [(1, "Sol Ring"), (2, "Forest")]

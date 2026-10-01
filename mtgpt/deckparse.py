@@ -30,8 +30,9 @@ _SECTION_RE = re.compile(
     re.IGNORECASE,
 )
 
-#: Trailing "#Category" tags. Moxfield emits at most one, but tolerate several.
-_TAG_RE = re.compile(r"\s+#(?P<tag>\S+)")
+#: Trailing "#Category" tag block. Anchored to end of line because a tag always
+#: follows the set code and collector number, and a category may contain spaces.
+_TAG_BLOCK_RE = re.compile(r"\s+#(?P<rest>.+)$")
 
 #: Trailing "*F*" / "*CMDR*" / "*E*" style flags.
 _FLAG_RE = re.compile(r"\s+\*(?P<flag>[A-Za-z0-9]+)\*")
@@ -52,6 +53,7 @@ def _strip_comment(line: str) -> str:
 
 def parse(text: str) -> ParsedDeck:
     """Parse decklist text. Raises DeckStructureError when nothing parses."""
+    text = text.lstrip("﻿")
     entries: list[DeckEntry] = []
     commanders: list[DeckEntry] = []
     section = "deck"
@@ -91,17 +93,15 @@ def _parse_entry(line: str, *, section: str) -> DeckEntry | None:
     category: str | None = None
     flags: list[str] = []
 
-    def take_tag(match: re.Match[str]) -> str:
-        nonlocal category
-        if category is None:
-            category = match.group("tag")
-        return ""
-
     def take_flag(match: re.Match[str]) -> str:
         flags.append(match.group("flag").upper())
         return ""
 
-    line = _TAG_RE.sub(take_tag, line)
+    tag_block = _TAG_BLOCK_RE.search(line)
+    if tag_block:
+        category = tag_block.group("rest").split("#")[0].strip()
+        line = line[: tag_block.start()].strip()
+
     line = _FLAG_RE.sub(take_flag, line).strip()
 
     set_code = collector_number = None
