@@ -64,13 +64,16 @@ _SPOT_REMOVAL = re.compile(
     r"return target [^.]{0,60}?to (?:its|their) owner'?s hand",
     re.IGNORECASE,
 )
-#: A sweeper must name a NON-LAND permanent type. This is why there is no
-#: lands-only suppression rule: Armageddon and Ruination simply never match,
-#: while Jokulhaups and Devastation do because they name creatures/artifacts.
+#: A sweeper must name a NON-LAND permanent type. Both branches use the same
+#: affirmative test: an earlier draft used a negative "no land mentioned" test on
+#: the sacrifice branch, which wrongly suppressed Catch // Release ("Each player
+#: sacrifices an artifact, a creature, an enchantment, a land, and a
+#: planeswalker") because a land appears alongside four non-land types.
 _SWEEPER = re.compile(
     r"(?:destroy|exile)\s+(?:all|each|every)\s+[^.]{0,30}?"
     r"\b(?:creature|permanent|artifact|enchantment|planeswalker|token|battle)s?\b|"
-    r"each player sacrifices(?![^.]*\blands?\b)|"
+    r"each player sacrifices[^.]{0,40}?"
+    r"\b(?:creature|permanent|artifact|enchantment|planeswalker|token|battle)s?\b|"
     r"deals \S+ damage to each (?:creature|other creature)|"
     r"all creatures get -",
     re.IGNORECASE,

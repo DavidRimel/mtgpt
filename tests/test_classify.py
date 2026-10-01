@@ -124,6 +124,12 @@ def test_sweeper_hits_all_creatures():
         ("Bust", "Sorcery", "Each player sacrifices all lands they control except for one.",
          {F.MASS_LAND_DENIAL}),
         ("Armageddon", "Sorcery", "Destroy all lands.", {F.MASS_LAND_DENIAL}),
+        # A multi-type sacrifice effect is a sweeper even though it also takes a
+        # land. An earlier draft's negative lookahead wrongly suppressed this.
+        ("Release", "Sorcery",
+         "Each player sacrifices an artifact, a creature, an enchantment, a land, "
+         "and a planeswalker of their choice.",
+         {F.SWEEPER}),
         # ...but a wipe that names non-land types is genuinely both.
         ("Jokulhaups", "Sorcery",
          "Destroy all artifacts, creatures, and lands. They can't be regenerated.",
