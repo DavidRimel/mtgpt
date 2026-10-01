@@ -340,3 +340,54 @@ def test_card_from_json_requires_game_changers_to_be_passed():
 
     with pytest.raises(TypeError):
         card_from_json(_RHYSTIC_PAYLOAD)
+
+
+# --- Goldfish ----------------------------------------------------------------
+
+GO_WIDE = {"archetype": "go_wide"}
+
+
+def test_goldfish_simulates_an_invalid_deck_and_warns():
+    report = api.goldfish(deck_text(), GO_WIDE, games=5, client=deck_client())
+    assert report["games"] == 5
+    assert {"setup", "commander", "thing", "disruption", "win", "notes"} <= set(report)
+    assert report["warnings"], "the 41-card sample deck should fail validation"
+
+
+def test_goldfish_compare_resolves_both_decks():
+    client = client_for(load("collection_sample_deck.json"), NO_GAME_CHANGERS,
+                        load("collection_sample_deck.json"), NO_GAME_CHANGERS)
+    result = api.goldfish_compare(deck_text(), deck_text(), GO_WIDE, games=5, client=client)
+    assert result["before"]["commander"] == result["after"]["commander"]
+    assert "warnings" in result["after"]
+
+
+def test_pilot_game_round_trips_through_json():
+    started = api.goldfish_new(deck_text(), GO_WIDE, seed=2, client=deck_client())
+    view = started["view"]
+    assert view["turn"] == 1
+    assert {"pass": True} in view["legal_actions"]
+    assert "library" not in view, "a pilot must not see the library order"
+    state = json.loads(json.dumps(started["state"]))
+    assert api.goldfish_step(state, {"pass": True})["view"]["turn"] == 2
+
+
+def test_pilot_illegal_action_is_data():
+    from mtgpt.goldfish.engine import IllegalAction
+
+    started = api.goldfish_new(deck_text(), GO_WIDE, client=deck_client())
+    with pytest.raises(IllegalAction) as err:
+        api.goldfish_step(started["state"], {"cast": "Black Lotus"})
+    payload = api.error_payload(err.value)
+    assert payload["action"] == {"cast": "Black Lotus"}
+    assert {"pass": True} in payload["legal_actions"]
+
+
+def test_goal_error_payload_names_the_field():
+    from mtgpt.goal import GoalError
+
+    with pytest.raises(GoalError) as err:
+        api.goldfish(deck_text(), {"archetype": "elves"}, games=1, client=deck_client())
+    payload = api.error_payload(err.value)
+    assert (payload["type"], payload["field"], payload["values"]) == (
+        "GoalError", "archetype", ["elves"])

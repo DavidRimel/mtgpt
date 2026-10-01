@@ -17,6 +17,12 @@ from .brackets import BracketReport, check
 from .classify import classify, classify_deck
 from .deckparse import parse
 from .errors import SourceUnavailable, UnresolvedCards
+from .goal import GoalError
+from .goldfish.engine import (
+    DEFAULT_TURN_CAP, GameState, IllegalAction, apply, available_mana, from_dict,
+    legal_actions, new_game, prepare, to_dict,
+)
+from .goldfish.run import DEFAULT_GAMES, compare, simulate
 from .models import Card, Function, ResolvedDeck, Violation
 from .scryfall import ScryfallClient, card_from_json, resolve
 from .validate import validate
@@ -129,6 +135,12 @@ def error_payload(exc: Exception) -> dict:
         payload["names"] = list(exc.names)
     if isinstance(exc, SourceUnavailable):
         payload["source"] = exc.source
+    if isinstance(exc, GoalError):
+        payload["field"] = exc.field
+        payload["values"] = list(exc.values)
+    if isinstance(exc, IllegalAction):
+        payload["action"] = exc.action
+        payload["legal_actions"] = exc.legal
     return payload
 
 
@@ -548,6 +560,102 @@ def suggest_additions(
 
 
 _STATUS_MARK = {"ok": "ok", "low": "LOW", "high": "HIGH"}
+
+
+# --- Goldfish ---------------------------------------------------------------
+
+
+def goldfish(
+    text: str,
+    goal: dict,
+    *,
+    games: int = DEFAULT_GAMES,
+    turns: int = DEFAULT_TURN_CAP,
+    seed: int = 1,
+    disruption: bool = True,
+    client: ScryfallClient | None = None,
+) -> dict:
+    """Play `games` auto games against the deck's goal file and report.
+
+    A deck that fails validation is still simulated — goldfishing a draft is
+    legitimate — and its violations come back under `warnings`.
+    """
+    deck = _resolved(text, client)
+    report = simulate(deck, goal, games=games, turn_cap=turns, seed=seed,
+                      disruption=disruption)
+    report["warnings"] = _violations(validate(deck))
+    return report
+
+
+def goldfish_compare(
+    before_text: str,
+    after_text: str,
+    goal: dict,
+    *,
+    games: int = DEFAULT_GAMES,
+    turns: int = DEFAULT_TURN_CAP,
+    seed: int = 1,
+    disruption: bool = True,
+    client: ScryfallClient | None = None,
+) -> dict:
+    """Simulate two versions of a deck on the same seeds: before, after, delta."""
+    scry = _client(client)
+    before, after = _resolved(before_text, scry), _resolved(after_text, scry)
+    result = compare(before, after, goal, games=games, turn_cap=turns, seed=seed,
+                     disruption=disruption)
+    result["before"]["warnings"] = _violations(validate(before))
+    result["after"]["warnings"] = _violations(validate(after))
+    return result
+
+
+def goldfish_new(
+    text: str,
+    goal: dict,
+    *,
+    turns: int = DEFAULT_TURN_CAP,
+    seed: int = 1,
+    disruption: bool = True,
+    client: ScryfallClient | None = None,
+) -> dict:
+    """Start one game for Claude to pilot. Returns the state and a view of it."""
+    deck = _resolved(text, client)
+    state = new_game(prepare(deck, goal), seed=seed, turn_cap=turns, disruption=disruption)
+    return {"state": to_dict(state), "view": game_view(state)}
+
+
+def goldfish_step(state: dict, action: dict) -> dict:
+    """Apply one action to a piloted game. Raises IllegalAction for a bad one."""
+    after = apply(from_dict(state), action, in_place=True)
+    return {"state": to_dict(after), "view": game_view(after)}
+
+
+def game_view(state: GameState) -> dict:
+    """What a pilot may see: no library order, which a player would not know."""
+    cards = state.cards
+    return {
+        "turn": state.turn,
+        "over": state.over,
+        "hand": sorted(cards[i].name for i in state.hand),
+        "battlefield": [
+            {"name": p.name, "power": p.power, "tapped": p.tapped,
+             "creature": p.is_creature, "land": p.is_land}
+            for p in state.battlefield
+        ],
+        "command_zone": [{"name": cards[i].name, "tax": state.tax.get(i, 0)}
+                         for i in state.command_zone],
+        "graveyard": [cards[i].name for i in state.graveyard],
+        "library_count": len(state.library),
+        "mana_available": available_mana(state),
+        "treasures": state.treasures,
+        "opponent_life_lost": state.opponent_life_lost,
+        "commander_damage": state.commander_damage,
+        "checkpoints": dict(state.checkpoints),
+        "win_by": state.win_by,
+        "events": list(state.events),
+        "pending_tutor": state.pending_tutor,
+        "legal_actions": legal_actions(state),
+        "log": state.log[-12:],
+    }
 
 
 def render_report(report: dict) -> str:
