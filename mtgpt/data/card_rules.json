@@ -110,6 +110,11 @@
         "mana_colors": "WUBRG"
       }
     },
+    "Demonic Consultation": {
+      "status": "parsed",
+      "note": "exiles the library (naming a card not in the deck); cast only when the look-ahead wins (Oracle)",
+      "reviewed": "2026-10-01"
+    },
     "Demonic Tutor": {
       "status": "parsed",
       "note": "tutor: any card",
@@ -390,9 +395,19 @@
       "note": "one extra card a turn (paying 4 life once); life not tracked",
       "reviewed": "2026-10-01"
     },
+    "Tainted Pact": {
+      "status": "parsed",
+      "note": "exiles the library in a singleton deck without basics; cast only when the look-ahead wins (Oracle)",
+      "reviewed": "2026-10-01"
+    },
     "Tamiyo's Safekeeping": {
       "status": "parsed",
       "note": "protection that survives a wipe",
+      "reviewed": "2026-10-01"
+    },
+    "Thassa's Oracle": {
+      "status": "parsed",
+      "note": "wins on entering if devotion to blue >= library size; cast only when it wins",
       "reviewed": "2026-10-01"
     },
     "Three Visits": {

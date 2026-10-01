@@ -226,3 +226,17 @@ def test_a_finisher_that_wins_now_is_cast_before_ramp():
     s = rigged(SOL_RING, finisher, hand=["Sol Ring", "Finisher"], lands_in_play=3, goal=goal)
     s.command_zone = []
     assert choose(s) == {"cast": "Finisher"}  # Sol Ring first would leave 2 mana
+
+
+def test_a_tutor_completes_the_oracle_combo_first():
+    oracle = card("Thassa's Oracle", "Creature — Merfolk Wizard", "If X is greater than or equal to the "
+                  "number of cards in your library, you win the game.", mana_cost="{U}{U}", power=1.0)
+    consult = card("Demonic Consultation", "Instant", "Choose a card name. Reveal cards from the top of "
+                   "your library until you reveal a card with the chosen name.", mana_cost="{B}")
+    finisher = card("Finisher", "Sorcery", "", mana_cost="{9}")
+    goal = {"archetype": "custom", "thing": "commander", "win": {"cast": "Finisher"}}
+    s = rigged(DEMONIC_TUTOR, oracle, consult, finisher, hand=["Demonic Tutor", "Thassa's Oracle"],
+               lands_in_play=2, goal=goal)
+    s.command_zone = []
+    s = apply(s, {"cast": "Demonic Tutor"})
+    assert choose(s) == {"tutor": "Demonic Consultation"}

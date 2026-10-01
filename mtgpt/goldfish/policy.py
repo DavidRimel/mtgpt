@@ -129,6 +129,18 @@ def _wins_if_cast(state: GameState, action: dict) -> bool:
     return wins
 
 
+def _combo_halves(state: GameState) -> list[str]:
+    """The missing half of a Thassa's Oracle combo whose other half is in hand
+    or on the battlefield: a tutor completes the win before anything else."""
+    zones = list(state.hand) + [p.card for p in state.battlefield if p.card is not None]
+    have_oracle = any(state.cards[i].effect.thoracle for i in zones)
+    have_exile = any(state.cards[i].effect.exile_library for i in zones)
+    if have_oracle == have_exile:
+        return []
+    want = (lambda c: c.effect.exile_library) if have_oracle else (lambda c: c.effect.thoracle)
+    return sorted({state.cards[i].name for i in state.library if want(state.cards[i])})
+
+
 def _put_back_choice(state: GameState) -> dict:
     """After Enter the Infinite: put back a self-shuffling extra turn (Nexus
     of Fate) to keep the loop going, else a land, else the least needed card."""
@@ -207,7 +219,7 @@ def _tutor_choice(state: GameState, legal: list[dict]) -> dict:
     highest-priority, most expensive card available."""
     offered = {a["tutor"] for a in legal}
     present = {p.name for p in state.battlefield} | {state.cards[i].name for i in state.hand}
-    wanted = list(_plan_names(state)) + [name for name, _ in state.goal.engine]
+    wanted = _combo_halves(state) + list(_plan_names(state)) + [name for name, _ in state.goal.engine]
     for name in wanted:
         if name in offered and name not in present:
             return {"tutor": name}
