@@ -38,6 +38,13 @@ def choose(state: GameState) -> dict:
     if lands:
         return _pick_land(state, lands)
 
+    # Win now if a card the win condition names would do it: no ramp first.
+    if not state.looking_ahead:
+        win_names = set(condition_names(state.goal.win))
+        for action in legal:
+            if "cast" in action and action["cast"] in win_names and _wins_if_cast(state, action):
+                return action
+
     options = []
     for action in legal:
         if "cast" not in action:

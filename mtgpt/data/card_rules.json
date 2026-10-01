@@ -91,6 +91,11 @@
       "note": "removal/sweeper held as interaction in hand; spent by the disruption model; no target in a goldfish",
       "reviewed": "2026-10-01"
     },
+    "Deadly Rollick": {
+      "status": "parsed",
+      "note": "free removal with a commander out; held as an answer",
+      "reviewed": "2026-10-01"
+    },
     "Deflecting Swat": {
       "status": "parsed",
       "note": "free redirect: protection",
@@ -118,6 +123,11 @@
     "Dig Through Time": {
       "status": "parsed",
       "note": "best 2 of the top 7, with delve",
+      "reviewed": "2026-10-01"
+    },
+    "Dovin's Veto": {
+      "status": "parsed",
+      "note": "uncounterable counter for a noncreature spell; held as an answer",
       "reviewed": "2026-10-01"
     },
     "Dryad of the Ilysian Grove": {
@@ -178,6 +188,11 @@
     "Flusterstorm": {
       "status": "parsed",
       "note": "counters an instant or sorcery; held as an answer",
+      "reviewed": "2026-10-01"
+    },
+    "Force of Negation": {
+      "status": "parsed",
+      "note": "free counter (noncreature) on opponents' turns; held as an answer",
       "reviewed": "2026-10-01"
     },
     "Force of Will": {
@@ -243,6 +258,11 @@
     "Lotus Cobra": {
       "status": "parsed",
       "note": "landfall: one mana of any color",
+      "reviewed": "2026-10-01"
+    },
+    "Mana Drain": {
+      "status": "parsed",
+      "note": "counterspell held as an answer; its mana next turn is not modeled",
       "reviewed": "2026-10-01"
     },
     "Mana Vault": {

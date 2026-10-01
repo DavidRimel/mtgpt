@@ -218,3 +218,11 @@ def test_before_the_curve_turn_ramp_still_comes_first():
     s = rigged(SOL_RING, lands_in_play=5, hand=["Sol Ring"])
     assert s.turn < s.goal.commander_turn
     assert play_out_turn(s)[:2] == ["Sol Ring", "Test Commander"]
+
+
+def test_a_finisher_that_wins_now_is_cast_before_ramp():
+    finisher = card("Finisher", "Sorcery", "", mana_cost="{3}")
+    goal = {"archetype": "custom", "thing": "commander", "win": {"cast": "Finisher"}}
+    s = rigged(SOL_RING, finisher, hand=["Sol Ring", "Finisher"], lands_in_play=3, goal=goal)
+    s.command_zone = []
+    assert choose(s) == {"cast": "Finisher"}  # Sol Ring first would leave 2 mana
