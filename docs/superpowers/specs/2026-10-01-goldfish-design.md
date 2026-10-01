@@ -165,8 +165,9 @@ counts once per opponent (3×). The commander's combat damage also adds to
 
 Game setup: shuffle with the game's seed; commander(s) in the command zone.
 
-**Mulligan.** London mulligan. The first mulligan is free. Keep 2-5 lands, or 2 lands plus
-a ramp spell castable on turn 2. Otherwise mulligan, to a floor of 5 cards.
+**Mulligan.** London mulligan. The first mulligan is free. Keep 3-5 lands, or 2 lands plus
+a ramp spell of mana value 2 or less. Otherwise mulligan, to a floor of 5 cards. The
+mulligan is an engine rule, the same in auto and pilot mode.
 
 **Turn**, until the `win` condition holds or the turn cap (default 10) is reached:
 
@@ -176,9 +177,11 @@ a ramp spell castable on turn 2. Otherwise mulligan, to a floor of 5 cards.
 4. Combat.
 5. End: evaluate checkpoints; record the first turn each holds.
 
-**Actions:** `play_land(card)`, `cast(card)`, `tutor_choice(card)` (when a tutor resolves),
-`sacrifice(card)` (with a sac outlet), `pass`. The engine only offers legal actions:
-correct mana and colors, one land per turn, commander tax applied.
+**Actions**, as JSON: `{"play_land": name}`, `{"cast": name}`, `{"tutor": name}` (the only
+choices while a tutor resolves), `{"sacrifice": name}` (with a sac outlet out), and
+`{"pass": true}`, which ends the turn. The engine only offers legal actions: correct mana and
+colors, one land per turn, commander tax applied. Anything else raises `IllegalAction`, which
+carries the legal list.
 
 ### Heuristic policy (auto mode)
 
@@ -199,12 +202,16 @@ correct mana and colors, one land per turn, commander tax applied.
 
 From `from_turn`, each turn rolls independently:
 
-- **Commander removal** (probability `commander_removal`): if a protection card is in hand,
-  it is discarded and the event is stopped. Otherwise the commander returns to the command
-  zone and its tax rises by 2.
-- **Board wipe** (probability `board_wipe`): stopped the same way, by a protection card
-  that grants indestructible or hexproof or phases out. Otherwise every creature and
-  engine permanent goes to the graveyard; lands and noncreature mana rocks stay.
+- **Commander removal** (probability `commander_removal`): if a protection card or a
+  counterspell is in hand, it is discarded and the event is stopped. Otherwise the commander
+  returns to the command zone and its tax rises by 2.
+- **Board wipe** (probability `board_wipe`): stopped the same way, but only by protection
+  that survives a wipe (indestructible or phasing) or a counterspell; hexproof does not stop
+  a wipe. Otherwise every nonland permanent except noncreature mana rocks leaves; lands and
+  rocks stay, and creatures that die fire `creature_dies`.
+
+Both dice are rolled every eligible turn whether or not the event could land, so two decks
+played on the same seed see the same rolls.
 
 Disruption defaults to off when the goal file has no `disruption` block.
 
@@ -213,12 +220,14 @@ Disruption defaults to off when the goal file has no `disruption` block.
 The same engine, with Claude choosing actions instead of the heuristic.
 
 ```bash
-python3 -m mtgpt.cli goldfish-new  --file deck.txt --goal deck.goal.json --seed 7 > game.json
+python3 -m mtgpt.cli goldfish-new  --file deck.txt --goal deck.goal.json --seed 7 --out game.json
 python3 -m mtgpt.cli goldfish-step --state game.json --action '{"cast": "Sol Ring"}'
 ```
 
-`goldfish-new` and `goldfish-step` return the state plus a readable view: hand,
-battlefield, mana available, legal actions, checkpoints hit so far. Each action is checked
+`goldfish-new` writes the state to `--out`; `goldfish-step` rewrites `--state` in place, and
+leaves it untouched when the action is refused. Both print a view: hand, battlefield,
+command zone and tax, mana available, legal actions, checkpoints hit so far, and the last
+lines of the game log. The view omits the library order, which a player would not know. Each action is checked
 by the engine, so Claude can only make legal plays. Effects are the same as auto mode;
 Claude decides better (sequencing, tutor targets, when to cast the commander), but reads
 no card text the engine would not.
@@ -236,17 +245,23 @@ are reported next to the auto distribution, which shows where the heuristic misp
 setup:      mana_by_turn (mean per turn), pre_commander_mana_spent_on {ramp, engine,
             other, unspent} (%), lands_by_turn, mulligan_rate, stalled_rate
             (≤ 2 lands and no ramp on turn 3)
-commander:  on_curve_rate (cast by commander_turn), cast_turn {p25, median, p75,
-            histogram}, late_reasons {land_light, color_screw, no_mana}
+commander:  target_turn, on_curve_rate (cast by commander_turn), cast_rate,
+            cast_turn {p25, median, p75, histogram},
+            late_reasons {land_light, no_mana, color_screw, spent_elsewhere}
 thing:      online_rate, online_turn {p25, median, p75, histogram},
             interaction_while_online {mean removal, protection, counterspell in hand},
             covered_rate (turns online with ≥ 1 protection AND ≥ 1 removal in hand)
-disruption: events, stopped_by_protection_rate, recovery_turns {median}
-            (turns from event until thing is online again), win_rate_after_event
+disruption: events, landed, stopped_by_protection_rate (protection or counterspell),
+            recovery_turns {median} (turns from event until the thing is online
+            again; 0 means back by the end of the same turn), never_recovered,
+            win_rate_after_event
 win:        win_rate (by turn cap), win_turn {p25, median, p75, histogram},
             by_condition {condition: rate}
-notes:      unmodeled (card names), games, seed, turn_cap
+notes:      unmodeled (card names, minus those with an engine override), goldfish caveat
 ```
+
+The report's top level also carries `games`, `seed`, `turn_cap`, `disruption_enabled`, and,
+from the API, `warnings` (validation violations).
 
 `goldfish-compare --file old.txt --file new.txt --goal deck.goal.json` runs both decks on
 the same seeds and returns each metric's before, after, and difference.
