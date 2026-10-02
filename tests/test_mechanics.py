@@ -666,3 +666,34 @@ def test_no_attempt_between_scheduled_rounds():
     for _ in range(3):
         s = apply(s, PASS)  # rounds 2 (answered), 3, 4: no attempt on 3 or 4
     assert not s.over and len(s.win_attempts) == 1
+
+
+# --- Repeatable removal engines answer win attempts -----------------------------
+
+def test_a_removal_engine_on_the_battlefield_answers_every_attempt_and_stays():
+    from simdeck import BEAR
+    goal = {**FAST_TABLE, "opponent_win": {"from_turn": 2, "answers": ["removal"]},
+            "engine": {"Grizzly Bears": {"removal_engine": True}}}
+    s = rigged(BEAR, on_board=["Grizzly Bears"], lands_in_play=1, goal=goal)
+    s.command_zone = []
+    for _ in range(3):
+        s = apply(s, PASS)
+    assert not s.over and all(a["by"] == "Grizzly Bears" for a in s.win_attempts)
+
+
+def test_a_removal_engine_does_not_answer_when_removal_is_not_an_answer():
+    from simdeck import BEAR
+    goal = {**FAST_TABLE, "opponent_win": {"from_turn": 2, "answers": ["counterspell"]},
+            "engine": {"Grizzly Bears": {"removal_engine": True}}}
+    s = rigged(BEAR, on_board=["Grizzly Bears"], lands_in_play=1, goal=goal)
+    s.command_zone = []
+    s = apply(s, PASS)
+    assert s.loss_by == "opponent_win"
+
+
+def test_a_removal_engine_counts_as_standing_removal():
+    from mtgpt.goldfish.engine import held_counts
+    from simdeck import BEAR
+    goal = {**FAST_TABLE, "engine": {"Grizzly Bears": {"removal_engine": True}}}
+    s = rigged(BEAR, on_board=["Grizzly Bears"], lands_in_play=1, goal=goal)
+    assert held_counts(s)["removal"] == 1

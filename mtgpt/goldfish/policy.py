@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from ..goal import condition_names
 from .engine import (GameState, _alt_costs, apply, available_mana, devotion_to_blue, find_card,
-                     legal_actions, production, win_label)
+                     legal_actions, production, removal_engines, win_label)
 from .mana import parse_cost
 
 RAMP, COMMANDER, ENGINE, VALUE, OTHER = range(5)
@@ -168,6 +168,8 @@ def _answer_needed(state: GameState, offered: set) -> list[str]:
         kinds.add("counterspell")
     if any(state.cards[i].effect.held & kinds for i in state.hand):
         return []
+    if "removal" in rule.answers and removal_engines(state):
+        return []
     answers = [i for i in state.library if state.cards[i].effect.held & kinds
                and state.cards[i].name in offered]
     return [state.cards[i].name for i in sorted(answers, key=lambda i: (state.cards[i].mana_value,
@@ -184,6 +186,37 @@ def _combo_halves(state: GameState) -> list[str]:
         return []
     want = (lambda c: c.effect.exile_library) if have_oracle else (lambda c: c.effect.thoracle)
     return sorted({state.cards[i].name for i in state.library if want(state.cards[i])})
+
+
+def _closest_combo(state: GameState, offered: set) -> list[str]:
+    """The missing pieces of the battlefield combo nearest completion that a
+    tutor can find, cheapest first. A piece in hand or the command zone counts
+    as found; a combo already on the battlefield needs nothing."""
+    have = ({p.name for p in state.battlefield}
+            | {state.cards[i].name for i in state.hand + state.command_zone})
+    best: tuple[int, list[str]] | None = None
+    for cond in _battlefield_conditions(state.goal.win):
+        missing = [slot for slot in cond.slots if not any(n in have for n in slot)]
+        findable = [n for slot in missing for n in slot if n in offered]
+        if not missing or not findable:
+            continue
+        if best is None or len(missing) < best[0]:
+            best = (len(missing), findable)
+    if best is None:
+        return []
+
+    def cost(name):
+        idx = find_card(state, name, state.library)
+        return (state.cards[idx].mana_value, name)
+
+    return sorted(best[1], key=cost)
+
+
+def _battlefield_conditions(cond):
+    if cond.kind == "battlefield":
+        yield cond
+    for child in cond.children:
+        yield from _battlefield_conditions(child)
 
 
 def _put_back_choice(state: GameState) -> dict:
@@ -264,7 +297,8 @@ def _tutor_choice(state: GameState, legal: list[dict]) -> dict:
     highest-priority, most expensive card available."""
     offered = {a["tutor"] for a in legal}
     present = {p.name for p in state.battlefield} | {state.cards[i].name for i in state.hand}
-    wanted = (_answer_needed(state, offered) + _combo_halves(state) + list(_plan_names(state))
+    wanted = (_answer_needed(state, offered) + _combo_halves(state) + _closest_combo(state, offered)
+              + list(_plan_names(state))
               + [name for name, _ in state.goal.engine])
     for name in wanted:
         if name in offered and name not in present:

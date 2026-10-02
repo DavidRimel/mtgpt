@@ -367,6 +367,9 @@ def evaluate(state: GameState, cond: Condition) -> bool:
     if kind == "assembled":
         present = {p.name for p in state.battlefield} | {state.cards[i].name for i in state.hand}
         return all(name in present for name in cond.names)
+    if kind == "battlefield":
+        out = {p.name for p in state.battlefield}
+        return all(any(name in out for name in slot) for slot in cond.slots)
     raise ValueError(f"unknown condition kind {kind!r}")
 
 
@@ -389,8 +392,9 @@ def board_power(state: GameState) -> float:
 
 def held_counts(state: GameState) -> dict[str, int]:
     """Interaction in hand: removal (spot removal and sweepers), protection,
-    counterspells."""
+    counterspells. A removal engine on the battlefield counts as standing removal."""
     counts = {"removal": 0, "protection": 0, "counterspell": 0}
+    counts["removal"] += len(removal_engines(state))
     for idx in state.hand:
         held = state.cards[idx].effect.held
         if held & {"removal", "sweeper"}:
@@ -400,6 +404,18 @@ def held_counts(state: GameState) -> dict[str, int]:
         if "counterspell" in held:
             counts["counterspell"] += 1
     return counts
+
+
+def removal_engines(state: GameState) -> list[Permanent]:
+    """Repeatable removal engines (goal `removal_engine`) on the battlefield."""
+    out = []
+    for perm in state.battlefield:
+        if perm.card is None or perm.is_land:
+            continue
+        spec = state.goal.engine_for(perm.name)
+        if spec is not None and spec.removal_engine:
+            out.append(perm)
+    return out
 
 
 def devotion_to_blue(state: GameState) -> int:
@@ -901,6 +917,12 @@ def _opponent_win_attempt(s: GameState) -> None:
             if s.cards[perm.card].effect.stax or (spec is not None and spec.stax):
                 s.win_attempts.append({"turn": s.turn, "stopped": True, "by": perm.name})
                 return
+    if "removal" in rule.answers:
+        engines = removal_engines(s)
+        if engines:
+            s.win_attempts.append({"turn": s.turn, "stopped": True, "by": engines[0].name})
+            s.log.append(f"T{s.turn}: opponent's win attempt stopped by {engines[0].name}")
+            return
     wanted = set()
     if "removal" in rule.answers:
         wanted |= {"removal", "sweeper"}

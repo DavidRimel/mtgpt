@@ -282,3 +282,41 @@ def test_with_an_answer_held_the_tutor_goes_for_the_finisher():
     s.command_zone = []
     s = apply(s, {"cast": "Demonic Tutor"})
     assert choose(s) == {"tutor": "Finisher"}
+
+
+# --- Battlefield combos: closest combo first ---------------------------------
+
+PIECE_C = card("Piece C", "Artifact", "", mana_cost="{2}")
+PIECE_D = card("Piece D", "Artifact", "", mana_cost="{2}")
+
+
+def test_battlefield_win_needs_the_pieces_on_the_battlefield_not_in_hand():
+    from mtgpt.goldfish.engine import evaluate
+    goal = {"archetype": "combo", "thing": "commander",
+            "win": {"battlefield": ["Piece A", ["Piece B", "Piece C"]]}}
+    in_hand = rigged(PIECE_A, PIECE_B, PIECE_C, hand=["Piece A", "Piece B"], goal=goal)
+    assert not evaluate(in_hand, in_hand.goal.win)
+    out = rigged(PIECE_A, PIECE_B, PIECE_C, on_board=["Piece A", "Piece C"], goal=goal)
+    assert evaluate(out, out.goal.win)
+
+
+def test_tutor_completes_the_combo_closest_to_done():
+    # Combo 1 (A+B) is listed first but is missing both pieces; combo 2 (C+D)
+    # has C out already, so the tutor finds D.
+    goal = {"archetype": "combo", "thing": "commander", "win": {"any": [
+        {"battlefield": ["Piece A", "Piece B"]}, {"battlefield": ["Piece C", "Piece D"]}]}}
+    s = rigged(DEMONIC_TUTOR, PIECE_A, PIECE_B, PIECE_C, PIECE_D, hand=["Demonic Tutor"],
+               on_board=["Piece C"], lands_in_play=2, goal=goal)
+    s.command_zone = []
+    s = apply(s, {"cast": "Demonic Tutor"})
+    assert choose(s) == {"tutor": "Piece D"}
+
+
+def test_tutor_counts_a_piece_in_hand_as_found():
+    goal = {"archetype": "combo", "thing": "commander", "win": {"any": [
+        {"battlefield": ["Piece C", "Piece D", "Piece A"]}, {"battlefield": ["Piece A", "Piece B"]}]}}
+    s = rigged(DEMONIC_TUTOR, PIECE_A, PIECE_B, PIECE_C, PIECE_D, hand=["Demonic Tutor", "Piece A"],
+               lands_in_play=2, goal=goal)
+    s.command_zone = []
+    s = apply(s, {"cast": "Demonic Tutor"})
+    assert choose(s) == {"tutor": "Piece B"}
