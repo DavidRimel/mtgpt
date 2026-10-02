@@ -54,8 +54,14 @@ _FETCH_COUNT = re.compile(
     r"search your library for (?:up to )?(a|an|one|two|three|\d+)\b", re.IGNORECASE
 )
 _TUTOR = re.compile(
-    r"search your library for (?:a|an) (?P<what>[^.]*?)\bcards?\b", re.IGNORECASE
+    r"search your library(?: and/or graveyard)? for (?:a|an) (?P<what>[^.]*?)\bcards?\b", re.IGNORECASE
 )
+#: "...with mana value X or less" (Chord of Calling, Green Sun's Zenith).
+_TUTOR_X = re.compile(r"search your library[^.]*with mana value x or less", re.IGNORECASE)
+#: "...put it/that card onto the battlefield" in the tutor's sentence.
+_TUTOR_BATTLEFIELD = re.compile(r"search your library[^.]*?(?:put (?:it|that card) onto the battlefield)",
+                                re.IGNORECASE)
+_COLOR_WORDS = {"white": "W", "blue": "U", "black": "B", "red": "R", "green": "G"}
 #: "This land enters tapped unless you control..." is read as untapped: the
 #: condition is usually met in a two-color deck, and the sim cannot check it.
 _ENTERS_TAPPED = re.compile(r"enters(?: the battlefield)? tapped(?!\s+unless)", re.IGNORECASE)
@@ -176,6 +182,12 @@ class SimEffect:
     pact_cost: str | None = None
     #: A tutor that puts the card on top instead of in hand (Vampiric Tutor).
     tutor_to_top: bool = False
+    #: An X tutor: it finds a card of mana value X or less, X paid on top of its cost.
+    tutor_x: bool = False
+    #: The tutor puts the card onto the battlefield instead of into hand.
+    tutor_battlefield: bool = False
+    #: A color the found card must have ("green creature card"), as a WUBRG letter.
+    tutor_color: str | None = None
     #: Enters only by discarding a land from hand (Mox Diamond).
     discard_land: bool = False
     #: Exiles a card from hand on entering and taps for its colors (Chrome Mox).
@@ -533,6 +545,14 @@ def _mechanics(card: Card, text: str) -> dict:
         out["pact_cost"] = m.group(1).upper()
     if re.search(r"search your library for [^.]*?(?:then shuffle and )?put (?:that card|the card|it) on top", t):
         out["tutor_to_top"] = True
+    if _TUTOR_X.search(t):
+        out["tutor_x"] = True
+    if _TUTOR_BATTLEFIELD.search(t):
+        out["tutor_battlefield"] = True
+    if (m := _TUTOR.search(t)) and not out.get("tutor_count"):
+        colors = [c for word, c in _COLOR_WORDS.items() if re.search(rf"\b{word}\b", m.group("what").lower())]
+        if len(colors) == 1:
+            out["tutor_color"] = colors[0]
     if "you may discard a land card instead" in t:
         out["discard_land"] = True
     if "imprint — when this artifact enters, you may exile a nonartifact, nonland card from your hand" in t:

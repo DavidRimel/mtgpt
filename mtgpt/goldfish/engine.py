@@ -188,6 +188,8 @@ class GameState:
     imprints: dict[int, list[str]] = field(default_factory=dict)
     #: True while the pending tutor puts its card on top (Vampiric Tutor).
     pending_tutor_top: bool = False
+    #: The card whose tutor is pending, for its X cost, color and destination.
+    pending_tutor_source: int | None = None
     late_reason: str | None = None
     log: list[str] = field(default_factory=list)
 
@@ -306,8 +308,9 @@ def legal_actions(state: GameState) -> list[dict]:
     if state.pending_put_back:
         return [{"put_back": name} for name in _distinct(state, state.hand, lambda c: True)]
     if state.pending_tutor is not None:
+        budget = available_mana(state)
         names = sorted({state.cards[i].name for i in state.library
-                        if _tutor_matches(state.cards[i], state.pending_tutor)})
+                        if _tutor_allowed(state, state.pending_tutor_source, i, state.pending_tutor, budget)})
         return [{"tutor": name} for name in names] or [{"tutor": None}]
 
     actions: list[dict] = []
@@ -321,8 +324,16 @@ def legal_actions(state: GameState) -> list[dict]:
     for idx in _first_of_each(state, state.hand + state.command_zone):
         if state.cards[idx].effect.discard_land and not has_land:
             continue
-        if not state.cards[idx].is_land and _payment(state, idx, units) is not None:
-            actions.append({"cast": state.cards[idx].name})
+        if state.cards[idx].is_land:
+            continue
+        plan = _payment(state, idx, units)
+        if plan is None:
+            continue
+        if state.cards[idx].effect.tutor_x and not any(
+                _tutor_allowed(state, idx, i, state.cards[idx].effect.tutor, len(units) - len(plan))
+                for i in state.library):
+            continue  # an X tutor that can afford nothing worth finding
+        actions.append({"cast": state.cards[idx].name})
     if _has_tag(state, "sac_outlet"):
         for name in sorted({p.name for p in state.battlefield if p.is_creature}):
             actions.append({"sacrifice": name})
@@ -610,6 +621,7 @@ def _resolve(s: GameState, idx: int, *, from_hand: bool = False) -> None:
         s.pending_tutor = effect.tutor
         s.tutors_left = max(1, effect.tutor_count)
         s.pending_tutor_top = effect.tutor_to_top
+        s.pending_tutor_source = idx
     if effect.imprint:
         _imprint(s, idx)
 
@@ -676,6 +688,27 @@ def _best_cards(s: GameState, idxs: list[int], k: int) -> list[int]:
 def _tutor(s: GameState, name: str | None) -> None:
     restriction = s.pending_tutor
     s.pending_tutor = None
+    source = s.cards[s.pending_tutor_source].effect if s.pending_tutor_source is not None else None
+    s.pending_tutor_source = None
+    if name is not None and source is not None and (source.tutor_x or source.tutor_battlefield):
+        idx = find_card(s, name, s.library)
+        s.library.remove(idx)
+        if source.tutor_x:
+            mv = int(s.cards[idx].mana_value)
+            units = _units(s)
+            plan = plan_payment(units, mv, [])
+            _spend(s, plan, units)
+            s.spent_this_turn[_spend_category(s, idx)] += len(plan)
+        s.pending_tutor_top = False
+        s.tutors_left = 0
+        s.rng.shuffle(s.library)
+        if source.tutor_battlefield:
+            s.log.append(f"T{s.turn}: tutor {name} onto the battlefield")
+            _resolve(s, idx)
+        else:
+            s.hand.append(idx)
+            s.log.append(f"T{s.turn}: tutor {name}")
+        return
     if name is not None and s.pending_tutor_top:
         idx = find_card(s, name, s.library)
         s.library.remove(idx)
@@ -1332,6 +1365,20 @@ def _lands_from_top(s: GameState) -> bool:
                for p in s.battlefield)
 
 
+def _tutor_allowed(s: GameState, source: int | None, idx: int, restriction: str, budget: int) -> bool:
+    """Can the tutor `source` find library card `idx`: its type, its color, and
+    for an X tutor a mana value the `budget` left after casting can pay."""
+    card = s.cards[idx]
+    if not _tutor_matches(card, restriction):
+        return False
+    effect = s.cards[source].effect if source is not None else None
+    if effect is None:
+        return True
+    if effect.tutor_color and effect.tutor_color not in card.colors:
+        return False
+    return not effect.tutor_x or card.mana_value <= budget
+
+
 def _tutor_matches(card: CardInfo, restriction: str) -> bool:
     if restriction == "any":
         return True
@@ -1404,6 +1451,7 @@ def to_dict(s: GameState) -> dict:
         "attempt_rounds": list(s.attempt_rounds),
         "imprints": {str(k): list(v) for k, v in s.imprints.items()},
         "pending_tutor_top": s.pending_tutor_top,
+        "pending_tutor_source": s.pending_tutor_source,
         "late_reason": s.late_reason,
         "log": list(s.log),
     }
@@ -1464,6 +1512,7 @@ def _from_dict(data: dict) -> GameState:
         goal_rule.from_turn, data["turn_cap"] + 1)) if goal_rule else [])
     plain["imprints"] = {int(k): v for k, v in data.get("imprints", {}).items()}
     plain["pending_tutor_top"] = data.get("pending_tutor_top", False)
+    plain["pending_tutor_source"] = data.get("pending_tutor_source")
     return GameState(
         cards=cards, goal=goal, goal_raw=data["goal"], turn_cap=data["turn_cap"],
         disruption=data["disruption"], rng=_load_rng(data["rng"]),
