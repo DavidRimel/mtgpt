@@ -95,6 +95,11 @@
       "note": "-1/-1 sweeper; combo starter; shuffles itself",
       "reviewed": "2026-10-01"
     },
+    "Black Widow, Deadly Hunter": {
+      "status": "ignored",
+      "note": "draw when a deathtouch creature connects; combat by tokens not modeled",
+      "reviewed": "2026-10-02"
+    },
     "Blood Artist": {
       "status": "override",
       "note": "drain 1 on any creature death",
@@ -158,8 +163,8 @@
     },
     "Chord of Calling": {
       "status": "parsed",
-      "note": "creature tutor to battlefield; sim casts it for GGG and ignores X and convoke, so it is optimistic",
-      "reviewed": "2026-10-01"
+      "note": "X tutor: creature of MV X or less onto the battlefield, X paid on top of GGG; convoke not modeled",
+      "reviewed": "2026-10-02"
     },
     "Chromatic Lantern": {
       "status": "parsed",
@@ -201,6 +206,14 @@
       "note": "ETB -1/-1 counter + {4} proliferate; combo starter, no goldfish value",
       "reviewed": "2026-10-01"
     },
+    "Contagion Engine": {
+      "status": "override",
+      "note": "ETB -1/-1 counter on each creature a player controls; {4}: proliferate twice — repeatable removal",
+      "reviewed": "2026-10-02",
+      "rule": {
+        "removal_engine": true
+      }
+    },
     "Corrupted Conviction": {
       "status": "parsed",
       "note": "sac a creature, draw 2",
@@ -235,6 +248,11 @@
       "status": "parsed",
       "note": "removal/sweeper held as interaction in hand; spent by the disruption model; no target in a goldfish",
       "reviewed": "2026-10-01"
+    },
+    "Dawnhand Dissident": {
+      "status": "ignored",
+      "note": "tap + blight 1: surveil 1 each turn (a Hapatra snake each turn); snakes and surveil not modeled",
+      "reviewed": "2026-10-02"
     },
     "Deadly Rollick": {
       "status": "parsed",
@@ -302,8 +320,8 @@
     },
     "Eldritch Evolution": {
       "status": "parsed",
-      "note": "creature tutor to battlefield",
-      "reviewed": "2026-10-01"
+      "note": "creature tutor onto the battlefield; the sacrifice and its MV limit are not modeled",
+      "reviewed": "2026-10-02"
     },
     "Elves of Deep Shadow": {
       "status": "parsed",
@@ -340,6 +358,11 @@
       "note": "draws the library, puts one back; auto pilot casts it only when the round wins",
       "reviewed": "2026-10-01"
     },
+    "Evolution Sage": {
+      "status": "ignored",
+      "note": "landfall proliferate: a snake per countered creature with Hapatra; not modeled",
+      "reviewed": "2026-10-02"
+    },
     "Expropriate": {
       "status": "parsed",
       "note": "1 extra turn (optimistic: assumes one 'time' vote); 'money' votes have no goldfish effect",
@@ -373,6 +396,11 @@
       "status": "parsed",
       "note": "free counterspell (noncreature) held as an answer",
       "reviewed": "2026-10-01"
+    },
+    "Finale of Devastation": {
+      "status": "parsed",
+      "note": "X tutor: creature of MV X or less onto the battlefield (graveyard option and X>=10 pump not modeled)",
+      "reviewed": "2026-10-02"
     },
     "Fist of Suns": {
       "status": "parsed",
@@ -433,6 +461,11 @@
       "status": "parsed",
       "note": "mana rock, B/G (filter)",
       "reviewed": "2026-10-01"
+    },
+    "Green Sun's Zenith": {
+      "status": "parsed",
+      "note": "X tutor: green creature of MV X or less onto the battlefield; shuffles itself back",
+      "reviewed": "2026-10-02"
     },
     "Grim Affliction": {
       "status": "ignored",
@@ -640,6 +673,11 @@
       "status": "parsed",
       "note": "free counterspell; once spent, pay {3}{U}{U} next upkeep or lose",
       "reviewed": "2026-10-01"
+    },
+    "Parallel Lives": {
+      "status": "ignored",
+      "note": "doubles tokens (snakes); token counts not modeled",
+      "reviewed": "2026-10-02"
     },
     "Persist": {
       "status": "parsed",
