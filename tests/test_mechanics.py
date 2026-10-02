@@ -641,3 +641,28 @@ def test_pact_is_the_last_answer_spent():
     s.command_zone = []
     s = apply(s, PASS)
     assert s.win_attempts[-1]["by"] == "Counterspell" and "Pact of Negation" in names(s, s.hand)
+
+
+def test_win_attempts_can_come_every_two_or_three_rounds():
+    goal = {"archetype": "custom", "thing": "commander", "win": NEVER,
+            "opponent_win": {"from_turn": 5, "every": [2, 3]}}
+    from mtgpt.goldfish.engine import new_game, prepare
+    from simdeck import deck
+    setup = prepare(deck(), goal)
+    schedules = {tuple(new_game(setup, seed=f"1-{i}", turn_cap=20).attempt_rounds) for i in range(30)}
+    for rounds in schedules:
+        assert rounds[0] == 5
+        assert all(b - a in (2, 3) for a, b in zip(rounds, rounds[1:]))
+    assert len(schedules) > 1  # the gaps vary from game to game
+
+
+def test_no_attempt_between_scheduled_rounds():
+    from simdeck import SWORDS
+    goal = {"archetype": "custom", "thing": "commander", "win": NEVER,
+            "opponent_win": {"from_turn": 2, "every": [3, 3]}}
+    s = rigged(SWORDS, hand=["Swords to Plowshares"], lands_in_play=1, goal=goal)
+    s.command_zone = []
+    assert s.attempt_rounds[:2] == [2, 5]
+    for _ in range(3):
+        s = apply(s, PASS)  # rounds 2 (answered), 3, 4: no attempt on 3 or 4
+    assert not s.over and len(s.win_attempts) == 1
