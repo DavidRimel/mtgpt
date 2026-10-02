@@ -109,3 +109,35 @@ def test_merge_rejects_an_invalid_incoming_rule(library, tmp_path):
     with pytest.raises(GoalError):
         card_rules.merge(theirs)
     assert card_rules.load()["cards"] == {}
+
+
+def test_merge_raises_on_missing_incoming_file(library, tmp_path):
+    with pytest.raises(ValueError) as exc:
+        card_rules.merge(tmp_path / "nonexistent.json")
+    assert "does not exist" in str(exc.value)
+    assert card_rules.load()["cards"] == {}
+
+
+def test_merge_rejects_entry_with_unknown_status(library, tmp_path):
+    theirs = write_library(tmp_path / "theirs.json", {
+        "Blood Artist": {"status": "maybe", "note": "", "reviewed": "2026-10-03"}})
+    with pytest.raises(ValueError):
+        card_rules.merge(theirs)
+    assert card_rules.load()["cards"] == {}
+
+
+def test_merge_rejects_parsed_entry_with_rule(library, tmp_path):
+    theirs = write_library(tmp_path / "theirs.json", {
+        "Blood Artist": {"status": "parsed", "rule": {"on": "creature_dies"}, "note": "",
+                         "reviewed": "2026-10-03"}})
+    with pytest.raises(ValueError):
+        card_rules.merge(theirs)
+    assert card_rules.load()["cards"] == {}
+
+
+def test_merge_rejects_file_with_no_cards_key(library, tmp_path):
+    theirs = tmp_path / "theirs.json"
+    theirs.write_text(json.dumps({"version": 1}))
+    with pytest.raises(ValueError):
+        card_rules.merge(theirs)
+    assert card_rules.load()["cards"] == {}

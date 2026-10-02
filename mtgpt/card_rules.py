@@ -44,6 +44,24 @@ def validate_rule(name: str, rule) -> None:
     _engine({name: rule}, lambda names, field: tuple(names))
 
 
+def _validate_entry(name: str, entry: dict) -> None:
+    """Validate a single card entry. Raises ValueError or GoalError on any issue."""
+    if not isinstance(entry, dict):
+        raise ValueError(f"{name}: entry must be a dict")
+    status = entry.get("status")
+    if status not in STATUSES:
+        raise ValueError(f"{name}: status must be one of {', '.join(STATUSES)}, got {status!r}")
+    if status == "override":
+        if "rule" not in entry:
+            raise ValueError(f"{name}: override requires a rule")
+        if not isinstance(entry["rule"], dict):
+            raise ValueError(f"{name}: rule must be a dict")
+        validate_rule(name, entry["rule"])
+    else:  # parsed or ignored
+        if "rule" in entry:
+            raise ValueError(f"{name}: {status!r} entry must not have a rule")
+
+
 def record(name: str, *, status: str, rule, note: str, path: Path | None = None) -> dict:
     """Add or replace one card's entry, validated, and save the library."""
     if status not in STATUSES:
@@ -67,15 +85,32 @@ def record(name: str, *, status: str, rule, note: str, path: Path | None = None)
 def merge(other_path: Path, path: Path | None = None) -> dict:
     """Add another library's rules that this one lacks. A card both libraries
     know but judge differently is listed as a conflict and left untouched."""
+    other_path = Path(other_path)
+    if not other_path.exists():
+        raise ValueError(f"{other_path} does not exist")
+
     path = Path(path or DEFAULT_PATH)
     mine = load(path)
-    theirs = load(Path(other_path))
+    theirs_raw = json.loads(other_path.read_text(encoding="utf-8"))
+
+    # Validate incoming library structure before mutating anything
+    if not isinstance(theirs_raw, dict):
+        raise ValueError("incoming file must contain a JSON object")
+    if "cards" not in theirs_raw:
+        raise ValueError("incoming file must have a 'cards' key")
+    if not isinstance(theirs_raw["cards"], dict):
+        raise ValueError("'cards' must be a dict")
+
+    # Validate all entries before any modifications
+    for name, entry in theirs_raw["cards"].items():
+        _validate_entry(name, entry)
+
+    # Now that validation passed, merge the entries
+    theirs = theirs_raw
     added, unchanged, conflicts = [], 0, []
     for name, entry in sorted(theirs["cards"].items()):
         current = mine["cards"].get(name)
         if current is None:
-            if entry.get("status") == "override":
-                validate_rule(name, entry.get("rule"))
             mine["cards"][name] = entry
             added.append(name)
         elif _same(current, entry):
