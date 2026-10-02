@@ -55,7 +55,7 @@ _INT_SPEC_FIELDS = ("drain", "draw", "treasure", "tokens", "anthem", "mana")
 #: A mana cost written in symbols: {3}, {W}, {C}, {X}, hybrid {W/U}, {2/W}, Phyrexian {B/P}.
 _MANA_COST = re.compile(r"(?:\{(?:\d+|[WUBRGCXS]|[WUBRG2]/[WUBRGP])\})+")
 _MANA_COLORS = frozenset("WUBRGC")
-_BOOL_SPEC_FIELDS = ("sac_outlet", "payoff", "finisher", "stax")
+_BOOL_SPEC_FIELDS = ("sac_outlet", "payoff", "finisher", "stax", "removal_engine")
 
 
 class GoalError(MtgptError):
@@ -77,8 +77,10 @@ class Condition:
     key: str | None = None
     #: The threshold of a `count` or numeric condition.
     n: float = 0.0
-    #: The cards a `cast` or `assembled` condition names.
+    #: The cards a `cast`, `assembled` or `battlefield` condition names.
     names: tuple[str, ...] = ()
+    #: A `battlefield` condition's slots: each needs one of its cards out.
+    slots: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,9 @@ class EngineSpec:
     finisher: bool = False
     #: A static hoser on the battlefield stops opponents' win attempts.
     stax: bool = False
+    #: A repeatable removal engine (Yawgmoth, a -1/-1 counter machine): on the
+    #: battlefield it answers every win attempt that removal can, and stays.
+    removal_engine: bool = False
     anthem: int = 0
     priority: str | None = None
     #: While this permanent is on the battlefield, any spell may be cast for
@@ -216,6 +221,8 @@ def describe(cond: Condition) -> str:
         return f"cast:{cond.names[0]}"
     if cond.kind == "assembled":
         return "assembled:" + "+".join(cond.names)
+    if cond.kind == "battlefield":
+        return "battlefield:" + "+".join("|".join(slot) for slot in cond.slots)
     return f"{cond.kind}(" + ", ".join(describe(c) for c in cond.children) + ")"
 
 
@@ -269,6 +276,14 @@ def _condition(raw, field: str, canon) -> Condition:
         if not isinstance(value, list) or not value:
             raise GoalError(where, "must be a non-empty list of card names")
         return Condition("assembled", names=canon(value, where))
+    if kind == "battlefield":
+        # Each entry is a card, or a list of cards any one of which fills it.
+        if not isinstance(value, list) or not value or not all(
+                isinstance(v, str) or (isinstance(v, list) and v) for v in value):
+            raise GoalError(where, "must be a non-empty list of card names or lists of alternatives")
+        slots = tuple(canon([v] if isinstance(v, str) else v, where) for v in value)
+        names = tuple(dict.fromkeys(n for slot in slots for n in slot))
+        return Condition("battlefield", names=names, slots=slots)
     raise GoalError(field, f"unknown condition {kind!r}", [kind])
 
 

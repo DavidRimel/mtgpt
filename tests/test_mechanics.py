@@ -666,3 +666,87 @@ def test_no_attempt_between_scheduled_rounds():
     for _ in range(3):
         s = apply(s, PASS)  # rounds 2 (answered), 3, 4: no attempt on 3 or 4
     assert not s.over and len(s.win_attempts) == 1
+
+
+# --- Repeatable removal engines answer win attempts -----------------------------
+
+def test_a_removal_engine_on_the_battlefield_answers_every_attempt_and_stays():
+    from simdeck import BEAR
+    goal = {**FAST_TABLE, "opponent_win": {"from_turn": 2, "answers": ["removal"]},
+            "engine": {"Grizzly Bears": {"removal_engine": True}}}
+    s = rigged(BEAR, on_board=["Grizzly Bears"], lands_in_play=1, goal=goal)
+    s.command_zone = []
+    for _ in range(3):
+        s = apply(s, PASS)
+    assert not s.over and all(a["by"] == "Grizzly Bears" for a in s.win_attempts)
+
+
+def test_a_removal_engine_does_not_answer_when_removal_is_not_an_answer():
+    from simdeck import BEAR
+    goal = {**FAST_TABLE, "opponent_win": {"from_turn": 2, "answers": ["counterspell"]},
+            "engine": {"Grizzly Bears": {"removal_engine": True}}}
+    s = rigged(BEAR, on_board=["Grizzly Bears"], lands_in_play=1, goal=goal)
+    s.command_zone = []
+    s = apply(s, PASS)
+    assert s.loss_by == "opponent_win"
+
+
+def test_a_removal_engine_counts_as_standing_removal():
+    from mtgpt.goldfish.engine import held_counts
+    from simdeck import BEAR
+    goal = {**FAST_TABLE, "engine": {"Grizzly Bears": {"removal_engine": True}}}
+    s = rigged(BEAR, on_board=["Grizzly Bears"], lands_in_play=1, goal=goal)
+    assert held_counts(s)["removal"] == 1
+
+
+def test_worldly_tutor_puts_the_card_on_top():
+    worldly = card("Worldly Tutor", "Instant", "Search your library for a creature card, reveal it, then "
+                   "shuffle and put the card on top.", mana_cost="{G}")
+    assert effect_of(worldly, WUBRG).tutor_to_top
+
+
+# --- X tutors that put the card onto the battlefield (Chord, GSZ, Finale) --------
+
+GSZ = card("Green Sun's Zenith", "Sorcery", "Search your library for a green creature card with mana value "
+           "X or less, put it onto the battlefield, then shuffle. Shuffle Green Sun's Zenith into its "
+           "owner's library.", mana_cost="{X}{G}")
+FINALE = card("Finale of Devastation", "Sorcery", "Search your library and/or graveyard for a creature card "
+              "with mana value X or less and put it onto the battlefield. If you search your library this "
+              "way, shuffle. If X is 10 or more, creatures you control get +X/+X and gain haste until end "
+              "of turn.", mana_cost="{X}{G}{G}")
+GREEN_3 = card("Green Three", "Creature — Elf", "", mana_cost="{2}{G}", power=3.0, identity="G")
+BLACK_2 = card("Black Two", "Creature — Zombie", "", mana_cost="{1}{B}", power=2.0, identity="B")
+
+
+def test_x_tutor_effects_parse():
+    gsz = effect_of(GSZ, WUBRG)
+    assert gsz.tutor == "creature" and gsz.tutor_x and gsz.tutor_battlefield and gsz.tutor_color == "G"
+    finale = effect_of(FINALE, WUBRG)
+    assert finale.tutor == "creature" and finale.tutor_x and finale.tutor_battlefield
+    assert finale.tutor_color is None
+
+
+def test_x_tutor_offers_only_what_the_mana_left_can_pay_for_and_puts_it_onto_the_battlefield():
+    s = rigged(source=five_color(FINALE, GREEN_3, BLACK_2), land="Prism Land",
+               hand=["Finale of Devastation"], lands_in_play=4)
+    s.command_zone = []
+    s = apply(s, {"cast": "Finale of Devastation"})  # 2 paid, 2 left: X can be 2
+    offered = {a["tutor"] for a in legal_actions(s)}
+    assert offered == {"Black Two"}
+    s = apply(s, {"tutor": "Black Two"})
+    assert "Black Two" in names(s, [p.card for p in s.battlefield]) and available_mana(s) == 0
+
+
+def test_green_suns_zenith_finds_only_green_creatures():
+    s = rigged(source=five_color(GSZ, GREEN_3, BLACK_2), land="Prism Land",
+               hand=["Green Sun's Zenith"], lands_in_play=5)
+    s.command_zone = []
+    s = apply(s, {"cast": "Green Sun's Zenith"})
+    assert {a["tutor"] for a in legal_actions(s)} == {"Green Three"}
+
+
+def test_x_tutor_is_not_castable_when_nothing_is_affordable():
+    s = rigged(source=five_color(FINALE, GREEN_3), land="Prism Land",
+               hand=["Finale of Devastation"], lands_in_play=2)
+    s.command_zone = []
+    assert {"cast": "Finale of Devastation"} not in legal_actions(s)

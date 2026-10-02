@@ -1,6 +1,16 @@
 {
   "version": 1,
   "cards": {
+    "Abrupt Decay": {
+      "status": "parsed",
+      "note": "uncounterable instant removal (MV 3 or less); held as an answer",
+      "reviewed": "2026-10-01"
+    },
+    "Agadeem's Awakening // Agadeem, the Undercrypt": {
+      "status": "parsed",
+      "note": "MDFC: mass reanimation or B land; recursion not modeled",
+      "reviewed": "2026-10-01"
+    },
     "All Is Dust": {
       "status": "parsed",
       "note": "sweeper held as interaction in hand; spent by the disruption model; no target in a goldfish",
@@ -36,14 +46,43 @@
       "note": "one mana of any commander color",
       "reviewed": "2026-10-01"
     },
+    "Assassin's Trophy": {
+      "status": "parsed",
+      "note": "removal held",
+      "reviewed": "2026-10-01"
+    },
+    "Atomize": {
+      "status": "parsed",
+      "note": "removal held",
+      "reviewed": "2026-10-01"
+    },
     "Baleful Strix": {
       "status": "parsed",
       "note": "ETB: draw a card",
       "reviewed": "2026-10-01"
     },
+    "Banewhip Punisher": {
+      "status": "parsed",
+      "note": "one-shot creature removal; held as an answer",
+      "reviewed": "2026-10-01"
+    },
+    "Bastion of Remembrance": {
+      "status": "override",
+      "note": "drain 1 each opponent when your creature dies; its one ETB token not modeled",
+      "reviewed": "2026-10-01",
+      "rule": {
+        "on": "creature_dies",
+        "drain": 1
+      }
+    },
     "Beast Within": {
       "status": "parsed",
       "note": "removal held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Beseech the Mirror": {
+      "status": "parsed",
+      "note": "tutor any",
       "reviewed": "2026-10-01"
     },
     "Birds of Paradise": {
@@ -51,9 +90,33 @@
       "note": "dork, any color",
       "reviewed": "2026-10-01"
     },
+    "Black Sun's Zenith": {
+      "status": "parsed",
+      "note": "-1/-1 sweeper; combo starter; shuffles itself",
+      "reviewed": "2026-10-01"
+    },
+    "Black Widow, Deadly Hunter": {
+      "status": "ignored",
+      "note": "draw when a deathtouch creature connects; combat by tokens not modeled",
+      "reviewed": "2026-10-02"
+    },
+    "Blood Artist": {
+      "status": "override",
+      "note": "drain 1 on any creature death",
+      "reviewed": "2026-10-01",
+      "rule": {
+        "on": "creature_dies",
+        "drain": 1
+      }
+    },
     "Bloom Tender": {
       "status": "parsed",
       "note": "one mana per color among your permanents",
+      "reviewed": "2026-10-01"
+    },
+    "Blowfly Infestation": {
+      "status": "parsed",
+      "note": "-1/-1 combo piece (counter moves on each death with a counter); win modeled by goal battlefield conditions",
       "reviewed": "2026-10-01"
     },
     "Boros Charm": {
@@ -61,10 +124,47 @@
       "note": "protection that survives a wipe (indestructible mode)",
       "reviewed": "2026-10-01"
     },
+    "Bridgeworks Battle // Tanglespan Bridgeworks": {
+      "status": "parsed",
+      "note": "MDFC: fight removal or G land",
+      "reviewed": "2026-10-01"
+    },
+    "Cankerbloom": {
+      "status": "parsed",
+      "note": "artifact/enchantment removal held",
+      "reviewed": "2026-10-01"
+    },
+    "Carnifex Demon": {
+      "status": "override",
+      "note": "{B}, remove a -1/-1 counter from it: -1/-1 counter on each other creature; repeatable removal",
+      "reviewed": "2026-10-01",
+      "rule": {
+        "removal_engine": true
+      }
+    },
     "Casualties of War": {
       "status": "parsed",
       "note": "removal held as interaction in hand; spent by the disruption model; no target in a goldfish",
       "reviewed": "2026-10-01"
+    },
+    "Channeler Initiate": {
+      "status": "parsed",
+      "note": "dork, any color (3 uses from its own counters); ETB counters start -1/-1 loops",
+      "reviewed": "2026-10-01"
+    },
+    "Chatterfang, Squirrel General": {
+      "status": "override",
+      "note": "token doubler; sac squirrels for +X/-X: repeatable removal",
+      "reviewed": "2026-10-01",
+      "rule": {
+        "removal_engine": true,
+        "sac_outlet": true
+      }
+    },
+    "Chord of Calling": {
+      "status": "parsed",
+      "note": "X tutor: creature of MV X or less onto the battlefield, X paid on top of GGG; convoke not modeled",
+      "reviewed": "2026-10-02"
     },
     "Chromatic Lantern": {
       "status": "parsed",
@@ -81,6 +181,16 @@
       "note": "imprints the least needed colored card; taps for its colors",
       "reviewed": "2026-10-01"
     },
+    "Collective Resistance": {
+      "status": "parsed",
+      "note": "protection/removal held",
+      "reviewed": "2026-10-01"
+    },
+    "Collector Ouphe": {
+      "status": "ignored",
+      "note": "stax on artifact abilities (hits opponents' rocks); not a win-attempt answer",
+      "reviewed": "2026-10-01"
+    },
     "Conflux": {
       "status": "parsed",
       "note": "five tutors (the one-of-each-color constraint is approximated)",
@@ -89,6 +199,24 @@
     "Consecrated Sphinx": {
       "status": "parsed",
       "note": "draws 2 per opponent draw (6 a round), stopping 15 cards above decking (user's rule)",
+      "reviewed": "2026-10-01"
+    },
+    "Contagion Clasp": {
+      "status": "parsed",
+      "note": "ETB -1/-1 counter + {4} proliferate; combo starter, no goldfish value",
+      "reviewed": "2026-10-01"
+    },
+    "Contagion Engine": {
+      "status": "override",
+      "note": "ETB -1/-1 counter on each creature a player controls; {4}: proliferate twice — repeatable removal",
+      "reviewed": "2026-10-02",
+      "rule": {
+        "removal_engine": true
+      }
+    },
+    "Corrupted Conviction": {
+      "status": "parsed",
+      "note": "sac a creature, draw 2",
       "reviewed": "2026-10-01"
     },
     "Counterspell": {
@@ -101,14 +229,39 @@
       "note": "draw three and return a creature from graveyard modeled; the opponent's sacrifice/discard/life loss has no goldfish effect",
       "reviewed": "2026-10-01"
     },
+    "Crumbling Ashes": {
+      "status": "parsed",
+      "note": "repeatable kill of a creature with a -1/-1 counter; held as removal",
+      "reviewed": "2026-10-01"
+    },
+    "Cryptolith Rite": {
+      "status": "parsed",
+      "note": "every creature taps for any color; modeled as 1 mana (underestimate)",
+      "reviewed": "2026-10-01"
+    },
+    "Culling Ritual": {
+      "status": "parsed",
+      "note": "sweeper held",
+      "reviewed": "2026-10-01"
+    },
     "Cyclonic Rift": {
       "status": "parsed",
       "note": "removal/sweeper held as interaction in hand; spent by the disruption model; no target in a goldfish",
       "reviewed": "2026-10-01"
     },
+    "Dawnhand Dissident": {
+      "status": "ignored",
+      "note": "tap + blight 1: surveil 1 each turn (a Hapatra snake each turn); snakes and surveil not modeled",
+      "reviewed": "2026-10-02"
+    },
     "Deadly Rollick": {
       "status": "parsed",
       "note": "free removal with a commander out; held as an answer",
+      "reviewed": "2026-10-01"
+    },
+    "Deathrite Shaman": {
+      "status": "parsed",
+      "note": "conditional mana not modeled; held as removal per parser",
       "reviewed": "2026-10-01"
     },
     "Deflecting Swat": {
@@ -135,6 +288,16 @@
       "note": "tutor: any card",
       "reviewed": "2026-10-01"
     },
+    "Devoted Druid": {
+      "status": "parsed",
+      "note": "dork G; combo piece with Ivy Lane Denizen",
+      "reviewed": "2026-10-01"
+    },
+    "Diabolic Intent": {
+      "status": "parsed",
+      "note": "tutor any (sac a creature)",
+      "reviewed": "2026-10-01"
+    },
     "Diabolic Tutor": {
       "status": "parsed",
       "note": "tutor: any card",
@@ -155,14 +318,34 @@
       "note": "extra land drop; lands tap for any color",
       "reviewed": "2026-10-01"
     },
+    "Eldritch Evolution": {
+      "status": "parsed",
+      "note": "creature tutor onto the battlefield; the sacrifice and its MV limit are not modeled",
+      "reviewed": "2026-10-02"
+    },
+    "Elves of Deep Shadow": {
+      "status": "parsed",
+      "note": "dork, B",
+      "reviewed": "2026-10-01"
+    },
     "Elvish Mystic": {
       "status": "parsed",
       "note": "dork, G",
       "reviewed": "2026-10-01"
     },
+    "Elvish Spirit Guide": {
+      "status": "ignored",
+      "note": "one-shot G from hand; not modeled",
+      "reviewed": "2026-10-01"
+    },
     "Emergent Ultimatum": {
       "status": "parsed",
       "note": "finds 3 monocolored cards; opponents shuffle back the best one; the other two are cast free",
+      "reviewed": "2026-10-01"
+    },
+    "Enduring Vitality": {
+      "status": "parsed",
+      "note": "creatures tap for any color; modeled as 1 mana (underestimate)",
       "reviewed": "2026-10-01"
     },
     "Enlightened Tutor": {
@@ -175,6 +358,11 @@
       "note": "draws the library, puts one back; auto pilot casts it only when the round wins",
       "reviewed": "2026-10-01"
     },
+    "Evolution Sage": {
+      "status": "ignored",
+      "note": "landfall proliferate: a snake per countered creature with Hapatra; not modeled",
+      "reviewed": "2026-10-02"
+    },
     "Expropriate": {
       "status": "parsed",
       "note": "1 extra turn (optimistic: assumes one 'time' vote); 'money' votes have no goldfish effect",
@@ -183,6 +371,20 @@
     "Faeburrow Elder": {
       "status": "parsed",
       "note": "one mana per color among your permanents; its +1/+1 per color is not modeled",
+      "reviewed": "2026-10-01"
+    },
+    "Falkenrath Noble": {
+      "status": "override",
+      "note": "drain 1 on any creature death (targets one player; over-counted as each)",
+      "reviewed": "2026-10-01",
+      "rule": {
+        "on": "creature_dies",
+        "drain": 1
+      }
+    },
+    "Feed the Swarm": {
+      "status": "parsed",
+      "note": "removal held",
       "reviewed": "2026-10-01"
     },
     "Fell the Profane // Fell Mire": {
@@ -195,6 +397,11 @@
       "note": "free counterspell (noncreature) held as an answer",
       "reviewed": "2026-10-01"
     },
+    "Finale of Devastation": {
+      "status": "parsed",
+      "note": "X tutor: creature of MV X or less onto the battlefield (graveyard option and X>=10 pump not modeled)",
+      "reviewed": "2026-10-02"
+    },
     "Fist of Suns": {
       "status": "parsed",
       "note": "alt cost WUBRG, same as Jodah",
@@ -203,6 +410,11 @@
     "Flawless Maneuver": {
       "status": "parsed",
       "note": "free protection that survives a wipe",
+      "reviewed": "2026-10-01"
+    },
+    "Flourishing Defenses": {
+      "status": "parsed",
+      "note": "-1/-1 combo piece (green Elf token per -1/-1 counter); win modeled by goal battlefield conditions",
       "reviewed": "2026-10-01"
     },
     "Flusterstorm": {
@@ -220,19 +432,91 @@
       "note": "free counterspell held as an answer",
       "reviewed": "2026-10-01"
     },
+    "Fynn, the Fangbearer": {
+      "status": "ignored",
+      "note": "poison via deathtouch combat; no combat model for tokens",
+      "reviewed": "2026-10-01"
+    },
+    "Generous Patron": {
+      "status": "ignored",
+      "note": "draws when you put counters on opponents' creatures",
+      "reviewed": "2026-10-01"
+    },
     "Genesis Ultimatum": {
       "status": "parsed",
       "note": "top 5: permanents onto the battlefield, the rest into hand",
       "reviewed": "2026-10-01"
+    },
+    "God-Eternal Bontu": {
+      "status": "ignored",
+      "note": "sac permanents to draw; not modeled",
+      "reviewed": "2026-10-01"
+    },
+    "Golgari Charm": {
+      "status": "parsed",
+      "note": "-1/-1 sweep / enchantment removal; held",
+      "reviewed": "2026-10-01"
+    },
+    "Golgari Signet": {
+      "status": "parsed",
+      "note": "mana rock, B/G (filter)",
+      "reviewed": "2026-10-01"
+    },
+    "Green Sun's Zenith": {
+      "status": "parsed",
+      "note": "X tutor: green creature of MV X or less onto the battlefield; shuffles itself back",
+      "reviewed": "2026-10-02"
+    },
+    "Grim Affliction": {
+      "status": "ignored",
+      "note": "-1/-1 counter + proliferate on opponents' creatures; combo starter",
+      "reviewed": "2026-10-01"
+    },
+    "Grim Hireling": {
+      "status": "override",
+      "note": "treasures on combat damage; -X/-X removal from treasures",
+      "reviewed": "2026-10-01",
+      "rule": {
+        "removal_engine": true
+      }
     },
     "Grim Tutor": {
       "status": "parsed",
       "note": "tutor: any card; life loss not tracked",
       "reviewed": "2026-10-01"
     },
+    "Hapatra, Vizier of Poisons": {
+      "status": "parsed",
+      "note": "commander; snake-on-counter combo piece (goal battlefield condition); combat counter not modeled",
+      "reviewed": "2026-10-01"
+    },
+    "Harbinger of Night": {
+      "status": "ignored",
+      "note": "symmetric -1/-1 each upkeep; combo starter, hurts own board",
+      "reviewed": "2026-10-01"
+    },
+    "Hazel's Brewmaster": {
+      "status": "parsed",
+      "note": "graveyard hate; held per parser",
+      "reviewed": "2026-10-01"
+    },
     "Heroic Intervention": {
       "status": "parsed",
       "note": "protection that survives a wipe",
+      "reviewed": "2026-10-01"
+    },
+    "Hooded Blightfang": {
+      "status": "override",
+      "note": "deathtouch attackers drain 1 each opponent; approximated as drain 1 per attack",
+      "reviewed": "2026-10-01",
+      "rule": {
+        "on": "attack",
+        "drain": 1
+      }
+    },
+    "Host of the Hereafter": {
+      "status": "parsed",
+      "note": "moves a dying creature's counters to your creature: loops with Hapatra/Nest of Scarabs/Flourishing Defenses; win modeled by goal battlefield conditions",
       "reviewed": "2026-10-01"
     },
     "Ignoble Hierarch": {
@@ -255,9 +539,19 @@
       "note": "one-sided sweeper held as interaction in hand; spent by the disruption model; no target in a goldfish",
       "reviewed": "2026-10-01"
     },
+    "Incremental Blight": {
+      "status": "ignored",
+      "note": "removal on opponents' creatures",
+      "reviewed": "2026-10-01"
+    },
     "Insurrection": {
       "status": "ignored",
       "note": "steals opponents' creatures; nothing to steal in a goldfish (the goal can still count casting it as a win)",
+      "reviewed": "2026-10-01"
+    },
+    "Ivy Lane Denizen": {
+      "status": "parsed",
+      "note": "combo piece (Scurry Oak; Devoted Druid); win modeled by goal battlefield conditions",
       "reviewed": "2026-10-01"
     },
     "Jegantha, the Wellspring": {
@@ -268,6 +562,11 @@
     "Jodah, Archmage Eternal": {
       "status": "parsed",
       "note": "alt cost WUBRG for every spell while on the battlefield",
+      "reviewed": "2026-10-01"
+    },
+    "Khalni Ambush // Khalni Territory": {
+      "status": "parsed",
+      "note": "MDFC: fight removal or G land",
       "reviewed": "2026-10-01"
     },
     "Leyline of Mutation": {
@@ -295,6 +594,11 @@
       "note": "one mana of any color once (sacrificed)",
       "reviewed": "2026-10-01"
     },
+    "Malakir Rebirth // Malakir Mire": {
+      "status": "parsed",
+      "note": "MDFC: death insurance or B land",
+      "reviewed": "2026-10-01"
+    },
     "Mana Drain": {
       "status": "parsed",
       "note": "counterspell held as an answer; its mana next turn is not modeled",
@@ -303,6 +607,11 @@
     "Mana Vault": {
       "status": "parsed",
       "note": "taps for {C}{C}{C} once; doesn't untap (paying 4 to untap is not modeled)",
+      "reviewed": "2026-10-01"
+    },
+    "Massacre Girl, Known Killer": {
+      "status": "ignored",
+      "note": "wither + draw on opponents' creature deaths",
       "reviewed": "2026-10-01"
     },
     "Mental Misstep": {
@@ -330,6 +639,21 @@
       "note": "fetches a Forest-typed land (duals, triomes) untapped",
       "reviewed": "2026-10-01"
     },
+    "Necroskitter": {
+      "status": "ignored",
+      "note": "steals opponents' creatures that die with -1/-1 counters",
+      "reviewed": "2026-10-01"
+    },
+    "Nest of Scarabs": {
+      "status": "parsed",
+      "note": "-1/-1 combo piece; its combo win is modeled by the deck's goal battlefield conditions (token per -1/-1 counter)",
+      "reviewed": "2026-10-01"
+    },
+    "Obelisk Spider": {
+      "status": "parsed",
+      "note": "-1/-1 combo payoff (drain 1 each opponent per counter placement); win modeled by goal battlefield conditions",
+      "reviewed": "2026-10-01"
+    },
     "Omniscience": {
       "status": "parsed",
       "note": "alt cost {0} for spells cast from hand",
@@ -350,14 +674,53 @@
       "note": "free counterspell; once spent, pay {3}{U}{U} next upkeep or lose",
       "reviewed": "2026-10-01"
     },
+    "Parallel Lives": {
+      "status": "ignored",
+      "note": "doubles tokens (snakes); token counts not modeled",
+      "reviewed": "2026-10-02"
+    },
+    "Persist": {
+      "status": "parsed",
+      "note": "reanimation; not modeled",
+      "reviewed": "2026-10-01"
+    },
+    "Persistent Constrictor": {
+      "status": "ignored",
+      "note": "drains 1 and -1/-1 counter on each opponent's upkeep; not modeled",
+      "reviewed": "2026-10-01"
+    },
     "Phyrexian Arena": {
       "status": "parsed",
       "note": "one extra card each upkeep; life loss not tracked",
       "reviewed": "2026-10-01"
     },
+    "Plumb the Forbidden": {
+      "status": "parsed",
+      "note": "draw 1+",
+      "reviewed": "2026-10-01"
+    },
+    "Poison-Tip Archer": {
+      "status": "override",
+      "note": "each opponent loses 1 when another creature dies; deathtouch reach blocker",
+      "reviewed": "2026-10-01",
+      "rule": {
+        "on": "creature_dies",
+        "drain": 1
+      }
+    },
     "Portal to Phyrexia": {
       "status": "ignored",
       "note": "opponents sacrifice creatures; reanimation needs creatures in graveyards, which a goldfish rarely has",
+      "reviewed": "2026-10-01"
+    },
+    "Putrefy": {
+      "status": "parsed",
+      "note": "instant creature/artifact removal; held as an answer",
+      "reviewed": "2026-10-01"
+    },
+    "Revitalizing Repast // Old-Growth Grove": {
+      "status": "parsed",
+      "note": "MDFC: indestructible protection or land",
       "reviewed": "2026-10-01"
     },
     "Rise of the Eldrazi": {
@@ -370,14 +733,34 @@
       "note": "one-sided sweeper held as interaction in hand; spent by the disruption model; no target in a goldfish",
       "reviewed": "2026-10-01"
     },
+    "Scurry Oak": {
+      "status": "parsed",
+      "note": "-1/-1 deck combo piece (with Ivy Lane Denizen: infinite squirrels); win modeled by goal battlefield conditions",
+      "reviewed": "2026-10-01"
+    },
+    "Seshiro the Anointed": {
+      "status": "ignored",
+      "note": "snake anthem + combat draw; no combat model for tokens",
+      "reviewed": "2026-10-01"
+    },
     "Silence": {
       "status": "parsed",
       "note": "opponents can't cast this turn: held as an answer to a win attempt",
       "reviewed": "2026-10-01"
     },
+    "Sinister Gnarlbark": {
+      "status": "parsed",
+      "note": "draws a card each end step; its blight 1 (a -1/-1 counter on your creature) makes a Hapatra snake each turn, not modeled",
+      "reviewed": "2026-10-01"
+    },
     "Sink into Stupor // Soporific Springs": {
       "status": "parsed",
       "note": "MDFC: removal held in hand, or a U land",
+      "reviewed": "2026-10-01"
+    },
+    "Skullclamp": {
+      "status": "parsed",
+      "note": "draw-2 on equipped death not modeled; only its +1 power is",
       "reviewed": "2026-10-01"
     },
     "Smothering Tithe": {
@@ -395,6 +778,21 @@
       "note": "tutor: instant or sorcery",
       "reviewed": "2026-10-01"
     },
+    "Soul Snuffers": {
+      "status": "ignored",
+      "note": "ETB -1/-1 on each creature; combo starter",
+      "reviewed": "2026-10-01"
+    },
+    "Spitting Dilophosaurus": {
+      "status": "ignored",
+      "note": "-1/-1 on ETB/attack to opponents' creatures",
+      "reviewed": "2026-10-01"
+    },
+    "Staff of Compleation": {
+      "status": "parsed",
+      "note": "pay-life mana/draw/proliferate; one mana modeled",
+      "reviewed": "2026-10-01"
+    },
     "Sterling Grove": {
       "status": "parsed",
       "note": "sacrificed at upkeep to put a missing enchantment the goal names on top; its {1} cost is ignored",
@@ -405,9 +803,23 @@
       "note": "counterspell held as interaction in hand; spent by the disruption model; no target in a goldfish",
       "reviewed": "2026-10-01"
     },
+    "Susurian Voidborn": {
+      "status": "override",
+      "note": "drain one opponent when your creature/artifact dies (over-counted as each)",
+      "reviewed": "2026-10-01",
+      "rule": {
+        "on": "creature_dies",
+        "drain": 1
+      }
+    },
     "Swan Song": {
       "status": "parsed",
       "note": "counterspell held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Swiftfoot Boots": {
+      "status": "parsed",
+      "note": "equipment: hexproof protects the commander from removal on the battlefield",
       "reviewed": "2026-10-01"
     },
     "Swords to Plowshares": {
@@ -425,6 +837,11 @@
       "note": "exiles the library in a singleton deck without basics; cast only when the look-ahead wins (Oracle)",
       "reviewed": "2026-10-01"
     },
+    "Talisman of Resilience": {
+      "status": "parsed",
+      "note": "mana rock, B/G/C",
+      "reviewed": "2026-10-01"
+    },
     "Tamiyo's Safekeeping": {
       "status": "parsed",
       "note": "protection that survives a wipe",
@@ -435,6 +852,23 @@
       "note": "wins on entering if devotion to blue >= library size; cast only when it wins",
       "reviewed": "2026-10-01"
     },
+    "The Meathook Massacre": {
+      "status": "override",
+      "note": "drain 1 each opponent when your creature dies; X sweep not modeled",
+      "reviewed": "2026-10-01",
+      "rule": {
+        "on": "creature_dies",
+        "drain": 1
+      }
+    },
+    "The Serpent Society": {
+      "status": "override",
+      "note": "deathtouch creature you control dies: each opponent sacrifices a nontoken creature; repeatable removal with snakes + sac outlet",
+      "reviewed": "2026-10-01",
+      "rule": {
+        "removal_engine": true
+      }
+    },
     "Three Visits": {
       "status": "parsed",
       "note": "fetches a Forest-typed land (duals, triomes) untapped",
@@ -443,6 +877,11 @@
     "Time Stretch": {
       "status": "parsed",
       "note": "two extra turns",
+      "reviewed": "2026-10-01"
+    },
+    "Time of Need": {
+      "status": "parsed",
+      "note": "tutor for a legendary creature",
       "reviewed": "2026-10-01"
     },
     "Timeless Lotus": {
@@ -455,6 +894,11 @@
       "note": "landfall: a Treasure",
       "reviewed": "2026-10-01"
     },
+    "Toski, Bearer of Secrets": {
+      "status": "ignored",
+      "note": "combat draw; no combat model for tokens",
+      "reviewed": "2026-10-01"
+    },
     "Unite the Coalition": {
       "status": "parsed",
       "note": "protection/removal held as interaction in hand; spent by the disruption model; no target in a goldfish",
@@ -465,15 +909,67 @@
       "note": "tutor: any card, to the top; life loss not tracked",
       "reviewed": "2026-10-01"
     },
+    "Vengeful Bloodwitch": {
+      "status": "override",
+      "note": "drain on your creature deaths; targets one opponent (over-counted as each)",
+      "reviewed": "2026-10-01",
+      "rule": {
+        "on": "creature_dies",
+        "drain": 1
+      }
+    },
     "Void Winnower": {
       "status": "parsed",
       "note": "stax: opponents can't cast even-mana-value spells; counts as an answer to every win attempt while out (optimistic: odd-cost wins get through)",
+      "reviewed": "2026-10-01"
+    },
+    "Warren Soultrader": {
+      "status": "parsed",
+      "note": "sac outlet for treasure; one treasure modeled",
+      "reviewed": "2026-10-01"
+    },
+    "Wickerbough Elder": {
+      "status": "parsed",
+      "note": "artifact/enchantment removal held",
+      "reviewed": "2026-10-01"
+    },
+    "Wight of the Reliquary": {
+      "status": "ignored",
+      "note": "sac-for-land ramp; sacrifice not modeled",
       "reviewed": "2026-10-01"
     },
     "Wood Elves": {
       "status": "parsed",
       "note": "ETB: fetch a Forest-typed land untapped",
       "reviewed": "2026-10-01"
+    },
+    "Worldly Tutor": {
+      "status": "parsed",
+      "note": "creature tutor to the top of library",
+      "reviewed": "2026-10-01"
+    },
+    "Yawgmoth, Thran Physician": {
+      "status": "override",
+      "note": "free sac outlet + repeatable -1/-1 removal; combo piece",
+      "reviewed": "2026-10-01",
+      "rule": {
+        "sac_outlet": true,
+        "removal_engine": true
+      }
+    },
+    "Young Wolf": {
+      "status": "ignored",
+      "note": "undying body; Yawgmoth fodder",
+      "reviewed": "2026-10-01"
+    },
+    "Zulaport Cutthroat": {
+      "status": "override",
+      "note": "drain 1 each opponent when your creature dies",
+      "reviewed": "2026-10-01",
+      "rule": {
+        "on": "creature_dies",
+        "drain": 1
+      }
     }
   }
 }

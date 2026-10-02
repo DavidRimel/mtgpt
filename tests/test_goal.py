@@ -152,3 +152,24 @@ def test_opponent_win_every():
     assert load({"archetype": "go_wide", "opponent_win": {}}).opponent_win.every is None
     with pytest.raises(GoalError):
         load({"archetype": "go_wide", "opponent_win": {"every": [3, 2]}})
+
+
+def test_battlefield_condition_takes_alternatives():
+    goal = load({"archetype": "combo", "thing": "commander", "win": {"battlefield": [
+        "Blood Artist", ["Viscera Seer", "Craterhoof Behemoth"]]}})
+    assert goal.win.kind == "battlefield"
+    assert goal.win.slots == (("Blood Artist",), ("Viscera Seer", "Craterhoof Behemoth"))
+    assert condition_names(goal.win) == ("Blood Artist", "Viscera Seer", "Craterhoof Behemoth")
+    assert describe(goal.win) == "battlefield:Blood Artist+Viscera Seer|Craterhoof Behemoth"
+
+
+def test_battlefield_condition_names_must_be_in_the_deck():
+    with pytest.raises(GoalError) as err:
+        load({"archetype": "combo", "thing": "commander",
+              "win": {"battlefield": ["Blood Artist", ["Nope"]]}})
+    assert err.value.field == "win.battlefield"
+
+
+def test_removal_engine_parses():
+    goal = load({"archetype": "go_wide", "engine": {"Blood Artist": {"removal_engine": True}}})
+    assert goal.engine_for("Blood Artist").removal_engine
