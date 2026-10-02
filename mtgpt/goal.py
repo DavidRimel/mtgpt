@@ -48,7 +48,7 @@ _DEFAULTS: dict[str, tuple[object, object]] = {
     "custom": (None, None),
 }
 _GOAL_FIELDS = ("archetype", "commander_turn", "engine", "thing", "win", "disruption",
-                "opponent_win")
+                "opponent_win", "target_round")
 #: What can stop an opponent's win attempt.
 ANSWER_KINDS = ("removal", "counterspell", "stax")
 _INT_SPEC_FIELDS = ("drain", "draw", "treasure", "tokens", "anthem", "mana")
@@ -146,6 +146,9 @@ class Goal:
     engine: tuple[tuple[str, EngineSpec], ...] = ()
     disruption: Disruption | None = None
     opponent_win: OpponentWin | None = None
+    #: Wins by this round are the tuning scorecard's primary metric; None means
+    #: the bracket default (see scorecard.DEFAULT_TARGET_ROUND).
+    target_round: int | None = None
 
     @cached_property
     def _engine_map(self) -> dict[str, EngineSpec]:
@@ -185,6 +188,11 @@ def load_goal(data, *, deck_names: Iterable[str], commander_mv: float = 0.0) -> 
     if not isinstance(turn, int) or isinstance(turn, bool) or turn < 1:
         raise GoalError("commander_turn", "must be a whole number of turns, 1 or more", [turn])
 
+    target_round = data.get("target_round")
+    if target_round is not None and (
+            not isinstance(target_round, int) or isinstance(target_round, bool) or target_round < 1):
+        raise GoalError("target_round", "must be a whole number of rounds, 1 or more", [target_round])
+
     return Goal(
         archetype=archetype,
         commander_turn=turn,
@@ -193,6 +201,7 @@ def load_goal(data, *, deck_names: Iterable[str], commander_mv: float = 0.0) -> 
         engine=_engine(data.get("engine", {}), canon),
         disruption=_disruption(data["disruption"]) if "disruption" in data else None,
         opponent_win=_opponent_win(data["opponent_win"]) if "opponent_win" in data else None,
+        target_round=target_round,
     )
 
 
