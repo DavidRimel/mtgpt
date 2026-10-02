@@ -697,3 +697,9 @@ def test_a_removal_engine_counts_as_standing_removal():
     goal = {**FAST_TABLE, "engine": {"Grizzly Bears": {"removal_engine": True}}}
     s = rigged(BEAR, on_board=["Grizzly Bears"], lands_in_play=1, goal=goal)
     assert held_counts(s)["removal"] == 1
+
+
+def test_worldly_tutor_puts_the_card_on_top():
+    worldly = card("Worldly Tutor", "Instant", "Search your library for a creature card, reveal it, then "
+                   "shuffle and put the card on top.", mana_cost="{G}")
+    assert effect_of(worldly, WUBRG).tutor_to_top

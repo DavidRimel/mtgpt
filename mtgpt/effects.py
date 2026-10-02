@@ -531,7 +531,7 @@ def _mechanics(card: Card, text: str) -> dict:
         out["no_untap"] = True
     if m := re.search(r"at the beginning of your next upkeep, pay ((?:\{[^}]+\})+)\. if you don't, you lose the game", t):
         out["pact_cost"] = m.group(1).upper()
-    if re.search(r"search your library for [^.]*?(?:then shuffle and )?put (?:that card|it) on top", t):
+    if re.search(r"search your library for [^.]*?(?:then shuffle and )?put (?:that card|the card|it) on top", t):
         out["tutor_to_top"] = True
     if "you may discard a land card instead" in t:
         out["discard_land"] = True
