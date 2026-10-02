@@ -260,3 +260,25 @@ def test_commander_is_not_held_without_removal_risk():
     s = apply(s, choose(s))
     from mtgpt.goldfish.policy import _hold_commander_for_kill
     assert not _hold_commander_for_kill(s, s.command_zone[0])
+
+
+def test_a_tutor_fetches_an_answer_when_an_attempt_is_coming_and_none_is_held():
+    finisher = card("Finisher", "Sorcery", "", mana_cost="{9}")
+    goal = {"archetype": "custom", "thing": "commander", "win": {"cast": "Finisher"},
+            "opponent_win": {"from_turn": 2}}
+    s = rigged(DEMONIC_TUTOR, SWORDS, finisher, hand=["Demonic Tutor"], lands_in_play=2, goal=goal)
+    s.command_zone = []
+    s = apply(s, {"cast": "Demonic Tutor"})
+    assert choose(s) == {"tutor": "Swords to Plowshares"}
+
+
+def test_with_an_answer_held_the_tutor_goes_for_the_finisher():
+    finisher = card("Finisher", "Sorcery", "", mana_cost="{9}")
+    counter = card("Counterspell", "Instant", "Counter target spell.", mana_cost="{U}{U}")
+    goal = {"archetype": "custom", "thing": "commander", "win": {"cast": "Finisher"},
+            "opponent_win": {"from_turn": 2}}
+    s = rigged(DEMONIC_TUTOR, SWORDS, finisher, counter, hand=["Demonic Tutor", "Counterspell"],
+               lands_in_play=2, goal=goal)
+    s.command_zone = []
+    s = apply(s, {"cast": "Demonic Tutor"})
+    assert choose(s) == {"tutor": "Finisher"}

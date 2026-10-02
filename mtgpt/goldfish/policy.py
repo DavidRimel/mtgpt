@@ -155,6 +155,25 @@ def _hold_commander_for_kill(state: GameState, cmd: int) -> bool:
     return next_turn >= need
 
 
+def _answer_needed(state: GameState, offered: set) -> list[str]:
+    """With an opponent's win attempt due by next round and no answer held, a
+    tutor finds one first — free answers before ones that cost mana."""
+    rule = state.goal.opponent_win
+    if rule is None or not any(state.turn <= r <= state.turn + 1 for r in state.attempt_rounds):
+        return []
+    kinds = set()
+    if "removal" in rule.answers:
+        kinds |= {"removal", "sweeper"}
+    if "counterspell" in rule.answers:
+        kinds.add("counterspell")
+    if any(state.cards[i].effect.held & kinds for i in state.hand):
+        return []
+    answers = [i for i in state.library if state.cards[i].effect.held & kinds
+               and state.cards[i].name in offered]
+    return [state.cards[i].name for i in sorted(answers, key=lambda i: (state.cards[i].mana_value,
+                                                                      state.cards[i].name))]
+
+
 def _combo_halves(state: GameState) -> list[str]:
     """The missing half of a Thassa's Oracle combo whose other half is in hand
     or on the battlefield: a tutor completes the win before anything else."""
@@ -245,7 +264,8 @@ def _tutor_choice(state: GameState, legal: list[dict]) -> dict:
     highest-priority, most expensive card available."""
     offered = {a["tutor"] for a in legal}
     present = {p.name for p in state.battlefield} | {state.cards[i].name for i in state.hand}
-    wanted = _combo_halves(state) + list(_plan_names(state)) + [name for name, _ in state.goal.engine]
+    wanted = (_answer_needed(state, offered) + _combo_halves(state) + list(_plan_names(state))
+              + [name for name, _ in state.goal.engine])
     for name in wanted:
         if name in offered and name not in present:
             return {"tutor": name}
