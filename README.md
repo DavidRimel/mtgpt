@@ -11,19 +11,20 @@ so a fake card cannot reach you.
 
 ## Install
 
-```bash
-/plugin marketplace add DavidRimel/mtgpt
-```
+Unzip the repo (or clone it), open a terminal in its folder, and run `claude`.
+The `mtgpt` skill loads automatically: ask it to list your decks, start a new
+one, or tune one. Requires Python 3.12+ (the skill checks on first run).
 
-Then ask Claude to audit, tune, or explore a Commander deck.
+Decks live in `decks/`, which git ignores — they are your save files. To share
+the tool, run `scripts/make-zip.sh`; the zip holds only committed files.
 
 ## Use directly
 
-mtgpt is twenty-three independently callable operations, each emitting one
+mtgpt is twenty-six independently callable operations, each emitting one
 JSON object: `card`, `search`, `find`, `cross-check`, `classify`, `import`, `read`, `validate`,
 `audit`, `bracket`, `report`, `compare`, `synergy`, `themes`, `combos`, `card-combos`,
 `suggest`, `goldfish`, `goldfish-compare`, `goldfish-new`, `goldfish-step`,
-`goldfish-scan`, `card-rule`.
+`goldfish-scan`, `card-rule`, `scorecard`, `project`, `card-rule-merge`.
 
 ```bash
 # Full picture, human-readable
