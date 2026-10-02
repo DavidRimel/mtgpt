@@ -42,6 +42,7 @@ decks/<slug>/
   v1.txt         starting list; every later version is a new immutable file
   v2.txt …
   research.md    deck jobs list + candidates by job, with sources and the multi-job flag
+  combos.json    `card-combos <commander>` output, cached at research time for the floor check
   log.md         every swap tried: scorecard, verdict, reason; sim gaps; checkpoints
 ```
 
@@ -153,7 +154,7 @@ same list as v8 in Moxfield format and is dropped.
 | Commander on curve | `commander.on_curve_rate`; mana available on the commander turn | ≥ 70% |
 | Interaction in hand | `thing.covered_rate`; `opponent_win.answered_rate`; `loss.by_reason.opponent_win` | covered ≥ 50% |
 | Protection | `disruption.stopped_by_protection_rate`; `disruption.win_rate_after_event` | — |
-| Opening hands | `setup.mulligan_rate`, with its causes (too few lands, too few castable spells) | ≤ 25% |
+| Opening hands | `setup.mulligan_rate`, with its causes (too few lands, two lands without cheap ramp, flood — the sim's keep rule) | ≤ 25% |
 | Land base (new) | untapped-land share; per-color sources vs pip demand; `commander.late_reasons.color_screw` | untapped ≥ 80%, no short color |
 
 `scorecard --file A --file B` scores both on matched seeds and returns a verdict:
@@ -193,8 +194,11 @@ A proposed version is rejected without simming when it:
 
 - drops any `audit` category (lands, ramp, draw, removal, board wipes) below its target band's
   minimum, or
-- fails `bracket` at the project's target — a new two-card combo, an extra Game Changer, or
-  anything else the bracket check flags.
+- fails `bracket` at the project's target with an error the previous version did not have — an
+  extra Game Changer, mass land denial, or (brackets 1–2) a newly completed two-card combo.
+  Two-card combos come from the commander's Spellbook combos cached at research time
+  (`decks/<slug>/combos.json`), never from submitting the deck. At bracket 3 a newly completed
+  two-card combo is a warning shown with the verdict, matching `brackets.py`'s `late_only` rule.
 
 This stops the loop from trading away interaction the goldfish undervalues.
 
@@ -266,7 +270,7 @@ Every report carries the goldfish caveat: numbers compare versions, they do not 
 | `mtgpt/scorecard.py` + `scorecard` | reduce a goldfish report to targets; compare two; verdict incl. close-call re-run at 3000 games | goldfish report dicts, audit |
 | floors (in `scorecard.py`) | reject a version below an `audit` band minimum or failing `bracket`, before simming | `audit`, `brackets` |
 | card-impact tracking (goldfish engine + runner) | record per game which cards were drawn and cast; aggregate drawn/not-drawn win delta, dead rate, cast turn | `goldfish/engine.py`, `goldfish/run.py` |
-| mulligan causes (goldfish runner) | why each mulligan happened: too few lands, too few castable spells | `goldfish/run.py` |
+| mulligan causes (goldfish engine + runner) | why each mulligan happened: too few lands, two lands without cheap ramp, flood | `goldfish/engine.py`, `goldfish/run.py` |
 | land-base metrics (in `scorecard.py`) | untapped share, colors vs pips | `effects.py`, `audit` |
 | `card-rule merge <file>` (in `card_rules.py`) | add rules not present; list conflicts, change nothing for them | card rules library |
 
