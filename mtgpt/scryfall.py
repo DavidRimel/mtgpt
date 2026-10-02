@@ -29,6 +29,11 @@ COLLECTION_BATCH_SIZE = 75
 #: Scryfall's requested courtesy delay between requests, in seconds.
 REQUEST_DELAY = 0.1
 
+#: A 429 (rate limited) is retried this many times, waiting RATE_LIMIT_BACKOFF
+#: seconds and doubling each time, before the error is passed on.
+RATE_LIMIT_RETRIES = 3
+RATE_LIMIT_BACKOFF = 1.0
+
 #: Maximum pages for paginated endpoints before raising an error.
 MAX_GAME_CHANGER_PAGES = 20
 
@@ -168,9 +173,15 @@ class ScryfallClient:
         if self._made_request:
             self._sleep(REQUEST_DELAY)
         self._made_request = True
-        if payload is not None:
-            return self._transport(url, payload)
-        return self._transport(url)
+        for attempt in range(RATE_LIMIT_RETRIES + 1):
+            try:
+                if payload is not None:
+                    return self._transport(url, payload)
+                return self._transport(url)
+            except urllib.error.HTTPError as exc:
+                if exc.code != 429 or attempt == RATE_LIMIT_RETRIES:
+                    raise
+                self._sleep(RATE_LIMIT_BACKOFF * 2 ** attempt)
 
     def collection(
         self, names: Sequence[str], *, strict: bool = True
