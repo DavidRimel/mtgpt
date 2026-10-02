@@ -3,7 +3,7 @@ import dataclasses
 import pytest
 
 from mtgpt.goldfish.engine import prepare
-from mtgpt.goldfish.run import compare, play, simulate
+from mtgpt.goldfish.run import _win_delta, compare, play, simulate
 from mtgpt.models import ResolvedDeck
 
 from simdeck import BEAR, NEVER, SOL_RING, SWORDS, TEFERIS_PROTECTION, card, commander, deck, forest
@@ -320,3 +320,33 @@ def test_color_screw_blue_commander_all_forests():
     d = ResolvedDeck(commanders=(blue,), cards=((99, forest()),))
     r = simulate(d, GO_WIDE, games=10)
     assert r["commander"]["late_reasons"] == {"color_screw": 1.0}
+
+
+UNCASTABLE = card("Uncastable Horror", "Creature — Horror", "", mana_cost="{20}", power=1.0)
+
+
+def test_mulligan_causes_are_reported():
+    report = simulate(deck(), NEVER_GOAL, games=10)
+    assert report["setup"]["mulligan_causes"] == {"flood": 1.0}
+
+
+def test_card_impact_only_when_asked():
+    assert "card_impact" not in simulate(deck(SOL_RING), NEVER_GOAL, games=5)
+
+
+def test_card_impact_reports_dead_and_cast_cards():
+    report = simulate(deck(SOL_RING, UNCASTABLE, lands=97), NEVER_GOAL, games=80,
+                      impact_round=5)
+    impact = report["card_impact"]
+    assert "Forest" not in impact and "Test Commander" not in impact
+    assert impact["Uncastable Horror"]["seen_rate"] > 0
+    assert impact["Uncastable Horror"]["dead_rate"] == 1.0
+    assert impact["Uncastable Horror"]["median_turn"] is None
+    assert impact["Sol Ring"]["cast_rate"] > 0.9
+    assert impact["Sol Ring"]["median_turn"] is not None
+
+
+def test_win_delta_is_none_without_both_groups():
+    assert _win_delta(3, 10, 0, 0) is None
+    assert _win_delta(0, 0, 3, 10) is None
+    assert _win_delta(5, 10, 2, 10) == 0.3
