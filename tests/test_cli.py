@@ -3,6 +3,8 @@ import io
 import json
 import pathlib
 
+import pytest
+
 from mtgpt import cli
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
@@ -544,3 +546,15 @@ def test_scorecard_reads_a_saved_card_combos_envelope(monkeypatch, capsys, tmp_p
     assert cli.main(["scorecard", "--file", str(a), "--goal", str(goal), "--bracket", "3",
                      "--combos", str(combos)]) == 0
     assert seen["combos"] == [{"cards": ["X", "Y"], "card_count": 2}]
+
+
+@pytest.mark.parametrize("content", ['{"data": []}', '{"ok": true}', '{"data": {"combos": 3}}'])
+def test_scorecard_rejects_a_combos_file_of_the_wrong_shape(monkeypatch, capsys, tmp_path, content):
+    a, goal, combos = tmp_path / "a.txt", tmp_path / "g.json", tmp_path / "combos.json"
+    a.write_text("1 Sol Ring\n"); goal.write_text('{"archetype": "go_wide"}')
+    combos.write_text(content)
+    monkeypatch.setattr(cli.api, "scorecard", lambda *a, **k: pytest.fail("should not run"))
+    assert cli.main(["scorecard", "--file", str(a), "--goal", str(goal), "--bracket", "3",
+                     "--combos", str(combos)]) == 2
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is False and out["error"]["field"] == "--combos"

@@ -345,7 +345,13 @@ def _scorecard(args, command: str, client) -> int:
             return EXIT_USER_ERROR
         # `card-combos ... > combos.json` saves the whole envelope; accept that
         # or a bare {"combos": [...]}.
-        combos = cached.get("data", cached).get("combos", [])
+        body = cached.get("data", cached) if isinstance(cached, dict) else None
+        combos = body.get("combos") if isinstance(body, dict) else None
+        if not isinstance(combos, list):
+            _emit(command, {"type": "MissingInput", "field": "--combos",
+                            "message": f'{args.combos} is not card-combos output: '
+                                       'expected a "combos" list'}, ok=False)
+            return EXIT_USER_ERROR
     texts = [_read_text_file(path, command) for path in args.file]
     if None in texts:
         return EXIT_USER_ERROR

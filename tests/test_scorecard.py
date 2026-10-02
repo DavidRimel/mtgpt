@@ -172,11 +172,16 @@ def test_run_scorecard_same_deck_is_a_close_call_confirmed_at_more_games():
     assert out["games"] == 20
 
 
-def test_run_scorecard_rejects_on_floors_without_simming():
+def test_run_scorecard_rejects_on_floors_without_simming(monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("simulated")
+
+    monkeypatch.setattr(sc, "simulate", boom)
     before = deck(*[removal(i) for i in range(5)], lands=37)
     after = deck(*[removal(i) for i in range(4)], BEAR, lands=37)
     out = sc.run_scorecard([before, after], NEVER_GOAL, bracket=3, games=10)
     assert out["verdict"]["verdict"] == "rejected"
+    assert out["games"] == 0 and out["floors"]["ok"] is False
     assert "after" not in out
 
 
