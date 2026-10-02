@@ -60,12 +60,12 @@ decks/<slug>/
 }
 ```
 
-`stage` is one of `scan`, `research`, `tune`, and lets a session resume where the last one stopped.
+`stage` is one of `scan`, `research`, `tune`, `finish`, and lets a session resume where the last one stopped.
 
 ### Session start
 
-1. Run `project list`: a table of name, commander, bracket, best version, its turn-5 win rate
-   (from the last scorecard in the log), and last-updated date. Ask: continue a deck or start a new one?
+1. Run `project list`: a table of name, commander, bracket, best version, its win rate by the
+   target round (from the last scorecard in the log), and last-updated date. Ask: continue a deck or start a new one?
 2. **Continue** — `project status <slug>` shows stage, best version, and the log tail; resume there.
 3. **New** — ask name and target bracket, then where the list comes from:
    - **Import a link.** Archidekt via the existing `import`. Moxfield and other sites via the
@@ -73,13 +73,25 @@ decks/<slug>/
      `api2.moxfield.com/v3/decks/all/<id>` JSON fetched from a moxfield.com tab). If Chrome is
      not connected, ask the user to paste the list.
    - **Paste.**
-   - **From scratch.** Ask commander, bracket, budget, and the theme or playstyle wanted. Draft a
+   - **From scratch.** Ask commander, bracket, and the theme or playstyle wanted (no budget or
+     collection limits — decks are proxied). Draft a
      legal 99 from EDHREC average deck and themes (`compare`, `themes`, `synergy`), Spellbook
      combos for the commander, and `find` packages, multi-job cards first. Validate and audit;
      the user approves the draft before it becomes `v1`.
 4. **Gate before tuning:** `v1` must pass `validate` (legal, 100 cards, color identity) and
    `bracket` at the target. Ask the user the win state and the commander's "thing"; write `goal.json`
    and show it for confirmation.
+
+### Target round
+
+The primary metric is wins by a **target round**, stored in `goal.json` as `"target_round"`.
+Defaults by bracket when the user gives none: bracket 1–2 → 7, bracket 3 → 5, bracket 4 → 4,
+bracket 5 → 3. "Turn-5 wins" elsewhere in this spec means wins by the target round.
+
+### Version names
+
+`project save` always writes the next integer above the highest existing version (`v11b` counts
+as 11, so the next save is `v12`). Hand-named variants from migration are kept as-is.
 
 ### Migration
 
@@ -137,21 +149,54 @@ same list as v8 in Moxfield format and is dropped.
 
 | Target | Measured by | Target level |
 |---|---|---|
-| Turn-5 wins (primary) | `win.win_by_round[4]`; total win rate alongside | — (maximize) |
+| Wins by target round (primary) | `win.win_by_round[target_round - 1]`; total win rate alongside | — (maximize) |
 | Commander on curve | `commander.on_curve_rate`; mana available on the commander turn | ≥ 70% |
 | Interaction in hand | `thing.covered_rate`; `opponent_win.answered_rate`; `loss.by_reason.opponent_win` | covered ≥ 50% |
 | Protection | `disruption.stopped_by_protection_rate`; `disruption.win_rate_after_event` | — |
+| Opening hands | `setup.mulligan_rate`, with its causes (too few lands, too few castable spells) | ≤ 25% |
 | Land base (new) | untapped-land share; per-color sources vs pip demand; `commander.late_reasons.color_screw` | untapped ≥ 80%, no short color |
 
 `scorecard --file A --file B` scores both on matched seeds and returns a verdict:
 
-- **keep** — turn-5 wins rise by ≥ 1.5 points and no guard breaks its tolerance.
-- **revert** — turn-5 wins fall, or a guard breaks.
+- **keep** — primary rises by ≥ 1.5 points and no guard breaks its tolerance.
+- **revert** — primary falls, or a guard breaks.
 - **mixed** — anything else; Claude decides and writes the reason in the log, leaning toward
   multi-job cards and the weakest target.
+- **close call** — when the primary moved by less than 3 points either way, the comparison is
+  re-run at 3000 games before the verdict is final.
 
 Guard tolerances: on-curve −3 points, opponent-win loss rate +2 points, covered rate −3 points,
-no color newly short. Target levels and tolerances live in one table in `scorecard.py`.
+mulligan rate +3 points, no color newly short. Target levels and tolerances live in one table in
+`scorecard.py`.
+
+**Noise floor.** A one-time calibration (part of implementation, recorded in
+`references/tuning-loop.md`) scores a deck against itself and against a swap of two cards the sim
+treats identically, at 1000 and 3000 games, to confirm 1.5 points is above noise. If it is not,
+the threshold is raised to what the calibration shows.
+
+### Card impact
+
+`scorecard` also reports, per card in the deck, from the same games:
+
+- **drawn win rate − not-drawn win rate** (by the target round),
+- **dead rate** — fraction of games it was drawn and never cast/played,
+- **cast rate** and median turn cast.
+
+This needs the engine to record, per game, which cards were drawn and which were cast; the
+goldfish runner aggregates it. Cut choices in the loop use this data, not intuition. Cards whose
+value the sim cannot see (`ignored` rules, removal held for `opponent_win`) are marked
+"not measurable" rather than shown as dead.
+
+### Floors (checked before a swap is simmed)
+
+A proposed version is rejected without simming when it:
+
+- drops any `audit` category (lands, ramp, draw, removal, board wipes) below its target band's
+  minimum, or
+- fails `bracket` at the project's target — a new two-card combo, an extra Game Changer, or
+  anything else the bracket check flags.
+
+This stops the loop from trading away interaction the goldfish undervalues.
 
 ### Land-base numbers
 
@@ -164,13 +209,36 @@ no color newly short. Target levels and tolerances live in one table in `scoreca
 
 1. **Baseline:** scorecard the best version; name the weakest target against the target levels.
 2. **Pick a swap:** in — a `research.md` candidate that addresses the weakness, multi-job preferred;
-   out — the weakest single-job card that is not a combo piece or a land the colors need.
-3. **Test:** `project save` writes `vN+1`; scorecard it against the best version; apply the verdict
-   (`project best` on keep); log it.
-4. **One swap at a time.** Pairs only when the cards need each other (two combo pieces).
-5. **Checkpoint** after 10 swaps tried or 3 consecutive non-keeps: report before/after scorecards,
+   out — chosen from card impact: the lowest-impact single-job card that is not a combo piece, not
+   "not measurable" interaction, and not a land the colors need.
+3. **Floors:** reject the swap if it breaks a floor (above); pick again.
+4. **Test:** `project save` writes the next version; scorecard it against the best version; apply
+   the verdict (`project best` on keep); log it.
+5. **One swap at a time.** Pairs only when the cards need each other (two combo pieces).
+6. **Land count:** once per checkpoint round, test ±1 land (a land for the lowest-impact spell, or
+   the reverse) through the same verdict.
+7. **Checkpoint** after 10 swaps tried or 3 consecutive non-keeps: report before/after scorecards,
    kept swaps and why, sim gaps hit. The user picks continue, change direction, or stop.
-6. **Stop:** best version, final report, and a paste-ready list for Moxfield/Archidekt import.
+
+### Finishing a deck
+
+When the user stops the loop:
+
+1. **Land pass.** A focused pass swapping tapped lands for untapped ones producing the same colors
+   (and fixing any short color), each through the verdict.
+2. **Pilot spot-check.** Claude pilots 2–3 games of the final version (existing pilot mode, same
+   seed and game numbers as auto games) and reports, per game, where its line beat or lost to the
+   heuristic on the same deal. A large gap is logged as a likely heuristic blind spot.
+3. **Final report:** best version's scorecard against `v1`, every kept swap and why, sim gaps,
+   and a paste-ready list for Moxfield/Archidekt import.
+
+### Real-game notes
+
+After the user plays the deck for real, `project note <slug> "<text>"` appends a dated playtest
+note to `log.md` ("flooded twice, wiped on turn 6"). On the next session the skill reads the notes
+first and uses them to adjust the goal (disruption rates, `opponent_win` timing) and to aim the next
+tuning pass at what actually went wrong. Notes are the correction for where the goldfish is
+optimistic.
 
 Every report carries the goldfish caveat: numbers compare versions, they do not predict games.
 
@@ -194,8 +262,11 @@ Every report carries the goldfish caveat: numbers compare versions, they do not 
 
 | Unit | Does | Depends on |
 |---|---|---|
-| `mtgpt/projects.py` + `project list\|new\|status\|save\|best` | deck folders, `project.json`, versioning, best pointer, log append | filesystem only |
-| `mtgpt/scorecard.py` + `scorecard` | reduce a goldfish report to targets; compare two; verdict | goldfish report dicts, audit |
+| `mtgpt/projects.py` + `project list\|new\|status\|save\|best\|note` | deck folders, `project.json`, next-integer versioning, best pointer, log append, playtest notes | filesystem only |
+| `mtgpt/scorecard.py` + `scorecard` | reduce a goldfish report to targets; compare two; verdict incl. close-call re-run at 3000 games | goldfish report dicts, audit |
+| floors (in `scorecard.py`) | reject a version below an `audit` band minimum or failing `bracket`, before simming | `audit`, `brackets` |
+| card-impact tracking (goldfish engine + runner) | record per game which cards were drawn and cast; aggregate drawn/not-drawn win delta, dead rate, cast turn | `goldfish/engine.py`, `goldfish/run.py` |
+| mulligan causes (goldfish runner) | why each mulligan happened: too few lands, too few castable spells | `goldfish/run.py` |
 | land-base metrics (in `scorecard.py`) | untapped share, colors vs pips | `effects.py`, `audit` |
 | `card-rule merge <file>` (in `card_rules.py`) | add rules not present; list conflicts, change nothing for them | card rules library |
 
@@ -212,7 +283,14 @@ Every report carries the goldfish caveat: numbers compare versions, they do not 
 ### Testing
 
 - New code test-first against recorded fixtures and `tmp_path` deck roots; no network.
-- `scorecard` verdict tests cover keep, revert (primary drop), revert (guard break), and mixed.
+- `scorecard` verdict tests cover keep, revert (primary drop), revert (guard break), mixed, and
+  close call.
+- Floor tests: a swap dropping removal below its band is rejected; a swap adding a fourth Game
+  Changer to a bracket-3 deck is rejected.
+- Card-impact tests on a small deterministic deck: a card that is never castable shows dead rate 1;
+  an `ignored` card shows "not measurable".
+- `project save` naming: after `v11b`, the next save is `v12`.
+- The noise-floor calibration runs once and its numbers are recorded in `references/tuning-loop.md`.
 - `card-rule merge` tests cover new rules, identical rules, and conflicts.
 - Before calling it done, run the rewritten skill end to end on the migrated Hapatra project.
 
