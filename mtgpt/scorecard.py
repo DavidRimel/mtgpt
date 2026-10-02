@@ -165,18 +165,18 @@ def floors(before: ResolvedDeck, after: ResolvedDeck, bracket: int, combos=()) -
     counts_before = {c.function: c.count for c in audit(before, tags_before).categories}
     rejected, warnings = [], []
     for cat in audit(after, tags_after).categories:
-        was = counts_before[cat.function]
+        was = counts_before.get(cat.function, 0)
         if cat.count < cat.target_min and cat.count < was:
             rejected.append(f"{cat.function.value}: {cat.count} is below the minimum "
                             f"{cat.target_min} (was {was})")
-    old = check(before, tags_before, target=bracket, combos=_assembled(combos, before))
-    new = check(after, tags_after, target=bracket, combos=_assembled(combos, after))
-    old_messages = {f.message for f in old.findings}
+    assembled_before, assembled_after = _assembled(combos, before), _assembled(combos, after)
+    old = check(before, tags_before, target=bracket, combos=assembled_before)
+    new = check(after, tags_after, target=bracket, combos=assembled_after)
+    old_codes = {f.code for f in old.findings}
     for finding in new.findings:
-        if finding.code == "game_changers":
-            if len(new.game_changers) <= len(old.game_changers):
-                continue
-        elif finding.message in old_messages:
+        if finding.code in old_codes and (
+                _magnitude(finding.code, new, assembled_after)
+                <= _magnitude(finding.code, old, assembled_before)):
             continue
         (rejected if finding.severity is Severity.ERROR else warnings).append(finding.message)
     return {"ok": not rejected, "rejected": rejected, "warnings": warnings}
@@ -188,3 +188,18 @@ def _assembled(combos, deck: ResolvedDeck) -> tuple[dict, ...]:
                | {c.name.casefold() for _, c in deck.cards})
     return tuple(c for c in combos
                  if c.get("cards") and all(n.casefold() in present for n in c["cards"]))
+
+
+def _magnitude(code: str, report, assembled: tuple[dict, ...]) -> int:
+    """How big a bracket finding is, so 'worse than before' is a number."""
+    if code == "game_changers":
+        return len(report.game_changers)
+    if code == "mass_land_denial":
+        return len(report.mass_land_denial)
+    if code == "extra_turns":
+        return len(report.extra_turns)
+    if code == "tutor_density":
+        return report.tutor_count
+    if code == "two_card_combo":
+        return sum(1 for c in assembled if c.get("card_count") == 2)
+    return 0

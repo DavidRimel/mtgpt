@@ -137,3 +137,19 @@ def test_floors_two_card_combo_rejected_at_bracket_two_warned_at_three():
     assert not sc.floors(before, after, 2, COMBOS)["ok"]
     result = sc.floors(before, after, 3, COMBOS)
     assert result["ok"] and "two-card" in result["warnings"][0]
+
+
+def test_floors_unchanged_or_improved_combo_count_is_not_new():
+    piece2 = card("Combo Piece 2", "Artifact", "", mana_cost="{2}")
+    combos = COMBOS + [{"cards": ["Test Commander", "Combo Piece 2"], "card_count": 2}]
+    before = deck(COMBO_PIECE, piece2, lands=37)
+    after = deck(COMBO_PIECE, BEAR, lands=37)
+    assert sc.floors(before, after, 2, combos)["ok"]
+
+
+def test_floors_game_changer_count_compared_not_names():
+    before = deck(*[gc(i) for i in range(4)], lands=37)
+    swapped = deck(*[gc(i) for i in range(1, 5)], lands=37)
+    assert sc.floors(before, swapped, 3)["ok"]
+    five = deck(*[gc(i) for i in range(5)], lands=37)
+    assert not sc.floors(before, five, 3)["ok"]
