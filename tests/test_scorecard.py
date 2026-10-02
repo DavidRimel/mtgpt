@@ -1,3 +1,5 @@
+import dataclasses
+
 import pytest
 
 from mtgpt import scorecard as sc
@@ -93,3 +95,45 @@ def test_mark_measurable():
     assert out["Swords to Plowshares"]["measurable"] is False  # removal: value unseen by a goldfish
     assert out["Sol Ring"]["measurable"] is False              # library says ignored
     assert out["Grizzly Bears"]["measurable"] is True
+
+
+def removal(i):
+    return card(f"Removal {i}", "Instant", "Destroy target creature.", mana_cost="{G}")
+
+
+def gc(i):
+    return dataclasses.replace(card(f"Changer {i}", "Artifact", "", mana_cost="{2}"),
+                               is_game_changer=True)
+
+
+COMBO_PIECE = card("Combo Piece", "Artifact", "", mana_cost="{2}")
+COMBOS = [{"cards": ["Test Commander", "Combo Piece"], "card_count": 2}]
+
+
+def test_floors_reject_dropping_removal_below_its_band():
+    before = deck(*[removal(i) for i in range(5)], lands=37)
+    after = deck(*[removal(i) for i in range(4)], BEAR, lands=37)
+    result = sc.floors(before, after, 3)
+    assert not result["ok"]
+    assert "spot_removal" in result["rejected"][0]
+
+
+def test_floors_allow_a_deck_already_below_that_gets_no_worse():
+    before = deck(*[removal(i) for i in range(3)], BEAR, lands=37)
+    after = deck(*[removal(i) for i in range(3)], SOL_RING, lands=37)
+    assert sc.floors(before, after, 3)["ok"]
+
+
+def test_floors_reject_a_fourth_game_changer_at_bracket_three():
+    before = deck(*[gc(i) for i in range(3)], BEAR, lands=37)
+    after = deck(*[gc(i) for i in range(4)], lands=37)
+    result = sc.floors(before, after, 3)
+    assert not result["ok"] and "Game Changers" in result["rejected"][0]
+
+
+def test_floors_two_card_combo_rejected_at_bracket_two_warned_at_three():
+    before = deck(BEAR, lands=37)
+    after = deck(COMBO_PIECE, lands=37)
+    assert not sc.floors(before, after, 2, COMBOS)["ok"]
+    result = sc.floors(before, after, 3, COMBOS)
+    assert result["ok"] and "two-card" in result["warnings"][0]

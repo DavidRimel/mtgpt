@@ -10,8 +10,11 @@ for the keep / revert / mixed verdict. Change the numbers here and only here.
 from __future__ import annotations
 
 from . import card_rules
-from .audit import AuditReport
+from .audit import AuditReport, audit
+from .brackets import check
+from .classify import classify_deck
 from .goldfish.engine import Setup
+from .models import ResolvedDeck, Severity
 
 #: Wins by this round are the primary metric when the goal names none.
 DEFAULT_TARGET_ROUND = {1: 7, 2: 7, 3: 5, 4: 4, 5: 3}
@@ -147,3 +150,41 @@ def _sub(after, before):
 
 def _ratio(n, total):
     return round(n / total, 4) if total else None
+
+
+def floors(before: ResolvedDeck, after: ResolvedDeck, bracket: int, combos=()) -> dict:
+    """Reasons to reject `after` without simming it.
+
+    A category (lands, ramp, draw, removal, wipes, protection) may not drop
+    below its audit band's minimum — unless it was already there and the swap
+    does not lower it further. A bracket error `before` did not have rejects;
+    a new bracket warning (a two-card combo at bracket 3) is passed through.
+    `combos` are the commander's Spellbook combos cached at research time.
+    """
+    tags_before, tags_after = classify_deck(before), classify_deck(after)
+    counts_before = {c.function: c.count for c in audit(before, tags_before).categories}
+    rejected, warnings = [], []
+    for cat in audit(after, tags_after).categories:
+        was = counts_before[cat.function]
+        if cat.count < cat.target_min and cat.count < was:
+            rejected.append(f"{cat.function.value}: {cat.count} is below the minimum "
+                            f"{cat.target_min} (was {was})")
+    old = check(before, tags_before, target=bracket, combos=_assembled(combos, before))
+    new = check(after, tags_after, target=bracket, combos=_assembled(combos, after))
+    old_messages = {f.message for f in old.findings}
+    for finding in new.findings:
+        if finding.code == "game_changers":
+            if len(new.game_changers) <= len(old.game_changers):
+                continue
+        elif finding.message in old_messages:
+            continue
+        (rejected if finding.severity is Severity.ERROR else warnings).append(finding.message)
+    return {"ok": not rejected, "rejected": rejected, "warnings": warnings}
+
+
+def _assembled(combos, deck: ResolvedDeck) -> tuple[dict, ...]:
+    """The cached combos whose every piece is in `deck`, commander included."""
+    present = ({c.name.casefold() for c in deck.commanders}
+               | {c.name.casefold() for _, c in deck.cards})
+    return tuple(c for c in combos
+                 if c.get("cards") and all(n.casefold() in present for n in c["cards"]))
