@@ -22,6 +22,7 @@ Each subcommand is one operation, independently callable:
     python3 -m mtgpt.cli scorecard        --file best.txt [--file candidate.txt] --goal goal.json --bracket 3
     python3 -m mtgpt.cli goldfish-new     --file deck.txt --goal deck.goal.json --out game.json
     python3 -m mtgpt.cli goldfish-step    --state game.json --action '{"cast": "Sol Ring"}'
+    python3 -m mtgpt.cli project          list | new | status | save | best | stage | note | log
 
 Every deck operation accepts --file, --stdin, or --url (an Archidekt link).
 
@@ -39,8 +40,9 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 
-from . import api, tagger
+from . import api, projects, tagger
 from .errors import DeckStructureError, MtgptError, SourceUnavailable, UnresolvedCards
 from .scryfall import ScryfallClient
 
@@ -196,6 +198,40 @@ def build_parser() -> argparse.ArgumentParser:
     step = sub.add_parser("goldfish-step", help="Apply one action to a piloted game")
     step.add_argument("--state", required=True, help="The game file; rewritten in place")
     step.add_argument("--action", required=True, help='JSON, e.g. {"cast": "Sol Ring"}')
+
+    project = sub.add_parser("project", help="Local deck projects (decks/, never committed)")
+    psub = project.add_subparsers(dest="project_command", required=True)
+    root_opt = argparse.ArgumentParser(add_help=False)
+    root_opt.add_argument("--root", default=str(projects.DEFAULT_ROOT),
+                          help="Folder holding deck projects (default: the repo's decks/)")
+    psub.add_parser("list", parents=[root_opt], help="Every deck project")
+    new = psub.add_parser("new", parents=[root_opt], help="Start a project from a decklist")
+    new.add_argument("--name", required=True)
+    new.add_argument("--bracket", type=int, required=True, choices=[1, 2, 3, 4, 5])
+    new.add_argument("--source", help="Where the list came from (a URL)")
+    src = new.add_mutually_exclusive_group()
+    src.add_argument("--file")
+    src.add_argument("--stdin", action="store_true")
+    status_cmd = psub.add_parser("status", parents=[root_opt], help="Stage, versions, log tail")
+    status_cmd.add_argument("slug")
+    save = psub.add_parser("save", parents=[root_opt], help="Write the next version")
+    save.add_argument("slug")
+    save.add_argument("--note", default="", help="What changed, for the log")
+    src = save.add_mutually_exclusive_group()
+    src.add_argument("--file")
+    src.add_argument("--stdin", action="store_true")
+    best = psub.add_parser("best", parents=[root_opt], help="Mark a version as the best so far")
+    best.add_argument("slug")
+    best.add_argument("version")
+    best.add_argument("--primary", type=float, help="Its wins-by-target-round, for `list`")
+    stage = psub.add_parser("stage", parents=[root_opt], help="Record the tuning stage")
+    stage.add_argument("slug")
+    stage.add_argument("stage", choices=projects.STAGES)
+    for name, help_text in (("note", "Record how a real game went"),
+                            ("log", "Append markdown to the tuning log")):
+        cmd = psub.add_parser(name, parents=[root_opt], help=help_text)
+        cmd.add_argument("slug")
+        cmd.add_argument("text")
 
     return parser
 
@@ -375,6 +411,32 @@ def _card_rule(args, command: str, client) -> int:
     return EXIT_OK
 
 
+def _project(args, command: str) -> int:
+    root = Path(args.root)
+    action = args.project_command
+    if action == "list":
+        _emit(command, projects.list_projects(root))
+    elif action in ("new", "save"):
+        text = _read_deck_text(args, command)
+        if text is None:
+            return EXIT_USER_ERROR
+        if action == "new":
+            _emit(command, projects.create(root, args.name, text, bracket=args.bracket,
+                                           source=args.source))
+        else:
+            _emit(command, projects.save(root, args.slug, text, note=args.note))
+    elif action == "status":
+        _emit(command, projects.status(root, args.slug))
+    elif action == "best":
+        _emit(command, projects.set_best(root, args.slug, args.version, primary=args.primary))
+    elif action == "stage":
+        _emit(command, projects.set_stage(root, args.slug, args.stage))
+    else:
+        (projects.note if action == "note" else projects.log)(root, args.slug, args.text)
+        _emit(command, {"slug": args.slug, "logged": True})
+    return EXIT_OK
+
+
 def _goldfish(args, command: str, client) -> int:
     """The four goldfish subcommands. Returns the exit code."""
     if command == "goldfish-step":
@@ -460,6 +522,8 @@ def main(argv: list[str] | None = None, client: ScryfallClient | None = None) ->
             _emit(command, api.card_combos(args.name))
         elif command == "card-rule":
             return _card_rule(args, command, client)
+        elif command == "project":
+            return _project(args, command)
         elif command == "goldfish-scan":
             goal = None
             if args.goal:

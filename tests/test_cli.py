@@ -19,7 +19,7 @@ def test_every_subcommand_is_registered():
         "validate", "audit", "bracket", "report", "compare", "synergy", "themes",
         "combos", "card-combos", "suggest",
         "goldfish", "goldfish-compare", "goldfish-new", "goldfish-step", "scorecard",
-        "goldfish-scan", "card-rule",
+        "goldfish-scan", "card-rule", "project",
     }
 
 
@@ -147,6 +147,45 @@ def test_a_utf16_decklist_is_a_user_error_not_a_traceback(capsys, tmp_path):
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["error"]["type"] == "UnicodeDecodeError"
+
+
+# --- Project command tests ---
+
+
+LIST_TEXT = "Commander\n1 Hapatra, Vizier of Poisons\n\nDeck\n1 Sol Ring\n98 Swamp\n"
+
+
+def run_project(capsys, *argv):
+    code = cli.main(["project", *argv])
+    return code, json.loads(capsys.readouterr().out)
+
+
+def test_project_lifecycle(tmp_path, capsys):
+    deck_file = tmp_path / "list.txt"
+    deck_file.write_text(LIST_TEXT)
+    root = str(tmp_path / "decks")
+    code, out = run_project(capsys, "new", "--root", root, "--name", "Hapatra",
+                            "--bracket", "3", "--file", str(deck_file))
+    assert code == 0 and out["data"]["slug"] == "hapatra"
+    code, out = run_project(capsys, "save", "hapatra", "--root", root,
+                            "--file", str(deck_file), "--note", "+X -Y")
+    assert out["data"]["version"] == "v2"
+    code, out = run_project(capsys, "best", "hapatra", "v2", "--root", root, "--primary", "0.3")
+    assert out["data"]["best"] == "v2"
+    code, out = run_project(capsys, "stage", "hapatra", "tune", "--root", root)
+    assert out["data"]["stage"] == "tune"
+    code, out = run_project(capsys, "note", "hapatra", "flooded", "--root", root)
+    assert out["data"] == {"slug": "hapatra", "logged": True}
+    code, out = run_project(capsys, "list", "--root", root)
+    assert [p["slug"] for p in out["data"]] == ["hapatra"]
+    code, out = run_project(capsys, "status", "hapatra", "--root", root)
+    assert out["data"]["versions"] == ["v1", "v2"]
+
+
+def test_project_errors_are_envelopes(tmp_path, capsys):
+    code, out = run_project(capsys, "status", "nope", "--root", str(tmp_path))
+    assert code == 2 and out["ok"] is False
+    assert out["error"]["type"] == "ProjectError"
 
 
 def test_a_utf8_bom_decklist_still_parses(capsys, tmp_path):
