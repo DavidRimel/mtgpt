@@ -167,6 +167,11 @@ class GameState:
     #: Look-ahead results already computed this turn. Not serialized.
     lookahead_cache: dict = field(default_factory=dict)
     mulligans: int = 0
+    #: Why each mulligan was taken: "few_lands", "two_lands_no_ramp", "flood".
+    mulligan_reasons: list[str] = field(default_factory=list)
+    #: Card index -> table turn it was first cast, played, or spent as an answer.
+    #: Feeds the per-card impact report.
+    used: dict[int, int] = field(default_factory=dict)
     spent_this_turn: dict[str, int] = field(
         default_factory=lambda: dict.fromkeys(_SPEND_CATEGORIES, 0))
     #: Mana spent and wasted on the turns before the commander was cast.
@@ -467,6 +472,7 @@ def apply(state: GameState, action: dict, *, in_place: bool = False) -> GameStat
         idx = s.library.pop(0)
         _put_land(s, idx, tapped=s.cards[idx].effect.enters_tapped)
         s.lands_played += 1
+        s.used.setdefault(idx, s.turn)
     elif "cast" in action:
         _cast(s, action["cast"])
     elif "put_back" in action:
@@ -486,6 +492,7 @@ def _play_land(s: GameState, name: str) -> None:
     card = s.cards[idx]
     _put_land(s, idx, tapped=card.effect.enters_tapped if card.is_land else False)
     s.lands_played += 1
+    s.used.setdefault(idx, s.turn)
 
 
 def _put_land(s: GameState, idx: int, *, tapped: bool) -> None:
@@ -517,6 +524,7 @@ def _cast(s: GameState, name: str) -> None:
     s.free_spells_used += free
     s.spent_this_turn[_spend_category(s, idx)] += len(plan)
     s.cast_names.append(name)
+    s.used.setdefault(idx, s.turn)
     if card.is_commander and s.commander_cast_turn is None:
         s.commander_cast_turn = s.turn
     s.log.append(f"T{s.turn}: cast {name} ({len(plan)} mana)" + (" free" if free else ""))
@@ -531,6 +539,7 @@ def _cast_free(s: GameState, idx: int) -> None:
     """Cast a card without paying (cascade, Emergent Ultimatum), not from hand."""
     card = s.cards[idx]
     s.cast_names.append(card.name)
+    s.used.setdefault(idx, s.turn)
     s.log.append(f"T{s.turn}: cast {card.name} free")
     _fire(s, "spell_cast")
     if "Instant" in card.type_line or "Sorcery" in card.type_line:
@@ -848,6 +857,7 @@ def _mulligan(s: GameState) -> None:
     s.rng.shuffle(s.library)
     _draw(s, 7)
     while not _keepable(s) and 7 - s.mulligans >= 5:
+        s.mulligan_reasons.append(_mulligan_reason(s))
         s.mulligans += 1
         s.library.extend(s.hand)
         s.hand = []
@@ -864,6 +874,16 @@ def _keepable(s: GameState) -> bool:
     return lands == 2 and any(
         s.cards[i].effect.is_ramp and s.cards[i].mana_value <= 2 and not s.cards[i].is_land
         for i in s.hand)
+
+
+def _mulligan_reason(s: GameState) -> str:
+    """Why `_keepable` rejected the hand, in the keep rule's own terms."""
+    lands = sum(1 for i in s.hand if s.cards[i].is_land or s.cards[i].is_mdfc_land)
+    if lands > 5:
+        return "flood"
+    if lands == 2:
+        return "two_lands_no_ramp"
+    return "few_lands"
 
 
 def _bottom_one(s: GameState) -> None:
@@ -977,6 +997,7 @@ def _spend_answer(s: GameState, idx: int, *, due_now: bool) -> None:
     your next upkeep — this turn's if it was spent during the opponents' turns."""
     s.hand.remove(idx)
     s.graveyard.append(idx)
+    s.used.setdefault(idx, s.turn)
     cost = s.cards[idx].effect.pact_cost
     if cost:
         s.pacts_due.append([cost, s.turn_index if due_now else s.turn_index + 1])
@@ -1441,6 +1462,8 @@ def to_dict(s: GameState) -> dict:
         "checkpoints": dict(s.checkpoints),
         "win_by": s.win_by,
         "mulligans": s.mulligans,
+        "mulligan_reasons": list(s.mulligan_reasons),
+        "used": {str(k): v for k, v in s.used.items()},
         "spent_this_turn": dict(s.spent_this_turn),
         "pre_commander": dict(s.pre_commander),
         "per_turn": [dict(t) for t in s.per_turn],
@@ -1513,6 +1536,8 @@ def _from_dict(data: dict) -> GameState:
     plain["imprints"] = {int(k): v for k, v in data.get("imprints", {}).items()}
     plain["pending_tutor_top"] = data.get("pending_tutor_top", False)
     plain["pending_tutor_source"] = data.get("pending_tutor_source")
+    plain["mulligan_reasons"] = data.get("mulligan_reasons", [])
+    plain["used"] = {int(k): v for k, v in data.get("used", {}).items()}
     return GameState(
         cards=cards, goal=goal, goal_raw=data["goal"], turn_cap=data["turn_cap"],
         disruption=data["disruption"], rng=_load_rng(data["rng"]),

@@ -3,8 +3,8 @@ import json
 import pytest
 
 from mtgpt.goldfish.engine import (
-    TRIGGER_CAP, IllegalAction, apply, available_mana, from_dict, held_counts, legal_actions,
-    new_game, prepare, to_dict,
+    TRIGGER_CAP, IllegalAction, _spend_answer, apply, available_mana, from_dict, held_counts,
+    legal_actions, new_game, prepare, to_dict,
 )
 
 from mtgpt.models import ResolvedDeck
@@ -506,3 +506,42 @@ def test_put_back_state_round_trips():
     s = apply(s, {"cast": "Enter the Infinite"})
     data = to_dict(s)
     assert to_dict(from_dict(json.loads(json.dumps(data)))) == data
+
+
+NEVER_GOAL_T2 = {"archetype": "custom", "thing": "commander", "win": NEVER}
+
+
+def test_casting_and_playing_record_first_use_turn():
+    s = rigged(SOL_RING, hand=("Sol Ring", "Forest"))
+    s = apply(s, {"play_land": "Forest"})
+    s = apply(s, {"cast": "Sol Ring"})
+    assert {s.cards[i].name: t for i, t in s.used.items()} == {"Forest": 1, "Sol Ring": 1}
+
+
+def test_spending_an_answer_records_use():
+    s = rigged(SWORDS, hand=("Swords to Plowshares",))
+    idx = s.hand[0]
+    _spend_answer(s, idx, due_now=True)
+    assert s.used == {idx: s.turn}
+
+
+def test_mulligans_record_why():
+    s = new_game(prepare(deck(), NEVER_GOAL_T2), seed=1)  # 99 Forests: every hand floods
+    assert s.mulligans >= 1
+    assert s.mulligan_reasons == ["flood"] * s.mulligans
+
+
+def test_used_and_mulligan_reasons_survive_serialization():
+    s = rigged(SOL_RING, hand=("Sol Ring", "Forest"))
+    s = apply(s, {"play_land": "Forest"})
+    s.mulligan_reasons = ["flood"]
+    back = from_dict(json.loads(json.dumps(to_dict(s))))
+    assert back.used == s.used
+    assert back.mulligan_reasons == ["flood"]
+
+
+def test_game_files_from_before_tracking_still_load():
+    data = to_dict(rigged(SOL_RING))
+    del data["used"], data["mulligan_reasons"]
+    back = from_dict(data)
+    assert back.used == {} and back.mulligan_reasons == []
