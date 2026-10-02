@@ -71,7 +71,7 @@ pbpaste | python3 -m mtgpt.cli audit --stdin
 Output is `{"ok": true, "command": ..., "data": {...}}` on success or
 `{"ok": false, "command": ..., "error": {"type": ..., "message": ...}}` on
 failure, with exit code 0 or 2 respectively. See
-`skills/mtgpt/SKILL.md` for the full composition patterns.
+`.claude/skills/mtgpt/references/toolkit.md` for the full composition patterns.
 
 Archidekt links can be fetched directly: `import`, or `--url` on any deck
 operation. Export your list from Moxfield with the **Export** button and paste
