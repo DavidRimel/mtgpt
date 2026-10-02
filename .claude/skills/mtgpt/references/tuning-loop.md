@@ -35,10 +35,20 @@ two-card combo at bracket 3) come back under `floors.warnings`: mention them.
 
 ## Choosing the cut
 
+`card_impact` is an object keyed by card name. `win_delta` is the win rate in games
+that saw the card minus games that did not, so the most negative cards are the worst
+(it is negative for most cards, because games that draw more cards of any kind are
+longer). `dead_rate` is the share of games the card was seen but never cast.
+
 From the best version's `card_impact`: the lowest `win_delta` / highest
 `dead_rate` card that is single-job, `measurable: true`, not a combo piece, and
 not a land a short color needs. A card with `measurable: false` is never cut on
 its numbers — its value (removal, counters) is invisible to a goldfish.
+A swap that takes a category (draw, ramp, removal, wipes, protection, lands) below its
+audit minimum, when the old list was not already lower, comes back `rejected` with no
+sim: pick the cut from a category with room, or swap within the category. `classify`
+the cut and the card coming in before saving; a `rejected` version stays saved, so
+log the rejection and number the next try as the next version.
 
 ## The loop
 

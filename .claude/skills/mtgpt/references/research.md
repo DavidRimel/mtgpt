@@ -47,9 +47,10 @@ preferred whenever the loop picks a card to add.
 
 ## Pre-scan
 
-Run stage 1 on the candidates now (`goldfish-scan` a scratch list of them with the
-deck's goal, then `card-rule` each `needs_review` card), so the tuning loop
-never stops on an unmodeled card.
+Run stage 1 on the candidates now (`goldfish-scan` a scratch list of them, then
+`card-rule` each `needs_review` card), so the tuning loop never stops on an unmodeled
+card. Leave out `--goal`: a goal file names cards that must be in the scanned list, so
+it fails on a candidates-only list.
 
 ## research.md format
 
