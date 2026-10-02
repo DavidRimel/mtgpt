@@ -74,3 +74,38 @@ def test_shipped_library_is_valid():
         assert entry["status"] in card_rules.STATUSES, name
         if entry["status"] == "override":
             card_rules.validate_rule(name, entry["rule"])
+
+
+def write_library(path, cards):
+    path.write_text(json.dumps({"version": 1, "cards": cards}))
+    return path
+
+
+def test_merge_adds_new_rules_and_reports_conflicts(library, tmp_path):
+    card_rules.record("Blood Artist", status="override",
+                      rule={"on": "creature_dies", "drain": 1}, note="mine")
+    card_rules.record("Sol Ring", status="parsed", rule=None, note="mine")
+    theirs = write_library(tmp_path / "theirs.json", {
+        "Blood Artist": {"status": "override", "rule": {"on": "creature_dies", "drain": 2},
+                         "note": "theirs", "reviewed": "2026-10-03"},
+        "Sol Ring": {"status": "parsed", "note": "different note", "reviewed": "2026-10-03"},
+        "Zulaport Cutthroat": {"status": "override",
+                               "rule": {"on": "creature_dies", "drain": 1},
+                               "note": "theirs", "reviewed": "2026-10-03"},
+    })
+    result = card_rules.merge(theirs)
+    assert result["added"] == ["Zulaport Cutthroat"]
+    assert result["unchanged"] == 1
+    assert [c["name"] for c in result["conflicts"]] == ["Blood Artist"]
+    saved = card_rules.load()["cards"]
+    assert saved["Blood Artist"]["rule"]["drain"] == 1  # conflicts are never overwritten
+    assert "Zulaport Cutthroat" in saved
+
+
+def test_merge_rejects_an_invalid_incoming_rule(library, tmp_path):
+    theirs = write_library(tmp_path / "theirs.json", {
+        "Blood Artist": {"status": "override", "rule": {"on": "nonsense"}, "note": "",
+                         "reviewed": "2026-10-03"}})
+    with pytest.raises(GoalError):
+        card_rules.merge(theirs)
+    assert card_rules.load()["cards"] == {}

@@ -22,6 +22,7 @@ Each subcommand is one operation, independently callable:
     python3 -m mtgpt.cli scorecard        --file best.txt [--file candidate.txt] --goal goal.json --bracket 3
     python3 -m mtgpt.cli goldfish-new     --file deck.txt --goal deck.goal.json --out game.json
     python3 -m mtgpt.cli goldfish-step    --state game.json --action '{"cast": "Sol Ring"}'
+    python3 -m mtgpt.cli card-rule-merge  theirs/card_rules.json
     python3 -m mtgpt.cli project          list | new | status | save | best | stage | note | log
 
 Every deck operation accepts --file, --stdin, or --url (an Archidekt link).
@@ -194,6 +195,10 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Record an entry; omit to show the current one")
     rule.add_argument("--rule", help='Engine override JSON, for --status override')
     rule.add_argument("--note", default="", help="Why: what the card does in a goldfish")
+
+    merge = sub.add_parser("card-rule-merge",
+                           help="Add another card_rules.json's rules; list conflicts")
+    merge.add_argument("path")
 
     step = sub.add_parser("goldfish-step", help="Apply one action to a piloted game")
     step.add_argument("--state", required=True, help="The game file; rewritten in place")
@@ -522,6 +527,8 @@ def main(argv: list[str] | None = None, client: ScryfallClient | None = None) ->
             _emit(command, api.card_combos(args.name))
         elif command == "card-rule":
             return _card_rule(args, command, client)
+        elif command == "card-rule-merge":
+            _emit(command, api.card_rule_merge(args.path))
         elif command == "project":
             return _project(args, command)
         elif command == "goldfish-scan":

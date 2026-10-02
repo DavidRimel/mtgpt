@@ -60,10 +60,41 @@ def record(name: str, *, status: str, rule, note: str, path: Path | None = None)
     if rule is not None:
         entry["rule"] = rule
     data["cards"][name] = entry
+    _save(path, data)
+    return entry
+
+
+def merge(other_path: Path, path: Path | None = None) -> dict:
+    """Add another library's rules that this one lacks. A card both libraries
+    know but judge differently is listed as a conflict and left untouched."""
+    path = Path(path or DEFAULT_PATH)
+    mine = load(path)
+    theirs = load(Path(other_path))
+    added, unchanged, conflicts = [], 0, []
+    for name, entry in sorted(theirs["cards"].items()):
+        current = mine["cards"].get(name)
+        if current is None:
+            if entry.get("status") == "override":
+                validate_rule(name, entry.get("rule"))
+            mine["cards"][name] = entry
+            added.append(name)
+        elif _same(current, entry):
+            unchanged += 1
+        else:
+            conflicts.append({"name": name, "mine": current, "theirs": entry})
+    if added:
+        _save(path, mine)
+    return {"added": added, "unchanged": unchanged, "conflicts": conflicts}
+
+
+def _same(a: dict, b: dict) -> bool:
+    return a.get("status") == b.get("status") and a.get("rule") == b.get("rule")
+
+
+def _save(path: Path, data: dict) -> None:
     data["cards"] = dict(sorted(data["cards"].items()))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    return entry
 
 
 def engine_rules(names, path: Path | None = None) -> dict:

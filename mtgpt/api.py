@@ -1072,6 +1072,13 @@ def card_rule_set(name: str, *, status: str, rule: dict | None, note: str,
     return {"name": real, "entry": entry}
 
 
+def card_rule_merge(path: str) -> dict:
+    """Bring in a friend's card rules; conflicts are listed, never overwritten."""
+    from . import card_rules
+
+    return card_rules.merge(path)
+
+
 def goldfish_step(state: dict, action: dict) -> dict:
     """Apply one action to a piloted game. Raises IllegalAction for a bad one."""
     after = apply(from_dict(state), action, in_place=True)

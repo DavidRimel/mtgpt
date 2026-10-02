@@ -19,7 +19,7 @@ def test_every_subcommand_is_registered():
         "validate", "audit", "bracket", "report", "compare", "synergy", "themes",
         "combos", "card-combos", "suggest",
         "goldfish", "goldfish-compare", "goldfish-new", "goldfish-step", "scorecard",
-        "goldfish-scan", "card-rule", "project",
+        "goldfish-scan", "card-rule", "card-rule-merge", "project",
     }
 
 
@@ -597,3 +597,10 @@ def test_scorecard_rejects_a_combos_file_of_the_wrong_shape(monkeypatch, capsys,
                      "--combos", str(combos)]) == 2
     out = json.loads(capsys.readouterr().out)
     assert out["ok"] is False and out["error"]["field"] == "--combos"
+
+
+def test_card_rule_merge_passes_the_path(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(cli.api, "card_rule_merge",
+                        lambda path: {"added": [path], "unchanged": 0, "conflicts": []})
+    assert cli.main(["card-rule-merge", str(tmp_path / "theirs.json")]) == 0
+    assert json.loads(capsys.readouterr().out)["data"]["added"] == [str(tmp_path / "theirs.json")]
