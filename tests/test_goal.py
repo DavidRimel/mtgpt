@@ -144,3 +144,11 @@ def test_opponent_win_block():
     assert err.value.field == "opponent_win.answers"
     with pytest.raises(GoalError):
         load({"archetype": "go_wide", "opponent_win": {"from_turn": 0}})
+
+
+def test_opponent_win_every():
+    assert load({"archetype": "go_wide", "opponent_win": {"every": [2, 3]}}).opponent_win.every == (2, 3)
+    assert load({"archetype": "go_wide", "opponent_win": {"every": 2}}).opponent_win.every == (2, 2)
+    assert load({"archetype": "go_wide", "opponent_win": {}}).opponent_win.every is None
+    with pytest.raises(GoalError):
+        load({"archetype": "go_wide", "opponent_win": {"every": [3, 2]}})

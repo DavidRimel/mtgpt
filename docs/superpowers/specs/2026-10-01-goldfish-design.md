@@ -230,8 +230,10 @@ cards remain; Smothering Tithe as one Treasure a round.
 ### Opponents' win attempts
 
 For fast tables, a goal file's `opponent_win` block (`from_turn`, default 5; `answers`,
-any of `removal`, `counterspell`, `stax`) makes an opponent try to win each round from
-`from_turn` on, during the opponents' turns. A stax piece on your battlefield stops it
+any of `removal`, `counterspell`, `stax`; `every`, rounds between attempts as a number or
+`[fewest, most]`, drawn per game from its own random stream — omitted, every round) makes
+an opponent try to win at `from_turn` and on later scheduled rounds, during the
+opponents' turns. A stax piece on your battlefield stops it
 and stays; a held removal spell or counterspell stops it and is spent; otherwise the
 game is lost (`opponent_win`). Protection does not answer it. The report's
 `opponent_win` block gives attempts, the answered rate, and the answering cards; the

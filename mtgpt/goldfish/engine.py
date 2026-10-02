@@ -180,6 +180,8 @@ class GameState:
     events: list[dict] = field(default_factory=list)
     #: Opponents' win attempts: {"turn", "stopped", "by"}.
     win_attempts: list[dict] = field(default_factory=list)
+    #: Rounds an opponent attempts to win (from the goal's opponent_win rule).
+    attempt_rounds: list[int] = field(default_factory=list)
     #: Pact costs owed: [cost, turn_index of the upkeep it is due].
     pacts_due: list[list] = field(default_factory=list)
     #: Chrome Mox and kin: card index -> colors of the card exiled with it.
@@ -231,6 +233,7 @@ def new_game(setup: Setup, *, seed, turn_cap: int = DEFAULT_TURN_CAP,
         library=[i for i in range(len(setup.cards)) if i not in setup.commanders],
         command_zone=list(setup.commanders),
     )
+    state.attempt_rounds = _attempt_schedule(setup.goal, seed, turn_cap)
     _mulligan(state)
     for idx in [i for i in state.hand if state.cards[i].effect.leyline]:
         state.hand.remove(idx)
@@ -239,6 +242,22 @@ def new_game(setup: Setup, *, seed, turn_cap: int = DEFAULT_TURN_CAP,
         state.log.append(f"T1: {state.cards[idx].name} begins on the battlefield")
     _begin_turn(state)
     return state
+
+
+def _attempt_schedule(goal: Goal, seed, turn_cap: int) -> list[int]:
+    """Rounds the opponents try to win: from `from_turn`, then every round or
+    every 2-3 rounds. Its own random stream, so matched seeds share it."""
+    rule = goal.opponent_win
+    if rule is None:
+        return []
+    if rule.every is None:
+        return list(range(rule.from_turn, turn_cap + 1))
+    rng = random.Random(f"{seed}-attempts")
+    rounds, r = [], rule.from_turn
+    while r <= turn_cap:
+        rounds.append(r)
+        r += rng.randint(*rule.every)
+    return rounds
 
 
 def _overridden(info: CardInfo, spec) -> CardInfo:
@@ -872,7 +891,7 @@ def _opponent_win_attempt(s: GameState) -> None:
     you control stops it and stays; otherwise a held removal spell or
     counterspell stops it and is spent; otherwise you lose."""
     rule = s.goal.opponent_win
-    if rule is None or s.turn < rule.from_turn:
+    if rule is None or s.turn not in s.attempt_rounds:
         return
     if "stax" in rule.answers:
         for perm in s.battlefield:
@@ -1360,6 +1379,7 @@ def to_dict(s: GameState) -> dict:
         "events": [dict(e) for e in s.events],
         "win_attempts": [dict(a) for a in s.win_attempts],
         "pacts_due": [list(p) for p in s.pacts_due],
+        "attempt_rounds": list(s.attempt_rounds),
         "imprints": {str(k): list(v) for k, v in s.imprints.items()},
         "pending_tutor_top": s.pending_tutor_top,
         "late_reason": s.late_reason,
@@ -1417,6 +1437,9 @@ def _from_dict(data: dict) -> GameState:
     plain["tutors_left"] = data.get("tutors_left", 0)
     plain["win_attempts"] = data.get("win_attempts", [])
     plain["pacts_due"] = data.get("pacts_due", [])
+    goal_rule = goal.opponent_win
+    plain["attempt_rounds"] = data.get("attempt_rounds", list(range(
+        goal_rule.from_turn, data["turn_cap"] + 1)) if goal_rule else [])
     plain["imprints"] = {int(k): v for k, v in data.get("imprints", {}).items()}
     plain["pending_tutor_top"] = data.get("pending_tutor_top", False)
     return GameState(

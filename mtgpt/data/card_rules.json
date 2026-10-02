@@ -16,9 +16,19 @@
       "note": "removal held as interaction in hand; spent by the disruption model; no target in a goldfish",
       "reviewed": "2026-10-01"
     },
+    "Apex Devastator": {
+      "status": "parsed",
+      "note": "cascade four times; a 10/10",
+      "reviewed": "2026-10-01"
+    },
     "Approach of the Second Sun": {
       "status": "parsed",
       "note": "first cast goes 7th from the top; a second cast from hand wins the game",
+      "reviewed": "2026-10-01"
+    },
+    "Arcane Denial": {
+      "status": "parsed",
+      "note": "2-mana counterspell held as an answer; the draws it grants are not modeled",
       "reviewed": "2026-10-01"
     },
     "Arcane Signet": {
@@ -84,6 +94,11 @@
     "Counterspell": {
       "status": "parsed",
       "note": "counterspell held as interaction in hand; spent by the disruption model; no target in a goldfish",
+      "reviewed": "2026-10-01"
+    },
+    "Cruel Ultimatum": {
+      "status": "parsed",
+      "note": "draw three and return a creature from graveyard modeled; the opponent's sacrifice/discard/life loss has no goldfish effect",
       "reviewed": "2026-10-01"
     },
     "Cyclonic Rift": {

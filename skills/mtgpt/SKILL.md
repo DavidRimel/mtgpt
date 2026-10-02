@@ -172,7 +172,7 @@ it recovers from disruption (`disruption`).
      },
      "win": {"any": [{"opponent_life_lost": 120}, {"cast": "Craterhoof Behemoth"}]},
      "disruption": {"commander_removal": 0.15, "board_wipe": 0.05, "from_turn": 4},
-     "opponent_win": {"from_turn": 5, "answers": ["removal", "counterspell", "stax"]}
+     "opponent_win": {"from_turn": 5, "every": [2, 3], "answers": ["removal", "counterspell", "stax"]}
    }
    ```
 

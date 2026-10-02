@@ -128,6 +128,8 @@ class OpponentWin:
 
     from_turn: int = 5
     answers: tuple[str, ...] = ANSWER_KINDS
+    #: (fewest, most) rounds between attempts after the first; None is every round.
+    every: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -327,7 +329,7 @@ def _mana_colors(value, field: str) -> frozenset[str]:
 def _opponent_win(raw) -> OpponentWin:
     if not isinstance(raw, dict):
         raise GoalError("opponent_win", "must be an object")
-    unknown = sorted(set(raw) - {"from_turn", "answers"})
+    unknown = sorted(set(raw) - {"from_turn", "answers", "every"})
     if unknown:
         raise GoalError("opponent_win", f"unknown field(s): {', '.join(unknown)}", unknown)
     from_turn = raw.get("from_turn", 5)
@@ -339,7 +341,17 @@ def _opponent_win(raw) -> OpponentWin:
     if bad or not answers:
         raise GoalError("opponent_win.answers", f"must be a list drawn from {', '.join(ANSWER_KINDS)}",
                         bad)
-    return OpponentWin(from_turn=from_turn, answers=tuple(answers))
+    every = raw.get("every")
+    if every is not None:
+        if isinstance(every, int) and not isinstance(every, bool):
+            every = [every, every]
+        ok = (isinstance(every, list) and len(every) == 2
+              and all(isinstance(n, int) and not isinstance(n, bool) and n >= 1 for n in every)
+              and every[0] <= every[1])
+        if not ok:
+            raise GoalError("opponent_win.every", "must be a number of rounds, or [fewest, most]", [every])
+        every = (every[0], every[1])
+    return OpponentWin(from_turn=from_turn, answers=tuple(answers), every=every)
 
 
 def _disruption(raw) -> Disruption:
