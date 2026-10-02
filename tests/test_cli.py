@@ -16,7 +16,7 @@ def test_every_subcommand_is_registered():
         "card", "search", "find", "cross-check", "classify", "import", "read",
         "validate", "audit", "bracket", "report", "compare", "synergy", "themes",
         "combos", "card-combos", "suggest",
-        "goldfish", "goldfish-compare", "goldfish-new", "goldfish-step",
+        "goldfish", "goldfish-compare", "goldfish-new", "goldfish-step", "scorecard",
         "goldfish-scan", "card-rule",
     }
 
@@ -514,3 +514,33 @@ def test_cross_check_can_ask_for_one_direction(monkeypatch):
     cli.main(["cross-check", "recursion", "--direction", "recall"])
     cli.main(["cross-check", "recursion", "--direction", "precision"])
     assert calls == ["recall", "precision"]
+
+
+def test_scorecard_passes_files_goal_and_bracket(monkeypatch, capsys, tmp_path):
+    a, b, goal = tmp_path / "a.txt", tmp_path / "b.txt", tmp_path / "g.json"
+    a.write_text("1 Sol Ring\n"); b.write_text("1 Mind Stone\n")
+    goal.write_text('{"archetype": "go_wide"}')
+    seen = {}
+
+    def fake(texts, goal_raw, **kw):
+        seen.update(texts=texts, goal=goal_raw, **kw)
+        return {"verdict": {"verdict": "keep"}}
+
+    monkeypatch.setattr(cli.api, "scorecard", fake)
+    assert cli.main(["scorecard", "--file", str(a), "--file", str(b), "--goal", str(goal),
+                     "--bracket", "4", "--games", "50"]) == 0
+    assert seen["texts"] == ["1 Sol Ring\n", "1 Mind Stone\n"]
+    assert seen["bracket"] == 4 and seen["games"] == 50 and seen["combos"] is None
+    assert json.loads(capsys.readouterr().out)["data"]["verdict"]["verdict"] == "keep"
+
+
+def test_scorecard_reads_a_saved_card_combos_envelope(monkeypatch, capsys, tmp_path):
+    a, goal, combos = tmp_path / "a.txt", tmp_path / "g.json", tmp_path / "combos.json"
+    a.write_text("1 Sol Ring\n"); goal.write_text('{"archetype": "go_wide"}')
+    combos.write_text(json.dumps({"ok": True, "command": "card-combos", "data": {
+        "card": "X", "count": 1, "combos": [{"cards": ["X", "Y"], "card_count": 2}]}}))
+    seen = {}
+    monkeypatch.setattr(cli.api, "scorecard", lambda texts, g, **kw: seen.update(kw) or {})
+    assert cli.main(["scorecard", "--file", str(a), "--goal", str(goal), "--bracket", "3",
+                     "--combos", str(combos)]) == 0
+    assert seen["combos"] == [{"cards": ["X", "Y"], "card_count": 2}]

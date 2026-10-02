@@ -19,6 +19,7 @@ Each subcommand is one operation, independently callable:
     python3 -m mtgpt.cli card-combos "Thassa's Oracle"
     python3 -m mtgpt.cli goldfish         --file deck.txt --goal deck.goal.json
     python3 -m mtgpt.cli goldfish-compare --file old.txt --file new.txt --goal deck.goal.json
+    python3 -m mtgpt.cli scorecard        --file best.txt [--file candidate.txt] --goal goal.json --bracket 3
     python3 -m mtgpt.cli goldfish-new     --file deck.txt --goal deck.goal.json --out game.json
     python3 -m mtgpt.cli goldfish-step    --state game.json --action '{"cast": "Sol Ring"}'
 
@@ -170,6 +171,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--file", action="append", required=True, help="Pass twice: the deck before, then after")
     _add_goldfish_options(goldfish_compare, games=True)
 
+    score_cmd = sub.add_parser(
+        "scorecard", help="Tuning targets for a deck, or keep/revert for a candidate")
+    score_cmd.add_argument(
+        "--file", action="append", required=True,
+        help="Once to score a deck; twice to judge the second against the first")
+    score_cmd.add_argument("--bracket", type=int, required=True, choices=[1, 2, 3, 4, 5])
+    score_cmd.add_argument("--combos", help="The commander's cached card-combos JSON")
+    _add_goldfish_options(score_cmd, games=True)
+
     scan = sub.add_parser("goldfish-scan", help="How the sim models every card; what needs review")
     src = scan.add_mutually_exclusive_group()
     src.add_argument("--file")
@@ -319,6 +329,32 @@ def _write_json(path: str, data, command: str) -> bool:
     return True
 
 
+def _scorecard(args, command: str, client) -> int:
+    if len(args.file) not in (1, 2):
+        _emit(command, {"type": "MissingInput",
+                        "message": "Pass --file once (score) or twice (best, then candidate)."},
+              ok=False)
+        return EXIT_USER_ERROR
+    goal = _read_json(args.goal, command)
+    if goal is _FAILED:
+        return EXIT_USER_ERROR
+    combos = None
+    if args.combos:
+        cached = _read_json(args.combos, command)
+        if cached is _FAILED:
+            return EXIT_USER_ERROR
+        # `card-combos ... > combos.json` saves the whole envelope; accept that
+        # or a bare {"combos": [...]}.
+        combos = cached.get("data", cached).get("combos", [])
+    texts = [_read_text_file(path, command) for path in args.file]
+    if None in texts:
+        return EXIT_USER_ERROR
+    _emit(command, api.scorecard(texts, goal, bracket=args.bracket, combos=combos,
+                                 games=args.games, turns=args.turns, seed=args.seed,
+                                 disruption=not args.no_disruption, client=client))
+    return EXIT_OK
+
+
 def _card_rule(args, command: str, client) -> int:
     if args.status is None:
         _emit(command, api.card_rule_show(args.name))
@@ -428,6 +464,8 @@ def main(argv: list[str] | None = None, client: ScryfallClient | None = None) ->
             if text is None:
                 return EXIT_USER_ERROR
             _emit(command, api.goldfish_scan(text, goal, client=client))
+        elif command == "scorecard":
+            return _scorecard(args, command, client)
         elif command.startswith("goldfish"):
             return _goldfish(args, command, client)
         elif command == "combos":

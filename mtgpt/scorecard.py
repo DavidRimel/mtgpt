@@ -13,7 +13,9 @@ from . import card_rules
 from .audit import AuditReport, audit
 from .brackets import check
 from .classify import classify_deck
-from .goldfish.engine import Setup
+from .goal import GoalError
+from .goldfish.engine import DEFAULT_TURN_CAP, Setup, prepare
+from .goldfish.run import DEFAULT_GAMES, simulate
 from .models import ResolvedDeck, Severity
 
 #: Wins by this round are the primary metric when the goal names none.
@@ -203,3 +205,45 @@ def _magnitude(code: str, report, assembled: tuple[dict, ...]) -> int:
     if code == "two_card_combo":
         return sum(1 for c in assembled if c.get("card_count") == 2)
     return 0
+
+
+def run_scorecard(decks: list[ResolvedDeck], goal: dict, *, bracket: int, combos=(),
+                  games: int = DEFAULT_GAMES, turns: int = DEFAULT_TURN_CAP, seed: int = 1,
+                  disruption: bool = True, confirm_games: int = CONFIRM_GAMES) -> dict:
+    """Score one deck, or judge a candidate (second) against the best (first)."""
+    round_ = target_round(goal, bracket)
+    if round_ > turns:
+        raise GoalError("target_round",
+                        f"target round {round_} is beyond the {turns}-turn cap; raise --turns",
+                        [round_])
+
+    def run(deck: ResolvedDeck, n: int):
+        report = simulate(deck, goal, games=n, turn_cap=turns, seed=seed,
+                          disruption=disruption, impact_round=round_)
+        setup = prepare(deck, goal)
+        return (score(report, land_base(setup, audit(deck)), round_),
+                mark_measurable(report["card_impact"], setup))
+
+    if len(decks) == 1:
+        s, impact = run(decks[0], games)
+        return {"target_round": round_, "games": games, "score": s,
+                "weaknesses": weaknesses(s), "card_impact": impact}
+
+    before_deck, after_deck = decks
+    gate = floors(before_deck, after_deck, bracket, combos)
+    if not gate["ok"]:
+        return {"target_round": round_, "games": 0, "floors": gate,
+                "verdict": {"verdict": "rejected", "primary_delta": None,
+                            "broken_guards": [], "close_call": False}}
+    n = games
+    before, _ = run(before_deck, n)
+    after, impact = run(after_deck, n)
+    judged = verdict(before, after)
+    if judged["close_call"] and n < confirm_games:
+        n = confirm_games
+        before, _ = run(before_deck, n)
+        after, impact = run(after_deck, n)
+        judged = verdict(before, after)
+    return {"target_round": round_, "games": n, "floors": gate, "before": before,
+            "after": after, "verdict": judged, "weaknesses": weaknesses(after),
+            "card_impact": impact}

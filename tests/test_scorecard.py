@@ -153,3 +153,34 @@ def test_floors_game_changer_count_compared_not_names():
     assert sc.floors(before, swapped, 3)["ok"]
     five = deck(*[gc(i) for i in range(5)], lands=37)
     assert not sc.floors(before, five, 3)["ok"]
+
+
+from mtgpt.goal import GoalError
+
+
+def test_run_scorecard_one_deck():
+    out = sc.run_scorecard([deck(SOL_RING, BEAR, lands=37)], NEVER_GOAL, bracket=3, games=10)
+    assert out["target_round"] == 5 and out["games"] == 10
+    assert "primary" in out["score"] and "Sol Ring" in out["card_impact"]
+    assert "measurable" in out["card_impact"]["Sol Ring"]
+
+
+def test_run_scorecard_same_deck_is_a_close_call_confirmed_at_more_games():
+    d = deck(SOL_RING, BEAR, lands=37)
+    out = sc.run_scorecard([d, d], NEVER_GOAL, bracket=3, games=10, confirm_games=20)
+    assert out["verdict"]["primary_delta"] == 0.0
+    assert out["games"] == 20
+
+
+def test_run_scorecard_rejects_on_floors_without_simming():
+    before = deck(*[removal(i) for i in range(5)], lands=37)
+    after = deck(*[removal(i) for i in range(4)], BEAR, lands=37)
+    out = sc.run_scorecard([before, after], NEVER_GOAL, bracket=3, games=10)
+    assert out["verdict"]["verdict"] == "rejected"
+    assert "after" not in out
+
+
+def test_target_round_beyond_turn_cap_is_a_goal_error():
+    with pytest.raises(GoalError) as err:
+        sc.run_scorecard([deck()], NEVER_GOAL | {"target_round": 12}, bracket=3, games=5, turns=10)
+    assert err.value.field == "target_round"

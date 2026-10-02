@@ -999,6 +999,30 @@ def goldfish_compare(
     return result
 
 
+def scorecard(
+    texts: list[str],
+    goal: dict,
+    *,
+    bracket: int,
+    combos: list[dict] | None = None,
+    games: int = DEFAULT_GAMES,
+    turns: int = DEFAULT_TURN_CAP,
+    seed: int = 1,
+    disruption: bool = True,
+    client: ScryfallClient | None = None,
+) -> dict:
+    """The tuning scorecard for one deck, or a verdict on a candidate against
+    the best version (texts = [best, candidate])."""
+    from .scorecard import run_scorecard
+
+    scry = _client(client)
+    decks = [_resolved(t, scry) for t in texts]
+    result = run_scorecard(decks, goal, bracket=bracket, combos=combos or (), games=games,
+                           turns=turns, seed=seed, disruption=disruption)
+    result["warnings"] = _violations(validate(decks[-1]))
+    return result
+
+
 def goldfish_new(
     text: str,
     goal: dict,
