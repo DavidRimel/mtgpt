@@ -272,7 +272,7 @@ Every report carries the goldfish caveat: numbers compare versions, they do not 
 | card-impact tracking (goldfish engine + runner) | record per game which cards were drawn and cast; aggregate drawn/not-drawn win delta, dead rate, cast turn | `goldfish/engine.py`, `goldfish/run.py` |
 | mulligan causes (goldfish engine + runner) | why each mulligan happened: too few lands, two lands without cheap ramp, flood | `goldfish/engine.py`, `goldfish/run.py` |
 | land-base metrics (in `scorecard.py`) | untapped share, colors vs pips | `effects.py`, `audit` |
-| `card-rule merge <file>` (in `card_rules.py`) | add rules not present; list conflicts, change nothing for them | card rules library |
+| `card-rule-merge <file>` (in `card_rules.py`) | add rules not present; list conflicts, change nothing for them | card rules library |
 
 `decks/` stays the default root; `project` commands take `--root` for tests.
 
