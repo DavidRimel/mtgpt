@@ -1,6 +1,11 @@
 {
   "version": 1,
   "cards": {
+    "Abrupt Decay": {
+      "status": "parsed",
+      "note": "uncounterable instant removal (MV 3 or less); held as an answer",
+      "reviewed": "2026-10-01"
+    },
     "Agadeem's Awakening // Agadeem, the Undercrypt": {
       "status": "parsed",
       "note": "MDFC: mass reanimation or B land; recursion not modeled",
@@ -345,6 +350,15 @@
       "note": "one mana per color among your permanents; its +1/+1 per color is not modeled",
       "reviewed": "2026-10-01"
     },
+    "Falkenrath Noble": {
+      "status": "override",
+      "note": "drain 1 on any creature death (targets one player; over-counted as each)",
+      "reviewed": "2026-10-01",
+      "rule": {
+        "on": "creature_dies",
+        "drain": 1
+      }
+    },
     "Feed the Swarm": {
       "status": "parsed",
       "note": "removal held",
@@ -415,6 +429,11 @@
       "note": "-1/-1 sweep / enchantment removal; held",
       "reviewed": "2026-10-01"
     },
+    "Golgari Signet": {
+      "status": "parsed",
+      "note": "mana rock, B/G (filter)",
+      "reviewed": "2026-10-01"
+    },
     "Grim Affliction": {
       "status": "ignored",
       "note": "-1/-1 counter + proliferate on opponents' creatures; combo starter",
@@ -461,6 +480,11 @@
         "on": "attack",
         "drain": 1
       }
+    },
+    "Host of the Hereafter": {
+      "status": "parsed",
+      "note": "moves a dying creature's counters to your creature: loops with Hapatra/Nest of Scarabs/Flourishing Defenses; win modeled by goal battlefield conditions",
+      "reviewed": "2026-10-01"
     },
     "Ignoble Hierarch": {
       "status": "parsed",
@@ -651,6 +675,11 @@
       "note": "opponents sacrifice creatures; reanimation needs creatures in graveyards, which a goldfish rarely has",
       "reviewed": "2026-10-01"
     },
+    "Putrefy": {
+      "status": "parsed",
+      "note": "instant creature/artifact removal; held as an answer",
+      "reviewed": "2026-10-01"
+    },
     "Revitalizing Repast // Old-Growth Grove": {
       "status": "parsed",
       "note": "MDFC: indestructible protection or land",
@@ -679,6 +708,11 @@
     "Silence": {
       "status": "parsed",
       "note": "opponents can't cast this turn: held as an answer to a win attempt",
+      "reviewed": "2026-10-01"
+    },
+    "Sinister Gnarlbark": {
+      "status": "parsed",
+      "note": "draws a card each end step; its blight 1 (a -1/-1 counter on your creature) makes a Hapatra snake each turn, not modeled",
       "reviewed": "2026-10-01"
     },
     "Sink into Stupor // Soporific Springs": {
@@ -763,6 +797,11 @@
     "Tainted Pact": {
       "status": "parsed",
       "note": "exiles the library in a singleton deck without basics; cast only when the look-ahead wins (Oracle)",
+      "reviewed": "2026-10-01"
+    },
+    "Talisman of Resilience": {
+      "status": "parsed",
+      "note": "mana rock, B/G/C",
       "reviewed": "2026-10-01"
     },
     "Tamiyo's Safekeeping": {
