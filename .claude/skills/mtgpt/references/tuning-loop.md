@@ -67,4 +67,7 @@ its numbers — its value (removal, counters) is invisible to a goldfish.
 
 ## Noise floor
 
-(Filled in by the implementation's calibration run — Task 12.)
+Calibrated 2026-10-02 on hapatra v8 (bracket 3, target round 5):
+- Pairing check (Swamp → Snow-Covered Swamp): primary delta 0.0 — seeds match.
+- Primary across seeds 1–5: SD 0.88 points at 1000 games, 0.67 at 3000.
+Keep margin 1.5 points; close-call band 3.0 points.
