@@ -246,3 +246,118 @@ def test_reshaped_theme_and_bracket_containers_do_not_raise():
     assert edhrec.themes({"tag_counts": ["not a dict"]}) == ()
     assert edhrec.bracket_distribution({"bracket_counts": "not a dict"}) == {}
     assert edhrec.bracket_distribution({"bracket_counts": [1, 2, 3]}) == {}
+
+
+# --- Average deck -----------------------------------------------------------
+
+
+def average_payload():
+    return json.loads((FIXTURES / "edhrec_average_deck.json").read_text())
+
+
+@pytest.mark.parametrize(
+    "name,slug",
+    [
+        # An apostrophe INSIDE a word is deleted, not hyphenated. EDHREC writes
+        # yuriko-the-tigers-shadow; yuriko-the-tiger-s-shadow is answered 403,
+        # which broke synergy/themes/suggest/compare for every such commander.
+        ("Yuriko, the Tiger's Shadow", "yuriko-the-tigers-shadow"),
+        ("Gishath, Sun's Avatar", "gishath-suns-avatar"),
+        ("K'rrik, Son of Yawgmoth", "krrik-son-of-yawgmoth"),
+        ("Hanna, Ship's Navigator", "hanna-ships-navigator"),
+        # A curly apostrophe behaves identically.
+        ("Yuriko, the Tiger’s Shadow", "yuriko-the-tigers-shadow"),
+        # An apostrophe followed by a space is unaffected either way, which is
+        # why the bug survived: both rules give praetors-voice.
+        ("Atraxa, Praetors' Voice", "atraxa-praetors-voice"),
+    ],
+)
+def test_commander_slug_deletes_apostrophes(name, slug):
+    assert edhrec.commander_slug(name) == slug
+
+
+def test_average_deck_fetches_the_average_decks_page():
+    transport = FakeTransport(average_payload())
+    client = edhrec.EdhrecClient(transport=transport, sleep=lambda _: None)
+    client.average_deck("Atraxa, Praetors' Voice")
+    assert transport.calls == [
+        "https://json.edhrec.com/pages/average-decks/atraxa-praetors-voice.json"
+    ]
+
+
+def test_average_deck_raises_source_unavailable_on_failure():
+    transport = FakeTransport(OSError("edhrec down"))
+    client = edhrec.EdhrecClient(transport=transport, sleep=lambda _: None)
+    with pytest.raises(SourceUnavailable) as exc:
+        client.average_deck("Atraxa, Praetors' Voice")
+    assert exc.value.source == "EDHREC"
+
+
+def test_the_courtesy_delay_spans_two_different_endpoints():
+    # The delay lives in _request, not in each method, so a commander page and
+    # an average-deck page fetched back to back are still spaced.
+    slept = []
+    transport = FakeTransport(payload(), average_payload())
+    client = edhrec.EdhrecClient(transport=transport, sleep=slept.append)
+    client.commander("Atraxa, Praetors' Voice")
+    client.average_deck("Atraxa, Praetors' Voice")
+    assert slept == [edhrec.REQUEST_DELAY]
+
+
+def test_average_cards_flattens_every_type_with_quantities():
+    cards = edhrec.average_cards(average_payload())
+    assert {c["name"] for c in cards} >= {"Arcane Signet", "Birds of Paradise", "Breeding Pool"}
+    by_name = {c["name"]: c for c in cards}
+    assert by_name["Arcane Signet"]["type"] == "Artifact"
+    assert by_name["Arcane Signet"]["qty"] == 1
+
+
+def test_average_cards_excludes_the_commander():
+    # EDHREC keeps commanders in deck.commander; a diff should not report your
+    # own commander as a difference.
+    names = {c["name"] for c in edhrec.average_cards(average_payload())}
+    assert "Atraxa, Praetors' Voice" not in names
+
+
+def test_average_cards_reads_quantities_greater_than_one():
+    data = average_payload()
+    data["deck"]["cards"] = {"Land": [["Forest", 4], ["Island", 3]]}
+    cards = edhrec.average_cards(data)
+    assert {c["name"]: c["qty"] for c in cards} == {"Forest": 4, "Island": 3}
+
+
+def test_average_commanders_reads_the_command_zone():
+    assert edhrec.average_commanders(average_payload()) == ("Atraxa, Praetors' Voice",)
+
+
+@pytest.mark.parametrize("reshaped", [None, [], "deck", {}, {"deck": "nope"}])
+def test_average_cards_degrades_to_empty_on_a_reshaped_payload(reshaped):
+    assert edhrec.average_cards(reshaped) == ()
+    assert edhrec.average_commanders(reshaped) == ()
+
+
+@pytest.mark.parametrize(
+    "row", [None, [], ["", 1], [None, 1], "Sol Ring", [{}, 1], ["Sol Ring", "many"], ["Sol Ring", 0]]
+)
+def test_one_malformed_row_is_skipped_and_its_siblings_survive(row):
+    data = average_payload()
+    data["deck"]["cards"] = {"Artifact": [row, ["Sol Ring", 1]]}
+    cards = edhrec.average_cards(data)
+    assert [c["name"] for c in cards] == ["Sol Ring"]
+
+
+def test_a_missing_quantity_defaults_to_one():
+    data = average_payload()
+    data["deck"]["cards"] = {"Artifact": [["Sol Ring"]]}
+    assert edhrec.average_cards(data) == ({"name": "Sol Ring", "qty": 1, "type": "Artifact"},)
+
+
+def test_average_cards_falls_back_to_the_cardlists_block():
+    # If deck.cards is reshaped away, the type-split cardlists still carry the
+    # names. Quantities are 1 and that is visible in the data, not assumed.
+    data = average_payload()
+    data["deck"] = {"commander": ["Atraxa, Praetors' Voice"]}
+    cards = edhrec.average_cards(data)
+    assert [c["name"] for c in cards] == ["Arcane Signet", "Astral Cornucopia", "Chromatic Lantern"]
+    assert all(c["qty"] == 1 for c in cards)
+    assert all(c["type"] == "Artifacts" for c in cards)

@@ -441,3 +441,439 @@ def test_goldfish_scan_lists_cards_needing_review():
     assert report["total"] == len(report["cards"])
     assert "Forest" not in report["needs_review"]
     assert "Sol Ring" in report["needs_review"]  # nothing in the (empty) library yet
+
+
+# --- find: Scryfall Tagger --------------------------------------------------
+
+
+def tagger_payload(name, type_line, oracle_text, **extra):
+    return {
+        "name": name,
+        "cmc": 2.0,
+        "type_line": type_line,
+        "oracle_text": oracle_text,
+        "mana_cost": "{1}{G}",
+        "color_identity": ["G"],
+        "legalities": {"commander": "legal"},
+        **extra,
+    }
+
+
+def test_find_cards_builds_an_otag_query_scoped_to_identity_and_commander():
+    transport = FakeTransport(load("search_results.json"), NO_GAME_CHANGERS)
+    client = ScryfallClient(transport=transport, sleep=lambda _: None)
+    result = api.find_cards("ramp", identity="wubg", limit=5, client=client)
+    assert result["otag"] == "ramp"
+    assert result["query"] == "otag:ramp legal:commander ci:wubg"
+    url = transport.calls[0][0]
+    assert "otag%3Aramp" in url
+    assert "legal%3Acommander" in url
+    # order=edhrec, so the most-played candidates lead.
+    assert "order=edhrec" in url
+
+
+def test_find_cards_labels_its_source_and_the_tag_used():
+    client = client_for(load("search_results.json"), NO_GAME_CHANGERS)
+    result = api.find_cards("ramp", client=client)
+    for card in result["cards"]:
+        assert card["source"] == "scryfall-tagger"
+        assert card["otag"] == "ramp"
+
+
+def test_find_cards_cross_checks_against_our_own_classification():
+    client = client_for(load("search_results.json"), NO_GAME_CHANGERS)
+    result = api.find_cards("ramp", client=client)
+    # Cultivate and Kodama's Reach are ramp by both the community tag and our
+    # regex, so agreement is total.
+    assert all(c["agrees_with_classify"] for c in result["cards"])
+    assert result["recall_estimate"] == 1.0
+    assert result["classify_expects"] == ["ramp"]
+
+
+def test_find_cards_labels_its_number_as_recall_only():
+    # The name and the label both exist because an unlabelled 0.67 was read as
+    # accuracy and hid a classifier with 135 false positives.
+    client = client_for(load("search_results.json"), NO_GAME_CHANGERS)
+    result = api.find_cards("ramp", client=client)
+    assert "agreement_rate" not in result, "the ambiguous name must not come back"
+    assert "recall" in result["measures"]
+    assert "blind to false positives" in result["measures"].casefold()
+
+
+def test_a_disagreement_is_reported_rather_than_resolved():
+    # Path to Exile really is otag:ramp — it gives the opponent a basic land —
+    # and classify.py really does call it spot removal. Neither is a bug; the
+    # caller has to be told so they can judge.
+    payload = {"data": [tagger_payload(
+        "Path to Exile", "Instant", "Exile target creature. Its controller may "
+        "search their library for a basic land card...",
+    )], "has_more": False}
+    client = client_for(payload, NO_GAME_CHANGERS)
+    result = api.find_cards("ramp", client=client)
+    assert result["cards"][0]["agrees_with_classify"] is False
+    assert result["recall_estimate"] == 0.0
+
+
+def test_cross_check_can_be_turned_off():
+    client = client_for(load("search_results.json"), NO_GAME_CHANGERS)
+    result = api.find_cards("ramp", cross_check=False, client=client)
+    assert "agrees_with_classify" not in result["cards"][0]
+    assert result["recall_estimate"] is None
+
+
+def test_no_verdict_is_claimed_for_a_tag_classify_cannot_judge():
+    client = client_for(load("search_results.json"), NO_GAME_CHANGERS)
+    result = api.find_cards("theft", client=client)
+    assert result["recall_estimate"] is None
+    assert result["classify_expects"] == []
+    assert "cross_check_note" in result
+    assert "agrees_with_classify" not in result["cards"][0]
+
+
+def test_find_cards_refuses_an_unverified_tag_without_making_a_request():
+    transport = FakeTransport()
+    client = ScryfallClient(transport=transport, sleep=lambda _: None)
+    with pytest.raises(ValueError):
+        api.find_cards("mass-land-destruction", client=client)
+    assert transport.calls == []
+
+
+def test_find_cards_reports_no_matches_rather_than_an_outage():
+    # Scryfall answers a query matching nothing with 404. For a machine-built
+    # query from a verified vocabulary that means "nothing in these colours".
+    import urllib.error
+
+    class Failing:
+        def __init__(self):
+            self.calls = []
+
+        def __call__(self, url, payload=None):
+            self.calls.append(url)
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+
+    client = ScryfallClient(transport=Failing(), sleep=lambda _: None)
+    result = api.find_cards("extra_turns", identity="w", client=client)
+    assert result["count"] == 0
+    assert result["cards"] == []
+    assert result["recall_estimate"] is None
+
+
+def test_find_cards_still_raises_when_scryfall_is_actually_down():
+    from mtgpt.errors import SourceUnavailable
+
+    def failing(url, payload=None):
+        raise OSError("scryfall down")
+
+    client = ScryfallClient(transport=failing, sleep=lambda _: None)
+    with pytest.raises(SourceUnavailable):
+        api.find_cards("ramp", client=client)
+
+
+# --- import: Archidekt ------------------------------------------------------
+
+
+class FakeArchidekt:
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = []
+
+    def deck(self, identifier):
+        self.calls.append(identifier)
+        if isinstance(self.payload, Exception):
+            raise self.payload
+        return self.payload
+
+
+def test_import_deck_returns_text_our_parser_understands():
+    source = FakeArchidekt(load("archidekt_deck.json"))
+    result = api.import_deck(
+        "https://archidekt.com/decks/2000000/slug", archidekt_client=source
+    )
+    assert result["source"] == "archidekt"
+    assert result["deck_id"] == "2000000"
+    assert result["name"] == "Yuriko, the Tigers Shadow"
+    assert result["parsed"]["commanders"] == [
+        {"qty": 1, "name": "Yuriko, the Tiger's Shadow"}
+    ]
+    assert "1 Sol Ring" in result["decklist"]
+
+
+def test_import_deck_surfaces_the_declared_bracket_as_a_claim():
+    source = FakeArchidekt(load("archidekt_deck.json"))
+    result = api.import_deck("2000000", archidekt_client=source)
+    # The author's claim. `bracket` computes the verdict.
+    assert result["declared_bracket"] == 3
+
+
+def test_import_deck_makes_no_scryfall_request():
+    transport = FakeTransport()
+    client = ScryfallClient(transport=transport, sleep=lambda _: None)
+    source = FakeArchidekt(load("archidekt_deck.json"))
+    api.import_deck("2000000", client=client, archidekt_client=source)
+    assert transport.calls == []
+
+
+def test_import_deck_propagates_an_outage():
+    from mtgpt.errors import SourceUnavailable
+
+    source = FakeArchidekt(SourceUnavailable("Archidekt", "down"))
+    with pytest.raises(SourceUnavailable):
+        api.import_deck("2000000", archidekt_client=source)
+
+
+def test_import_deck_rejects_a_moxfield_url_before_fetching():
+    source = FakeArchidekt(load("archidekt_deck.json"))
+    with pytest.raises(ValueError):
+        api.import_deck("https://moxfield.com/decks/abc", archidekt_client=source)
+    assert source.calls == []
+
+
+# --- compare: EDHREC average deck -------------------------------------------
+
+
+class FakeAverageDeck:
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = []
+
+    def average_deck(self, name):
+        self.calls.append(name)
+        if isinstance(self.payload, Exception):
+            raise self.payload
+        return self.payload
+
+
+AVERAGE_FOR_SAMPLE_DECK = {
+    "deck": {
+        "commander": ["Atraxa, Praetors' Voice"],
+        "cards": {
+            # Two the sample deck has, two it does not.
+            "Artifact": [["Sol Ring", 1], ["Smothering Tithe", 1]],
+            "Sorcery": [["Cultivate", 1], ["Demonic Tutor", 1]],
+        },
+    }
+}
+
+
+def _card_payload(name, type_line, oracle_text):
+    return {
+        "name": name,
+        "cmc": 2.0,
+        "type_line": type_line,
+        "oracle_text": oracle_text,
+        "mana_cost": "{1}{B}",
+        "color_identity": ["B"],
+        "legalities": {"commander": "legal"},
+    }
+
+
+#: The two names AVERAGE_FOR_SAMPLE_DECK has that the sample deck does not.
+MISSING_CARDS = {
+    "data": [
+        _card_payload(
+            "Smothering Tithe", "Enchantment",
+            "Whenever an opponent draws a card, that player may pay {2}. If the "
+            "player doesn't, you create a Treasure token.",
+        ),
+        _card_payload(
+            "Demonic Tutor", "Sorcery",
+            "Search your library for a card, put that card into your hand, then "
+            "shuffle.",
+        ),
+    ],
+    "not_found": [],
+}
+
+
+def compare_client():
+    # resolve() for the deck, then the game changers list, then the collection
+    # lookup for the names the deck is missing, then game changers again.
+    return client_for(
+        load("collection_sample_deck.json"),
+        NO_GAME_CHANGERS,
+        MISSING_CARDS,
+        NO_GAME_CHANGERS,
+    )
+
+
+def test_compare_to_average_diffs_both_ways():
+    source = FakeAverageDeck(AVERAGE_FOR_SAMPLE_DECK)
+    result = api.compare_to_average(
+        deck_text(), client=compare_client(), edhrec_client=source
+    )
+    assert result["average_size"] == 4
+    assert "Sol Ring" in result["in_both"]
+    assert "Cultivate" in result["in_both"]
+    assert result["overlap_pct"] == 50.0
+    # Cards the deck already has are not reported as unique to it.
+    assert "Sol Ring" not in result["unique_to_yours"]
+
+
+def test_compare_asks_edhrec_for_the_decks_own_commander():
+    source = FakeAverageDeck(AVERAGE_FOR_SAMPLE_DECK)
+    result = api.compare_to_average(
+        deck_text(), client=compare_client(), edhrec_client=source
+    )
+    assert source.calls == [result["commander"]]
+
+
+def test_missing_cards_carry_the_function_they_would_fill():
+    source = FakeAverageDeck(AVERAGE_FOR_SAMPLE_DECK)
+    result = api.compare_to_average(
+        deck_text(), client=compare_client(), edhrec_client=source
+    )
+    missing = {c["name"]: c["functions"] for c in result["missing_from_yours"]}
+    # So the agent can cross the diff with the audit instead of listing cards.
+    assert "tutor" in missing["Demonic Tutor"]
+    assert missing["Demonic Tutor"]
+
+
+def test_one_unresolvable_average_name_does_not_abort_the_comparison():
+    # The average list is a community source, resolved with strict=False. A name
+    # Scryfall cannot resolve is reported, not silently dropped.
+    source = FakeAverageDeck(
+        {"deck": {"cards": {"Artifact": [["Blatantly Fake Card", 1], ["Sol Ring", 1]]}}}
+    )
+    client = client_for(
+        load("collection_sample_deck.json"),
+        NO_GAME_CHANGERS,
+        {"data": [], "not_found": [{"name": "Blatantly Fake Card"}]},
+        NO_GAME_CHANGERS,
+    )
+    result = api.compare_to_average(deck_text(), client=client, edhrec_client=source)
+    assert result["unresolved_average_names"] == ["Blatantly Fake Card"]
+    assert "Sol Ring" in result["in_both"]
+
+
+def test_compare_raises_when_no_commander_is_declared():
+    source = FakeAverageDeck(AVERAGE_FOR_SAMPLE_DECK)
+    client = client_for(load("collection_basic.json"), NO_GAME_CHANGERS)
+    with pytest.raises(DeckStructureError):
+        api.compare_to_average("1 Sol Ring\n", client=client, edhrec_client=source)
+    # No point asking EDHREC for an average deck with no commander to key on.
+    assert source.calls == []
+
+
+def test_compare_propagates_an_edhrec_outage():
+    from mtgpt.errors import SourceUnavailable
+
+    source = FakeAverageDeck(SourceUnavailable("EDHREC", "down"))
+    client = client_for(load("collection_sample_deck.json"), NO_GAME_CHANGERS)
+    with pytest.raises(SourceUnavailable):
+        api.compare_to_average(deck_text(), client=client, edhrec_client=source)
+
+
+def test_compare_degrades_to_zero_overlap_on_an_empty_average_deck():
+    source = FakeAverageDeck({"deck": {"cards": {}}})
+    client = client_for(load("collection_sample_deck.json"), NO_GAME_CHANGERS)
+    result = api.compare_to_average(deck_text(), client=client, edhrec_client=source)
+    assert result["average_size"] == 0
+    assert result["overlap_pct"] == 0.0
+    assert result["missing_from_yours"] == []
+
+
+# --- the reverse direction: precision, not recall -----------------------------
+
+
+def classify_probe_payload(*cards):
+    return {"data": list(cards), "has_more": False}
+
+
+def test_check_classifier_measures_precision_not_recall():
+    # Two cards our regex calls ramp; Scryfall confirms only the first carries
+    # otag:ramp. That is precision: of what WE tagged, what did they tag too.
+    probe = classify_probe_payload(
+        tagger_payload("Sol Ring", "Artifact", "{T}: Add {C}{C}."),
+        tagger_payload("Fake Ramp", "Artifact", "{T}: Add {G}."),
+    )
+    confirmations = {"data": [{"name": "Sol Ring"}], "has_more": False}
+    client = client_for(probe, NO_GAME_CHANGERS, confirmations)
+    result = api.check_classifier("ramp", client=client)
+    assert result["count"] == 2
+    assert result["precision_estimate"] == 0.5
+    by_name = {c["name"]: c for c in result["cards"]}
+    assert by_name["Sol Ring"]["community_agrees"] is True
+    assert by_name["Fake Ramp"]["community_agrees"] is False
+    assert by_name["Sol Ring"]["source"] == "classify"
+
+
+def test_check_classifier_labels_its_number_as_precision_only():
+    probe = classify_probe_payload(tagger_payload("Sol Ring", "Artifact", "{T}: Add {C}{C}."))
+    client = client_for(probe, NO_GAME_CHANGERS, {"data": [{"name": "Sol Ring"}]})
+    result = api.check_classifier("ramp", client=client)
+    assert "precision" in result["measures"]
+    assert "blind to false negatives" in result["measures"].casefold()
+
+
+def test_check_classifier_does_not_query_otag_to_build_its_sample():
+    # Sampling by `otag:` and then measuring against `otag:` would beg the
+    # question. The sample comes from oracle text instead.
+    transport = FakeTransport(
+        classify_probe_payload(tagger_payload("Sol Ring", "Artifact", "{T}: Add {C}{C}.")),
+        NO_GAME_CHANGERS,
+        {"data": [{"name": "Sol Ring"}]},
+    )
+    client = ScryfallClient(transport=transport, sleep=lambda _: None)
+    api.check_classifier("ramp", client=client)
+    assert "otag" not in transport.calls[0][0], transport.calls[0][0]
+    # The confirmation query is the only one allowed to use the tag.
+    assert "otag" in transport.calls[-1][0]
+
+
+def test_check_classifier_claims_nothing_for_an_uncheckable_tag():
+    client = client_for()
+    result = api.check_classifier("theft", client=client)
+    assert result["precision_estimate"] is None
+    assert result["measures"] is None
+    assert "nothing to check" in result["cross_check_note"]
+
+
+def test_check_classifier_degrades_when_the_confirmation_query_fails():
+    import urllib.error
+
+    calls = {"n": 0}
+
+    def transport(url, payload=None):
+        calls["n"] += 1
+        if "otag" in url:
+            raise urllib.error.HTTPError(url, 500, "boom", {}, None)
+        if calls["n"] == 1:
+            return classify_probe_payload(
+                tagger_payload("Sol Ring", "Artifact", "{T}: Add {C}{C}.")
+            )
+        return NO_GAME_CHANGERS
+
+    client = ScryfallClient(transport=transport, sleep=lambda _: None)
+    result = api.check_classifier("ramp", client=client)
+    # No confirmations means no card is confirmed, not a traceback.
+    assert result["precision_estimate"] == 0.0
+
+
+def test_cross_check_function_reports_both_directions():
+    client = client_for(
+        load("search_results.json"),            # find_cards search
+        NO_GAME_CHANGERS,
+        classify_probe_payload(                 # check_classifier probe
+            tagger_payload("Sol Ring", "Artifact", "{T}: Add {C}{C}."),
+            tagger_payload("Fake Ramp", "Artifact", "{T}: Add {G}."),
+        ),
+        NO_GAME_CHANGERS,
+        {"data": [{"name": "Sol Ring"}]},       # confirmation
+    )
+    result = api.cross_check_function("ramp", client=client)
+    assert result["recall_estimate"] == 1.0
+    assert result["precision_estimate"] == 0.5
+    # Both labelled, in one place, because reporting either alone has misled.
+    assert "recall_estimate:" in result["measures"]
+    assert "precision_estimate:" in result["measures"]
+    assert result["precision_disagreements"] == ["Fake Ramp"]
+
+
+def test_every_cross_checkable_function_has_probe_words():
+    # `check_classifier` falls back to `o:<label>` when a label is missing here,
+    # and an underscored label matches no oracle text, so the sample would come
+    # back empty and the precision estimate would be silently None.
+    from mtgpt import tagger
+
+    for label in tagger.CROSS_CHECK:
+        assert label in api._PROBE_WORDS, label

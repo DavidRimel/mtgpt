@@ -235,11 +235,22 @@ class ScryfallClient:
             url = body.get("next_page") if body.get("has_more") else None
         return frozenset(names)
 
-    def search(self, query: str, *, limit: int = 25) -> tuple[dict, ...]:
+    def search(
+        self, query: str, *, limit: int = 25, allow_empty: bool = False
+    ) -> tuple[dict, ...]:
         """Run a Scryfall search and return up to `limit` card payloads.
 
         This is how an agent finds candidate cards. Results are capped because
         the caller is choosing among options, not enumerating a set.
+
+        `allow_empty` changes what a 404 means. Scryfall answers a query that
+        matches nothing with HTTP 404, not an empty list, so by default a
+        zero-result search is reported as SourceUnavailable — which is right for
+        a hand-written query, where "no cards" almost always means the query was
+        wrong. With `allow_empty=True` a 404 returns an empty tuple instead, for
+        callers that build the query themselves from a verified vocabulary
+        (`tagger.build_query`) and for whom "nothing in these colours" is a real
+        answer rather than a mistake. Any other HTTP status still raises.
         """
         url = (
             f"{API}/cards/search?q={urllib.parse.quote(query)}"
@@ -255,6 +266,11 @@ class ScryfallClient:
                 )
             try:
                 body = self._request(url)
+            except urllib.error.HTTPError as exc:
+                # Caught before URLError, which it subclasses.
+                if allow_empty and exc.code == 404:
+                    break
+                raise SourceUnavailable("Scryfall search", str(exc)) from exc
             except (urllib.error.URLError, OSError, ValueError) as exc:
                 raise SourceUnavailable("Scryfall search", str(exc)) from exc
             found.extend(body.get("data") or ())

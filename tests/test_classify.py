@@ -214,6 +214,309 @@ def test_recursion():
     assert F.RECURSION in classify(regrowth)
 
 
+# Real oracle text from Scryfall. The "return ... from ... graveyard" form was
+# the only one an earlier `_RECURSION` read, so every reanimation card below
+# came back as a bare `synergy` tag and a reanimator deck reported almost no
+# recursion. Six templatings, all live text, all tagged by Scryfall Tagger as
+# `otag:recursion`.
+RECURSION_FORMS = [
+    # 1. "Put ... FROM a graveyard ONTO the battlefield" — the form that was
+    #    missed entirely. This is the whole reanimation archetype.
+    ("Reanimate", "Sorcery",
+     "Put target creature card from a graveyard onto the battlefield under your "
+     "control. You lose life equal to that card's mana value."),
+    ("Rise of the Dark Realms", "Sorcery",
+     "Put all creature cards from all graveyards onto the battlefield under your "
+     "control."),
+    ("Necromancy", "Enchantment",
+     "When this enchantment enters, if it's on the battlefield, it becomes an Aura "
+     'with "enchant creature put onto the battlefield with Necromancy." Put target '
+     "creature card from a graveyard onto the battlefield under your control and "
+     "attach this enchantment to it."),
+    # "their graveyard" — the old pattern allowed only your/a/target player's.
+    ("Twilight's Call", "Sorcery",
+     "Each player returns all creature cards from their graveyard to the "
+     "battlefield."),
+    # Not to the battlefield, and not to hand: still recursion.
+    ("Noxious Revival", "Instant",
+     "Put target card from a graveyard on top of its owner's library."),
+    # 2. The choose-then-act family, whose halves sit in different sentences.
+    ("Victimize", "Sorcery",
+     "Choose two target creature cards in your graveyard. Sacrifice a creature. If "
+     "you do, return the chosen cards to the battlefield tapped."),
+    ("Command the Dreadhorde", "Sorcery",
+     "Choose any number of target creature and/or planeswalker cards in graveyards. "
+     "Command the Dreadhorde deals damage to you equal to the total mana value of "
+     "those cards. Put them onto the battlefield under your control."),
+    ("Meren of Clan Nel Toth", "Legendary Creature — Human Shaman",
+     "At the beginning of your end step, choose target creature card in your "
+     "graveyard. If that card's mana value is less than or equal to the number of "
+     "experience counters you have, return it to the battlefield. Otherwise, put it "
+     "into your hand."),
+    ("Animate Dead", "Enchantment — Aura",
+     "Enchant creature card in a graveyard\nWhen this Aura enters, if it's on the "
+     'battlefield, it loses "enchant creature card in a graveyard" and gains '
+     '"enchant creature put onto the battlefield with this Aura." Return enchanted '
+     "creature card to the battlefield under your control and attach this Aura to it."),
+    ("Emry, Lurker of the Loch", "Legendary Creature — Merfolk Wizard",
+     "{T}: Choose target artifact card in your graveyard. You may cast that card "
+     "this turn."),
+    # 3. The graveyard-as-second-hand engines.
+    ("Crucible of Worlds", "Artifact", "You may play lands from your graveyard."),
+    ("Muldrotha, the Gravetide", "Legendary Creature — Elemental Avatar",
+     "During each of your turns, you may play a land and cast a permanent spell of "
+     "each permanent type from your graveyard."),
+    ("Yawgmoth's Will", "Sorcery",
+     "Until end of turn, you may play lands and cast spells from your graveyard.\n"
+     "If a card would be put into your graveyard from anywhere this turn, exile "
+     "that card instead."),
+    ("Underworld Breach", "Enchantment",
+     "Each nonland card in your graveyard has escape. The escape cost is equal to "
+     "the card's mana cost plus exile three other cards from your graveyard. (You "
+     "may cast cards from your graveyard for their escape cost.)"),
+    # 4. Granting castability rather than moving the card.
+    ("Past in Flames", "Sorcery",
+     "Each instant and sorcery card in your graveyard gains flashback until end of "
+     "turn. The flashback cost is equal to its mana cost."),
+    ("Snapcaster Mage", "Creature — Human Wizard",
+     "Flash\nWhen this creature enters, target instant or sorcery card in your "
+     "graveyard gains flash until end of turn. You may cast that card this turn."),
+    # 5. Exile from a graveyard and then put it onto the battlefield.
+    ("Living Death", "Sorcery",
+     "Each player exiles all creature cards from their graveyard, then sacrifices "
+     "all creatures they control, then puts all cards they exiled this way onto the "
+     "battlefield."),
+    # 6. Searching a graveyard and putting what you find into play.
+    ("Finale of Devastation", "Sorcery",
+     "Search your library and/or graveyard for a creature card with mana value X or "
+     "less and put it onto the battlefield. If you search your library this way, "
+     "shuffle."),
+    # The form that always worked. Kept so widening the pattern cannot lose it.
+    ("Eternal Witness", "Creature — Human Shaman",
+     "When this creature enters, you may return target card from your graveyard to "
+     "your hand."),
+    ("Sun Titan", "Creature — Giant",
+     "Vigilance\nWhenever this creature enters or attacks, you may return target "
+     "permanent card with mana value 3 or less from your graveyard to the battlefield."),
+    ("Goryo's Vengeance", "Instant — Arcane",
+     "Return target legendary creature card from your graveyard to the battlefield. "
+     "That creature gains haste. Exile it at the beginning of the next end step."),
+    # "that player's graveyard" — the determiner alternation had `their` but not
+    # `that`, the same incomplete-alternation bug branch 1 already had once.
+    ("Breach the Multiverse", "Sorcery",
+     "Each player mills ten cards. For each player, choose a creature or "
+     "planeswalker card in that player's graveyard. Put those cards onto the "
+     "battlefield under your control. Then each creature you control becomes a "
+     "Phyrexian in addition to its other types."),
+    # Destination named BEFORE the source. Branch 1 reads the other order only.
+    ("Gerrard's Hourglass Pendant", "Legendary Artifact",
+     "Flash\n{4}, {T}, Exile Gerrard's Hourglass Pendant: Return to the battlefield "
+     "tapped all artifact cards in your graveyard."),
+    # Reanimating out of an OPPONENT's graveyard is still recursion. Excluding
+    # opponents' graveyards wholesale cost 11 true positives over the corpus.
+    ("Puppeteer Clique", "Creature — Spirit",
+     "Flying\nWhen this creature enters, put target creature card from an "
+     "opponent's graveyard onto the battlefield under your control. It gains haste."),
+    # Unearth states its whole effect in reminder text, which is why branch 1
+    # reads reminders. 263 true positives across the corpus work this way.
+    ("Royal Warden", "Creature — Necron Warrior",
+     "Unearth {3}{B} ({3}{B}: Return this card from your graveyard to the "
+     "battlefield. It gains haste. Exile it at the beginning of the next end step "
+     "or if it would leave the battlefield. Unearth only as a sorcery.)"),
+    # A permanent that recasts itself from the graveyard, stated in main text.
+    ("Marang River Prowler", "Creature — Human Rogue",
+     "This creature can't block and can't be blocked.\nYou may cast this card from "
+     "your graveyard as long as you control a black or green permanent."),
+]
+
+
+@pytest.mark.parametrize(
+    "name,type_line,oracle", RECURSION_FORMS, ids=[c[0] for c in RECURSION_FORMS]
+)
+def test_every_recursion_templating_is_recognized(name, type_line, oracle):
+    tags = classify(card(name, type_line, oracle))
+    assert F.RECURSION in tags, f"{name}: got {sorted(t.value for t in tags)}"
+
+
+# The false positive widening `_RECURSION` invites. Graveyard hate reads almost
+# identically to a regex and means the opposite thing: these cards all talk
+# about cards and graveyards, and none of them brings anything back. If one of
+# them tags as recursion, a stax deck reads as having a reanimation package.
+GRAVEYARD_HATE = [
+    ("Scavenging Ooze", "Creature — Ooze",
+     "{G}: Exile target card from a graveyard. If it was a creature card, put a "
+     "+1/+1 counter on this creature and you gain 1 life."),
+    ("Withered Wretch", "Creature — Zombie Cleric",
+     "{1}: Exile target card from a graveyard."),
+    ("Soul-Guide Lantern", "Artifact",
+     "When this artifact enters, exile target card from a graveyard.\n"
+     "{T}, Sacrifice this artifact: Exile each opponent's graveyard.\n"
+     "{1}, {T}, Sacrifice this artifact: Draw a card."),
+    ("Agent of Erebos", "Enchantment Creature — Zombie",
+     "Constellation — Whenever this creature or another enchantment you control "
+     "enters, exile target player's graveyard."),
+    ("Faerie Macabre", "Creature — Faerie Rogue",
+     "Flying\nDiscard this card: Exile up to two target cards from graveyards."),
+    ("Relic of Progenitus", "Artifact",
+     "{T}: Target player exiles a card from their graveyard.\n"
+     "{1}, Exile this artifact: Exile all graveyards. Draw a card."),
+    # "put into a graveyard ... exile it instead": the graveyard comes BEFORE
+    # the movement, and nothing is recovered. Three different wordings of it.
+    ("Rest in Peace", "Enchantment",
+     "When this enchantment enters, exile all graveyards.\nIf a card or token "
+     "would be put into a graveyard from anywhere, exile it instead."),
+    ("Leyline of the Void", "Enchantment",
+     "If this card is in your opening hand, you may begin the game with it on the "
+     "battlefield.\nIf a card would be put into an opponent's graveyard from "
+     "anywhere, exile it instead."),
+    ("Planar Void", "Enchantment",
+     "Whenever another card is put into a graveyard from anywhere, exile that card."),
+    ("Anafenza, the Foremost", "Legendary Creature — Human Soldier",
+     "Whenever Anafenza attacks, put a +1/+1 counter on another target tapped "
+     "creature you control.\nIf a nontoken creature an opponent owns would die or a "
+     "creature card not on the battlefield would be put into an opponent's "
+     "graveyard, exile that card instead."),
+    ("Ground Seal", "Enchantment",
+     "When this enchantment enters, draw a card.\nCards in graveyards can't be the "
+     "targets of spells or abilities."),
+    ("Deathrite Shaman", "Creature — Elf Shaman",
+     "{T}: Exile target land card from a graveyard. Add one mana of any color.\n"
+     "{G}, {T}: Exile target creature card from a graveyard. You gain 2 life."),
+    ("Syr Konrad, the Grim", "Legendary Creature — Human Knight",
+     "Whenever another creature dies, or a creature card is put into a graveyard "
+     "from anywhere other than the battlefield, or a creature card leaves your "
+     "graveyard, Syr Konrad deals 1 damage to each opponent."),
+    # Mentions a graveyard and moves cards, but into the library, not out of it.
+    ("Timetwister", "Sorcery",
+     "Each player shuffles their hand and graveyard into their library, then draws "
+     "seven cards."),
+    # Fills a graveyard rather than emptying one: branch 6 must not match.
+    ("Buried Alive", "Sorcery",
+     "Search your library for up to three creature cards, put them into your "
+     "graveyard, then shuffle."),
+    ("Entomb", "Instant",
+     "Search your library for a card, put that card into your graveyard, then "
+     "shuffle."),
+    # Flashback recurs only itself. Scryfall Tagger agrees these are not
+    # recursion, which is why branch 3 excludes "cast THIS CARD".
+    ("Lingering Souls", "Sorcery",
+     "Create two 1/1 white Spirit creature tokens with flying.\nFlashback {1}{B} "
+     "(You may cast this card from your graveyard for its flashback cost. Then "
+     "exile it.)"),
+    ("Deep Analysis", "Sorcery",
+     "Target player draws two cards.\nFlashback—{1}{U}, Pay 3 life. (You may cast "
+     "this card from your graveyard for its flashback cost. Then exile it.)"),
+    ("Call of the Herd", "Sorcery",
+     "Create a 3/3 green Elephant creature token.\nFlashback {2}{G} (You may cast "
+     "this card from your graveyard for its flashback cost. Then exile it.)"),
+    # The Skaab class: the graveyard is CONSUMED as a cost, the semantic inverse
+    # of recursion. ~20 cards; branch 3's `may` requirement is what excludes it.
+    ("Makeshift Mauler", "Creature — Zombie Horror",
+     "As an additional cost to cast this spell, exile a creature card from your "
+     "graveyard."),
+    ("Stitched Drake", "Creature — Zombie Drake",
+     "As an additional cost to cast this spell, exile a creature card from your "
+     "graveyard.\nFlying"),
+    ("Skeletal Scrying", "Instant",
+     "As an additional cost to cast this spell, exile X cards from your graveyard.\n"
+     "You draw X cards and you lose X life."),
+    ("Harvest Pyre", "Instant",
+     "As an additional cost to cast this spell, exile X cards from your graveyard.\n"
+     "Harvest Pyre deals X damage to target creature."),
+    ("Chill Haunting", "Instant",
+     "As an additional cost to cast this spell, exile X creature cards from your "
+     "graveyard.\nTarget creature gets -X/-X until end of turn."),
+    # "If this spell WAS CAST from a graveyard" — a flashback rider, not an
+    # enabler. The whole Increasing cycle reads this way.
+    ("Increasing Ambition", "Sorcery",
+     "Search your library for a card and put that card into your hand. If this "
+     "spell was cast from a graveyard, instead search your library for two cards "
+     "and put those cards into your hand. Then shuffle."),
+    ("Increasing Vengeance", "Instant",
+     "Copy target instant or sorcery spell you control. If this spell was cast from "
+     "a graveyard, copy that spell twice instead. You may choose new targets for "
+     "the copies."),
+    # Graveyard-count payoffs that put COUNTERS, not cards.
+    ("Gixian Skullflayer", "Creature — Phyrexian Horror",
+     "At the beginning of your upkeep, if there are three or more creature cards in "
+     "your graveyard, put a +1/+1 counter on this creature."),
+    ("Obsessive Skinner", "Creature — Human Rogue",
+     "When this creature enters, put a +1/+1 counter on target creature.\n"
+     "Delirium — At the beginning of each opponent's upkeep, if there are four or "
+     "more card types among cards in your graveyard, put a +1/+1 counter on target "
+     "creature."),
+    # Reminder text that reads exactly like recursion. Branches 2 and 3 do not
+    # read it; branch 1 does, which is why these must fail on their main text.
+    ("Pteramander", "Creature — Salamander Drake",
+     "Flying\n{7}{U}: Adapt 4. This ability costs {1} less to activate for each "
+     "instant and sorcery card in your graveyard. (If this creature has no +1/+1 "
+     "counters on it, put four +1/+1 counters on it.)"),
+    ("Varolz, the Scar-Striped", "Legendary Creature — Troll Warrior",
+     "Each creature card in your graveyard has scavenge. The scavenge cost is equal "
+     "to its mana cost. (Exile a creature card from your graveyard and pay its mana "
+     "cost: Put a number of +1/+1 counters equal to that card's power on target "
+     "creature. Scavenge only as a sorcery.)"),
+    # Paying the graveyard as a cost to fetch from the LIBRARY. Branch 5's second
+    # `exiled` is what separates this from Living Death.
+    ("Colossal Rattlewurm", "Creature — Wurm",
+     "Colossal Rattlewurm has flash as long as you control a Desert.\nTrample\n"
+     "{1}{G}, Exile this card from your graveyard: Search your library for a Desert "
+     "card, put it onto the battlefield tapped, then shuffle."),
+    # Handing a card back to its owner, not recurring it.
+    ("Spurnmage Advocate", "Creature — Human Nomad",
+     "{T}: Return two target cards from an opponent's graveyard to their hand. "
+     "Destroy target attacking creature."),
+]
+
+
+# These two exist to pin the structural guards, not the behaviour. Both were
+# mutation-tested: deleting branch 1's `from`-before-graveyard ordering, or
+# loosening branch 2's `in\s` to allow "into a graveyard", left the whole suite
+# passing before these rows existed. Each card below is real, and each flips to
+# `recursion` under exactly one of those two mutations.
+GUARD_CASES = [
+    # Guard: branch 1 requires "from" to PRECEDE the graveyard. Surveil's reminder
+    # says "put any number of them into your graveyard and the rest ON TOP OF your
+    # library" — a graveyard with a destination 40 characters later. Removing the
+    # ordering requirement makes 93 cards like this read as recursion.
+    ("Sultai Ascendancy", "Enchantment",
+     "At the beginning of your upkeep, surveil 2. (Look at the top two cards of "
+     "your library, then put any number of them into your graveyard and the rest on "
+     "top of your library in any order.)"),
+    ("Deadly Visit", "Sorcery",
+     "Destroy target creature.\nSurveil 2. (Look at the top two cards of your "
+     "library, then put any number of them into your graveyard and the rest on top "
+     "of your library in any order.)"),
+    # Guard: branch 2 requires `in\s`, not `in`. These dump a card from the
+    # LIBRARY into a graveyard and then put something onto the battlefield.
+    # Loosening to `into` makes them read as graveyard recursion.
+    ("Grenzo, Dungeon Warden", "Legendary Creature — Goblin Rogue",
+     "Grenzo enters with X +1/+1 counters on it.\n{2}: Put the bottom card of your "
+     "library into your graveyard. If it's a creature card with power less than or "
+     "equal to Grenzo's power, put it onto the battlefield."),
+    ("Impromptu Raid", "Enchantment",
+     "{2}{R/G}: Reveal the top card of your library. If it isn't a creature card, "
+     "put it into your graveyard. Otherwise, put that card onto the battlefield. "
+     "That creature gains haste. Sacrifice it at the beginning of the next end step."),
+]
+
+
+@pytest.mark.parametrize(
+    "name,type_line,oracle", GUARD_CASES, ids=[c[0] for c in GUARD_CASES]
+)
+def test_structural_guards_are_load_bearing(name, type_line, oracle):
+    tags = classify(card(name, type_line, oracle))
+    assert F.RECURSION not in tags, f"{name}: got {sorted(t.value for t in tags)}"
+
+
+@pytest.mark.parametrize(
+    "name,type_line,oracle", GRAVEYARD_HATE, ids=[c[0] for c in GRAVEYARD_HATE]
+)
+def test_graveyard_interaction_that_is_not_recursion(name, type_line, oracle):
+    tags = classify(card(name, type_line, oracle))
+    assert F.RECURSION not in tags, f"{name}: got {sorted(t.value for t in tags)}"
+
+
 def test_explicit_wincon():
     lab_man = card("Laboratory Maniac", "Creature — Human Wizard",
                    "If you would draw a card while your library has no cards in it, "
