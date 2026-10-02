@@ -141,3 +141,8 @@ def test_merge_rejects_file_with_no_cards_key(library, tmp_path):
     with pytest.raises(ValueError):
         card_rules.merge(theirs)
     assert card_rules.load()["cards"] == {}
+
+
+def test_merge_rejects_a_directory(library, tmp_path):
+    with pytest.raises(ValueError, match="not a file"):
+        card_rules.merge(tmp_path)

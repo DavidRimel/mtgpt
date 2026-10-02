@@ -189,3 +189,53 @@ def test_target_round_beyond_turn_cap_is_a_goal_error():
     with pytest.raises(GoalError) as err:
         sc.run_scorecard([deck()], NEVER_GOAL | {"target_round": 12}, bracket=3, games=5, turns=10)
     assert err.value.field == "target_round"
+
+
+OFF_COLOR = card("Lightning Bolt", "Instant", "Deal 3 damage.", mana_cost="{R}", identity="R")
+
+
+def _no_sim(monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("simulated")
+
+    monkeypatch.setattr(sc, "simulate", boom)
+
+
+def test_run_scorecard_rejects_an_illegal_deck_size_without_simming(monkeypatch):
+    _no_sim(monkeypatch)
+    before = deck(SOL_RING, BEAR)
+    after = deck(SOL_RING, BEAR, lands=96)  # one card short of 100
+    out = sc.run_scorecard([before, after], NEVER_GOAL, bracket=3, games=10)
+    assert out["verdict"]["verdict"] == "rejected"
+    assert out["games"] == 0 and out["floors"]["ok"] is False
+    assert any("99" in r for r in out["floors"]["rejected"])
+
+
+def test_run_scorecard_rejects_an_off_identity_card_without_simming(monkeypatch):
+    _no_sim(monkeypatch)
+    before = deck(SOL_RING, BEAR)
+    after = deck(SOL_RING, OFF_COLOR)
+    out = sc.run_scorecard([before, after], NEVER_GOAL, bracket=3, games=10)
+    assert out["verdict"]["verdict"] == "rejected"
+    assert any("Lightning Bolt" in r for r in out["floors"]["rejected"])
+
+
+def test_legality_ignores_an_error_the_before_deck_already_had():
+    before = deck(SOL_RING, OFF_COLOR)
+    after = deck(SOL_RING, OFF_COLOR, BEAR)
+    assert sc.legality(before, after) == []
+
+
+def test_legality_deck_size_is_new_only_if_before_was_legal():
+    legal = deck(SOL_RING, BEAR)
+    short = deck(SOL_RING, BEAR, lands=96)
+    shorter = deck(SOL_RING, BEAR, lands=95)
+    assert sc.legality(legal, short)
+    assert sc.legality(short, shorter) == []
+
+
+@pytest.mark.parametrize("value", ["5", 0, True, 2.5, -1])
+def test_a_bad_target_round_is_a_goal_error(value):
+    with pytest.raises(GoalError) as err:
+        sc.run_scorecard([deck()], NEVER_GOAL | {"target_round": value}, bracket=3, games=5)
+    assert err.value.field == "target_round"

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 import re
 from pathlib import Path
 
@@ -147,7 +148,14 @@ def _touch(root: Path, slug: str) -> None:
 
 
 def _write(folder: Path, project: dict) -> None:
-    (folder / "project.json").write_text(json.dumps(project, indent=2) + "\n", encoding="utf-8")
+    target = folder / "project.json"
+    tmp = folder / "project.json.tmp"
+    try:
+        tmp.write_text(json.dumps(project, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _today() -> str:

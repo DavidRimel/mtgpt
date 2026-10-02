@@ -17,6 +17,7 @@ from .goal import GoalError
 from .goldfish.engine import DEFAULT_TURN_CAP, Setup, prepare
 from .goldfish.run import DEFAULT_GAMES, simulate
 from .models import ResolvedDeck, Severity
+from .validate import validate
 
 #: Wins by this round are the primary metric when the goal names none.
 DEFAULT_TARGET_ROUND = {1: 7, 2: 7, 3: 5, 4: 4, 5: 3}
@@ -43,12 +44,21 @@ KEEP_MARGIN = 0.015
 CLOSE_CALL = 0.03
 CONFIRM_GAMES = 3000
 
+#: Validation errors whose message holds a count, so only the code identifies them.
+COUNTED_CODES = frozenset({"deck_size", "commander_count"})
+
 #: Functions whose value a goldfish cannot see beyond answering opponent wins.
 NOT_MEASURABLE_FUNCTIONS = frozenset({"spot_removal", "sweeper", "counterspell"})
 
 
 def target_round(goal_raw: dict, bracket: int) -> int:
-    return goal_raw.get("target_round") or DEFAULT_TARGET_ROUND[bracket]
+    """The goal's target round (a whole number, 1 or more), else the bracket's default."""
+    value = goal_raw.get("target_round")
+    if value is None:
+        return DEFAULT_TARGET_ROUND[bracket]
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise GoalError("target_round", "must be a whole number of rounds, 1 or more", [value])
+    return value
 
 
 def land_base(setup: Setup, audit_report: AuditReport) -> dict:
@@ -184,6 +194,21 @@ def floors(before: ResolvedDeck, after: ResolvedDeck, bracket: int, combos=()) -
     return {"ok": not rejected, "rejected": rejected, "warnings": warnings}
 
 
+def legality(before: ResolvedDeck, after: ResolvedDeck) -> list[str]:
+    """Commander-rule errors `after` has that `before` did not.
+
+    Errors are matched by code and message, except the size and commander-count
+    errors, whose message carries a number: those count as new only when
+    `before` had no error of that code.
+    """
+    def key(v):
+        return (v.code, "" if v.code in COUNTED_CODES else v.message)
+
+    known = {key(v) for v in validate(before) if v.severity is Severity.ERROR}
+    return [v.message for v in validate(after)
+            if v.severity is Severity.ERROR and key(v) not in known]
+
+
 def _assembled(combos, deck: ResolvedDeck) -> tuple[dict, ...]:
     """The cached combos whose every piece is in `deck`, commander included."""
     present = ({c.name.casefold() for c in deck.commanders}
@@ -231,6 +256,9 @@ def run_scorecard(decks: list[ResolvedDeck], goal: dict, *, bracket: int, combos
 
     before_deck, after_deck = decks
     gate = floors(before_deck, after_deck, bracket, combos)
+    illegal = legality(before_deck, after_deck)
+    if illegal:
+        gate = {"ok": False, "rejected": illegal + gate["rejected"], "warnings": gate["warnings"]}
     if not gate["ok"]:
         return {"target_round": round_, "games": 0, "floors": gate,
                 "verdict": {"verdict": "rejected", "primary_delta": None,

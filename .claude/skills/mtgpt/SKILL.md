@@ -76,7 +76,7 @@ pre-scan the candidates. Then `project stage <slug> tune`.
 
 ## Stage 3 — tune
 
-Follow `references/tuning-loop.md`: baseline `scorecard`, then one swap at a time — save,
+Follow `references/tuning-loop.md`: baseline `scorecard` (record it with `project best ... --primary`; re-score and re-record whenever `goal.json` changes), then one swap at a time — save,
 judge against the best version, act on the verdict, log it — with a checkpoint after 10
 swaps or 3 non-keeps in a row. The user chooses continue, change direction, or stop.
 

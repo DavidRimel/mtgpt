@@ -388,7 +388,7 @@ def _scorecard(args, command: str, client) -> int:
         # or a bare {"combos": [...]}.
         body = cached.get("data", cached) if isinstance(cached, dict) else None
         combos = body.get("combos") if isinstance(body, dict) else None
-        if not isinstance(combos, list):
+        if not isinstance(combos, list) or not all(isinstance(c, dict) for c in combos):
             _emit(command, {"type": "MissingInput", "field": "--combos",
                             "message": f'{args.combos} is not card-combos output: '
                                        'expected a "combos" list'}, ok=False)
@@ -535,7 +535,7 @@ def main(argv: list[str] | None = None, client: ScryfallClient | None = None) ->
             goal = None
             if args.goal:
                 goal = _read_json(args.goal, command)
-                if goal is None:
+                if goal is _FAILED:
                     return EXIT_USER_ERROR
             text = _read_deck_text(args, command)
             if text is None:

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 from pathlib import Path
 
 from .goal import _engine
@@ -88,6 +89,8 @@ def merge(other_path: Path, path: Path | None = None) -> dict:
     other_path = Path(other_path)
     if not other_path.exists():
         raise ValueError(f"{other_path} does not exist")
+    if not other_path.is_file():
+        raise ValueError(f"{other_path} is not a file")
 
     path = Path(path or DEFAULT_PATH)
     mine = load(path)
@@ -129,7 +132,14 @@ def _same(a: dict, b: dict) -> bool:
 def _save(path: Path, data: dict) -> None:
     data["cards"] = dict(sorted(data["cards"].items()))
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def engine_rules(names, path: Path | None = None) -> dict:

@@ -46,7 +46,7 @@ it recovers from disruption (`disruption`).
    commander's "thing" is. Never infer either.** Map the answer onto an
    archetype — `voltron`, `go_wide`, `aristocrats`, `spellslinger`,
    `combo`, `big_mana`, or `custom` — and write `<deck>.goal.json` next to
-   the decklist:
+   the decklist (in a project, the goal lives at `decks/<slug>/goal.json`):
 
    ```json
    {

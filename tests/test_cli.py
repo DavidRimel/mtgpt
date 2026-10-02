@@ -384,6 +384,14 @@ def test_goldfish_scan_passes_the_goal(monkeypatch, capsys, tmp_path):
     assert seen["goal"] == {"archetype": "go_wide"}
 
 
+def test_goldfish_scan_with_a_bad_goal_file_is_a_user_error(capsys, tmp_path):
+    bad = tmp_path / "goal.json"
+    bad.write_text("{not json")
+    assert cli.main(["goldfish-scan", "--file", str(FIXTURES / "sample_deck.txt"),
+                     "--goal", str(bad)]) == 2
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
 # --- find -------------------------------------------------------------------
 
 
@@ -587,7 +595,8 @@ def test_scorecard_reads_a_saved_card_combos_envelope(monkeypatch, capsys, tmp_p
     assert seen["combos"] == [{"cards": ["X", "Y"], "card_count": 2}]
 
 
-@pytest.mark.parametrize("content", ['{"data": []}', '{"ok": true}', '{"data": {"combos": 3}}'])
+@pytest.mark.parametrize("content", ['{"data": []}', '{"ok": true}', '{"data": {"combos": 3}}',
+                                     '{"combos": [1]}'])
 def test_scorecard_rejects_a_combos_file_of_the_wrong_shape(monkeypatch, capsys, tmp_path, content):
     a, goal, combos = tmp_path / "a.txt", tmp_path / "g.json", tmp_path / "combos.json"
     a.write_text("1 Sol Ring\n"); goal.write_text('{"archetype": "go_wide"}')

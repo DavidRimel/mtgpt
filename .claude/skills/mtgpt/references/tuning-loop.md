@@ -21,7 +21,7 @@ short colors, `weaknesses` (worst first), and `card_impact` per card.
     python3 -m mtgpt.cli scorecard --file decks/<slug>/<best>.txt --file decks/<slug>/<new>.txt \
         --goal decks/<slug>/goal.json --bracket <N> --combos decks/<slug>/combos.json
 
-- **rejected** — the floors failed (a category below its audit minimum, or a new bracket
+- **rejected** — the floors failed (a new Commander-rules error such as deck size or color identity, a category below its audit minimum, or a new bracket
   error). Nothing was simmed. Pick a different cut.
 - **keep** — primary up ≥ 1.5 points, no guard broken. `project best <slug> <new> --primary <value>`.
 - **revert** — primary down, or a guard broken (on-curve −3, covered −3, opponent-win
@@ -53,7 +53,10 @@ log the rejection and number the next try as the next version.
 
 ## The loop
 
-1. Baseline: scorecard the best version; name the top weakness.
+1. Baseline: scorecard the best version; name the top weakness. Record it:
+   `python3 -m mtgpt.cli project best <slug> <best> --primary <score.primary>`. Whenever
+   `goal.json` changes, re-score the baseline and re-record it — numbers from the old goal
+   are not comparable.
 2. Pick a swap: in — a `research.md` candidate for that weakness, multi-job first;
    out — chosen as above.
 3. Write the new list, `project save <slug> --file new.txt --note "+In -Out (why)"`.
@@ -80,5 +83,8 @@ log the rejection and number the next try as the next version.
 
 Calibrated 2026-10-02 on hapatra v8 (bracket 3, target round 5):
 - Pairing check (Swamp → Snow-Covered Swamp): primary delta 0.0 — seeds match.
-- Primary across seeds 1–5: SD 0.88 points at 1000 games, 0.67 at 3000.
+- Primary across 5 seeds (1–5): SD 0.88 points at 1000 games, 0.67 at 3000.
+- Paired real swap (final review): hapatra v8 vs v14 (−Chord of Calling +Contagion Clasp),
+  seeds 1–8: paired-difference SD 1.09 points at 1000 games, 0.61 at 3000. With close calls
+  confirmed at 3000 games, the 1.5-point margin is about 2.5 SD.
 Keep margin 1.5 points; close-call band 3.0 points.
