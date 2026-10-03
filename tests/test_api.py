@@ -877,3 +877,13 @@ def test_every_cross_checkable_function_has_probe_words():
 
     for label in tagger.CROSS_CHECK:
         assert label in api._PROBE_WORDS, label
+
+
+def test_scorecard_rejects_a_candidate_with_a_new_rules_error():
+    text = deck_text()
+    dupe = text.replace("1 Sol Ring", "2 Sol Ring")  # breaks singleton
+    client = client_for(load("collection_sample_deck.json"), NO_GAME_CHANGERS,
+                        load("collection_sample_deck.json"), NO_GAME_CHANGERS)
+    goal = {"archetype": "custom", "thing": "commander", "win": {"opponent_life_lost": 10 ** 6}}
+    result = api.scorecard([text, dupe], goal, bracket=3, games=5, client=client)
+    assert result["verdict"]["verdict"] == "rejected" and result["games"] == 0

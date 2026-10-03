@@ -1,6 +1,6 @@
 """Every threshold the audit checks, in one place.
 
-The prose rationale lives in skills/mtgpt/references/deckbuilding-hygiene.md.
+The prose rationale lives in .claude/skills/mtgpt/references/deckbuilding-hygiene.md.
 That file explains the numbers; this file defines them. Keeping values in code
 and reasoning in markdown is what stops the two from drifting apart.
 

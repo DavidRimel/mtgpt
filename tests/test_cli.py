@@ -3,6 +3,8 @@ import io
 import json
 import pathlib
 
+import pytest
+
 from mtgpt import cli
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
@@ -16,8 +18,8 @@ def test_every_subcommand_is_registered():
         "card", "search", "find", "cross-check", "classify", "import", "read",
         "validate", "audit", "bracket", "report", "compare", "synergy", "themes",
         "combos", "card-combos", "suggest",
-        "goldfish", "goldfish-compare", "goldfish-new", "goldfish-step",
-        "goldfish-scan", "card-rule",
+        "goldfish", "goldfish-compare", "goldfish-new", "goldfish-step", "scorecard",
+        "goldfish-scan", "card-rule", "card-rule-merge", "project",
     }
 
 
@@ -145,6 +147,45 @@ def test_a_utf16_decklist_is_a_user_error_not_a_traceback(capsys, tmp_path):
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["error"]["type"] == "UnicodeDecodeError"
+
+
+# --- Project command tests ---
+
+
+LIST_TEXT = "Commander\n1 Hapatra, Vizier of Poisons\n\nDeck\n1 Sol Ring\n98 Swamp\n"
+
+
+def run_project(capsys, *argv):
+    code = cli.main(["project", *argv])
+    return code, json.loads(capsys.readouterr().out)
+
+
+def test_project_lifecycle(tmp_path, capsys):
+    deck_file = tmp_path / "list.txt"
+    deck_file.write_text(LIST_TEXT)
+    root = str(tmp_path / "decks")
+    code, out = run_project(capsys, "new", "--root", root, "--name", "Hapatra",
+                            "--bracket", "3", "--file", str(deck_file))
+    assert code == 0 and out["data"]["slug"] == "hapatra"
+    code, out = run_project(capsys, "save", "hapatra", "--root", root,
+                            "--file", str(deck_file), "--note", "+X -Y")
+    assert out["data"]["version"] == "v2"
+    code, out = run_project(capsys, "best", "hapatra", "v2", "--root", root, "--primary", "0.3")
+    assert out["data"]["best"] == "v2"
+    code, out = run_project(capsys, "stage", "hapatra", "tune", "--root", root)
+    assert out["data"]["stage"] == "tune"
+    code, out = run_project(capsys, "note", "hapatra", "flooded", "--root", root)
+    assert out["data"] == {"slug": "hapatra", "logged": True}
+    code, out = run_project(capsys, "list", "--root", root)
+    assert [p["slug"] for p in out["data"]] == ["hapatra"]
+    code, out = run_project(capsys, "status", "hapatra", "--root", root)
+    assert out["data"]["versions"] == ["v1", "v2"]
+
+
+def test_project_errors_are_envelopes(tmp_path, capsys):
+    code, out = run_project(capsys, "status", "nope", "--root", str(tmp_path))
+    assert code == 2 and out["ok"] is False
+    assert out["error"]["type"] == "ProjectError"
 
 
 def test_a_utf8_bom_decklist_still_parses(capsys, tmp_path):
@@ -343,6 +384,14 @@ def test_goldfish_scan_passes_the_goal(monkeypatch, capsys, tmp_path):
     assert seen["goal"] == {"archetype": "go_wide"}
 
 
+def test_goldfish_scan_with_a_bad_goal_file_is_a_user_error(capsys, tmp_path):
+    bad = tmp_path / "goal.json"
+    bad.write_text("{not json")
+    assert cli.main(["goldfish-scan", "--file", str(FIXTURES / "sample_deck.txt"),
+                     "--goal", str(bad)]) == 2
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
 # --- find -------------------------------------------------------------------
 
 
@@ -514,3 +563,53 @@ def test_cross_check_can_ask_for_one_direction(monkeypatch):
     cli.main(["cross-check", "recursion", "--direction", "recall"])
     cli.main(["cross-check", "recursion", "--direction", "precision"])
     assert calls == ["recall", "precision"]
+
+
+def test_scorecard_passes_files_goal_and_bracket(monkeypatch, capsys, tmp_path):
+    a, b, goal = tmp_path / "a.txt", tmp_path / "b.txt", tmp_path / "g.json"
+    a.write_text("1 Sol Ring\n"); b.write_text("1 Mind Stone\n")
+    goal.write_text('{"archetype": "go_wide"}')
+    seen = {}
+
+    def fake(texts, goal_raw, **kw):
+        seen.update(texts=texts, goal=goal_raw, **kw)
+        return {"verdict": {"verdict": "keep"}}
+
+    monkeypatch.setattr(cli.api, "scorecard", fake)
+    assert cli.main(["scorecard", "--file", str(a), "--file", str(b), "--goal", str(goal),
+                     "--bracket", "4", "--games", "50"]) == 0
+    assert seen["texts"] == ["1 Sol Ring\n", "1 Mind Stone\n"]
+    assert seen["bracket"] == 4 and seen["games"] == 50 and seen["combos"] is None
+    assert json.loads(capsys.readouterr().out)["data"]["verdict"]["verdict"] == "keep"
+
+
+def test_scorecard_reads_a_saved_card_combos_envelope(monkeypatch, capsys, tmp_path):
+    a, goal, combos = tmp_path / "a.txt", tmp_path / "g.json", tmp_path / "combos.json"
+    a.write_text("1 Sol Ring\n"); goal.write_text('{"archetype": "go_wide"}')
+    combos.write_text(json.dumps({"ok": True, "command": "card-combos", "data": {
+        "card": "X", "count": 1, "combos": [{"cards": ["X", "Y"], "card_count": 2}]}}))
+    seen = {}
+    monkeypatch.setattr(cli.api, "scorecard", lambda texts, g, **kw: seen.update(kw) or {})
+    assert cli.main(["scorecard", "--file", str(a), "--goal", str(goal), "--bracket", "3",
+                     "--combos", str(combos)]) == 0
+    assert seen["combos"] == [{"cards": ["X", "Y"], "card_count": 2}]
+
+
+@pytest.mark.parametrize("content", ['{"data": []}', '{"ok": true}', '{"data": {"combos": 3}}',
+                                     '{"combos": [1]}'])
+def test_scorecard_rejects_a_combos_file_of_the_wrong_shape(monkeypatch, capsys, tmp_path, content):
+    a, goal, combos = tmp_path / "a.txt", tmp_path / "g.json", tmp_path / "combos.json"
+    a.write_text("1 Sol Ring\n"); goal.write_text('{"archetype": "go_wide"}')
+    combos.write_text(content)
+    monkeypatch.setattr(cli.api, "scorecard", lambda *a, **k: pytest.fail("should not run"))
+    assert cli.main(["scorecard", "--file", str(a), "--goal", str(goal), "--bracket", "3",
+                     "--combos", str(combos)]) == 2
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is False and out["error"]["field"] == "--combos"
+
+
+def test_card_rule_merge_passes_the_path(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(cli.api, "card_rule_merge",
+                        lambda path: {"added": [path], "unchanged": 0, "conflicts": []})
+    assert cli.main(["card-rule-merge", str(tmp_path / "theirs.json")]) == 0
+    assert json.loads(capsys.readouterr().out)["data"]["added"] == [str(tmp_path / "theirs.json")]

@@ -10,3 +10,4 @@ venv/
 # (mtgpt/data/card_rules.json) is shared across deck sims.
 decks/
 *.goal.json
+mtgpt.zip

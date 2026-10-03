@@ -1,5 +1,6 @@
 import json
 import pathlib
+import urllib.error
 
 import pytest
 
@@ -406,3 +407,40 @@ def test_card_from_json_reads_power_and_toughness():
     assert (star.power, star.toughness) == (1.0, 0.0)
     assert rock.power is None
     assert mdfc.power == 3.0
+
+
+# --- Rate limit retry with exponential backoff (Task 10) ---------------------
+
+
+def too_many(url="https://api.scryfall.com/x"):
+    return urllib.error.HTTPError(url, 429, "Too Many Requests", None, None)
+
+
+class FlakyTransport:
+    """Raises 429 `fails` times, then answers."""
+
+    def __init__(self, fails, response):
+        self.fails, self.response, self.calls = fails, response, 0
+
+    def __call__(self, url, payload=None):
+        self.calls += 1
+        if self.calls <= self.fails:
+            raise too_many(url)
+        return self.response
+
+
+def test_rate_limit_is_retried_with_backoff():
+    sleeps = []
+    transport = FlakyTransport(2, load("game_changers.json"))
+    client = ScryfallClient(transport=transport, sleep=sleeps.append)
+    assert client.game_changers()
+    assert transport.calls == 3
+    assert sleeps == [1.0, 2.0]
+
+
+def test_rate_limit_gives_up_after_three_retries():
+    sleeps = []
+    client = ScryfallClient(transport=FlakyTransport(10, {}), sleep=sleeps.append)
+    with pytest.raises(SourceUnavailable):
+        client.game_changers()
+    assert sleeps == [1.0, 2.0, 4.0]

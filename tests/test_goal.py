@@ -173,3 +173,12 @@ def test_battlefield_condition_names_must_be_in_the_deck():
 def test_removal_engine_parses():
     goal = load({"archetype": "go_wide", "engine": {"Blood Artist": {"removal_engine": True}}})
     assert goal.engine_for("Blood Artist").removal_engine
+
+
+def test_target_round_is_optional_and_validated():
+    assert load({"archetype": "go_wide"}).target_round is None
+    assert load({"archetype": "go_wide", "target_round": 5}).target_round == 5
+    for bad in (0, -1, 2.5, "5", True):
+        with pytest.raises(GoalError) as err:
+            load({"archetype": "go_wide", "target_round": bad})
+        assert err.value.field == "target_round"

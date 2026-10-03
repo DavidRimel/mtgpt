@@ -35,14 +35,16 @@ def play(setup: Setup, *, seed, turn_cap: int = DEFAULT_TURN_CAP,
 
 def simulate(deck: ResolvedDeck, goal_raw: dict, *, games: int = DEFAULT_GAMES,
              turn_cap: int = DEFAULT_TURN_CAP, seed: int = 1,
-             disruption: bool = True) -> dict:
-    """Play `games` auto games and summarize them."""
+             disruption: bool = True, impact_round: int | None = None) -> dict:
+    """Play `games` auto games and summarize them. `impact_round` adds the
+    per-card impact block, judging wins by that round."""
     if games < 1:
         raise ValueError("games must be 1 or more")
     setup = prepare(deck, goal_raw)
     states = [play(setup, seed=f"{seed}-{i}", turn_cap=turn_cap, disruption=disruption)
               for i in range(games)]
-    return summarize(setup, states, seed=seed, turn_cap=turn_cap, disruption=disruption)
+    return summarize(setup, states, seed=seed, turn_cap=turn_cap, disruption=disruption,
+                     impact_round=impact_round)
 
 
 def compare(before: ResolvedDeck, after: ResolvedDeck, goal_raw: dict, **options) -> dict:
@@ -53,10 +55,10 @@ def compare(before: ResolvedDeck, after: ResolvedDeck, goal_raw: dict, **options
 
 
 def summarize(setup: Setup, states: list[GameState], *, seed, turn_cap: int,
-              disruption: bool) -> dict:
+              disruption: bool, impact_round: int | None = None) -> dict:
     games = len(states)
     goal = setup.goal
-    return {
+    report = {
         "games": games,
         "seed": seed,
         "turn_cap": turn_cap,
@@ -75,6 +77,9 @@ def summarize(setup: Setup, states: list[GameState], *, seed, turn_cap: int,
             "goldfish": GOLDFISH_NOTE,
         },
     }
+    if impact_round is not None:
+        report["card_impact"] = _card_impact_block(setup, states, impact_round)
+    return report
 
 
 def goal_warnings(setup: Setup) -> list[str]:
@@ -141,6 +146,8 @@ def _setup_block(states, turn_cap):
         "pre_commander_mana_spent_on": {
             k: _ratio(spent[k], total) for k in ("ramp", "engine", "other", "unspent")},
         "mulligan_rate": _ratio(sum(1 for s in states if s.mulligans), games),
+        "mulligan_causes": {k: _ratio(v, games) for k, v in sorted(
+            Counter(r for s in states for r in set(s.mulligan_reasons)).items())},
         "stalled_rate": _ratio(stalled, games),
     }
 
@@ -226,6 +233,63 @@ def _opponent_win_block(states):
         "lost_to_it_rate": _ratio(sum(1 for s in states if s.loss_by == "opponent_win"), len(states)),
         "answered_by": dict(by.most_common(10)),
     }
+
+
+def _card_impact_block(setup: Setup, states, impact_round: int) -> dict:
+    """Per card: how often it was seen, whether games it was seen in were won
+    more often (by `impact_round`), and how often it sat dead once seen.
+
+    Seen means it left the library: drawn, tutored, or put onto the
+    battlefield. Used means cast, played as a land, spent as an answer, or on
+    the battlefield at the end. Basic lands and commanders are left out.
+    """
+    games = len(states)
+    names = sorted({c.name for i, c in enumerate(setup.cards)
+                    if not c.is_basic and i not in setup.commanders})
+    rows = {n: {"seen": 0, "won_seen": 0, "unseen": 0, "won_unseen": 0, "used": 0, "turns": []}
+            for n in names}
+    for s in states:
+        won = s.checkpoints["win"] is not None and s.checkpoints["win"] <= impact_round
+        in_library = set(s.library)
+        seen = {s.cards[i].name for i in range(len(s.cards))
+                if i not in in_library and i not in setup.commanders}
+        first_use: dict[str, int | None] = {}
+        for idx, turn in s.used.items():
+            name = s.cards[idx].name
+            prior = first_use.get(name)
+            first_use[name] = turn if prior is None else min(prior, turn)
+        for perm in s.battlefield:
+            if perm.card is not None:
+                first_use.setdefault(s.cards[perm.card].name, None)
+        for name in names:
+            row = rows[name]
+            if name in seen:
+                row["seen"] += 1
+                row["won_seen"] += won
+                if name in first_use:
+                    row["used"] += 1
+                    if first_use[name] is not None:
+                        row["turns"].append(first_use[name])
+            else:
+                row["unseen"] += 1
+                row["won_unseen"] += won
+    return {
+        name: {
+            "seen_rate": _ratio(r["seen"], games),
+            "win_delta": _win_delta(r["won_seen"], r["seen"], r["won_unseen"], r["unseen"]),
+            "dead_rate": _ratio(r["seen"] - r["used"], r["seen"]),
+            "cast_rate": _ratio(r["used"], r["seen"]),
+            "median_turn": _percentile(r["turns"], 0.5),
+        }
+        for name, r in rows.items()
+    }
+
+
+def _win_delta(won_seen: int, seen: int, won_unseen: int, unseen: int) -> float | None:
+    """Win rate when seen minus win rate when not; None without both groups."""
+    if not seen or not unseen:
+        return None
+    return round(won_seen / seen - won_unseen / unseen, 4)
 
 
 def _loss_block(states):

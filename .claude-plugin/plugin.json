@@ -1,6 +1,0 @@
-{
-  "name": "mtgpt",
-  "version": "0.1.0",
-  "description": "Build and tune Magic: The Gathering Commander decks with Scryfall-verified data",
-  "author": "DavidRimel"
-}
